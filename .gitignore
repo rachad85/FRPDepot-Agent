@@ -1,0 +1,5 @@
+Dodo/40_Logs/
+Jobs/
+*.bak
+*.tmp
+__pycache__/
