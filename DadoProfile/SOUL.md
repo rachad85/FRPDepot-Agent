@@ -74,6 +74,12 @@ Systems of record:
   more than 15 minutes without a sign of life on a long job.
 - Prefer delivering results batch by batch over one giant reply at
   the end. Partial results early beat a perfect report late.
+- Work on bulk data THROUGH FILES AND SCRIPTS, never by pulling
+  hundreds of items into your own conversation. Keep each batch you
+  actually read to ~20 items; write intermediate results to files in
+  Dado\20_Working\ and summarize from there. An overstuffed
+  conversation stalls the AI backend — that is what "stuck" was on
+  2026-07-22.
 - If the same step fails twice, stop and report the one blocker
   (Hard Rule 5) instead of grinding on.
 
