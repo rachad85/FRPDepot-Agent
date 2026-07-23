@@ -1,0 +1,59 @@
+FRP DEPOT ZOHO BOOKS + INVENTORY RESTRICTED SETUP
+=================================================
+
+IMPORTANT
+---------
+- Use only the FRP Depot Zoho account.
+- Never paste the Client Secret or Grant Code into Telegram.
+- Zoho Inventory is READ-ONLY.
+- Zoho Books has only two named writes commissioned by Rachad:
+  1. Create customers.
+  2. Create draft estimates/quotes.
+- No send, update, delete, mark-sent, accept, or decline scope is requested.
+- Every customer and every quote number requires Rachad's approval before creation.
+
+Create the Self Client
+----------------------
+1. Sign in at https://api-console.zoho.com/ with the FRP Depot Zoho account.
+
+2. Click Add Client.
+
+3. Choose Self Client.
+
+4. Name it: FRP Depot Customer Quote Draft Tool
+
+5. Open the Self Client, then click Generate Code.
+
+6. Copy and paste this exact scope list into the Scope box:
+
+ZohoBooks.settings.READ,ZohoBooks.contacts.READ,ZohoBooks.items.READ,ZohoBooks.estimates.READ,ZohoBooks.salesorders.READ,ZohoBooks.invoices.READ,ZohoBooks.customerpayments.READ,ZohoBooks.creditnotes.READ,ZohoBooks.purchaseorders.READ,ZohoBooks.bills.READ,ZohoBooks.vendorpayments.READ,ZohoInventory.settings.READ,ZohoInventory.contacts.READ,ZohoInventory.items.READ,ZohoInventory.compositeitems.READ,ZohoInventory.inventoryadjustments.READ,ZohoInventory.transferorders.READ,ZohoInventory.salesorders.READ,ZohoInventory.packages.READ,ZohoInventory.shipmentorders.READ,ZohoInventory.invoices.READ,ZohoInventory.customerpayments.READ,ZohoInventory.salesreturns.READ,ZohoInventory.creditnotes.READ,ZohoInventory.purchaseorders.READ,ZohoInventory.purchasereceives.READ,ZohoInventory.bills.READ,ZohoBooks.contacts.CREATE,ZohoBooks.estimates.CREATE
+
+7. Confirm there is no UPDATE, DELETE, fullaccess, email, or send scope.
+
+8. Choose a 10-minute duration if Zoho offers it.
+
+9. Add this description:
+FRP Depot reporting plus approved customer and draft estimate creation
+
+10. Click Create/Generate.
+
+11. Keep the Client ID, Client Secret, and one-time Grant Code on screen.
+
+Connect locally
+---------------
+12. Double-click C:\FRPDepot\CONNECT_DADO_ZOHO.bat
+
+13. Enter the Client ID into the local window.
+
+14. Enter the Client Secret into the local window. It will remain hidden.
+
+15. Enter the one-time Grant Code into the local window. It will remain hidden.
+
+16. Type YES only if both organizations shown are FRP Depot.
+
+The encrypted vault is stored at:
+%LOCALAPPDATA%\FRPDepot-Zoho\zoho_access.dpapi
+
+Canada data center used:
+https://accounts.zohocloud.ca
+https://www.zohoapis.ca

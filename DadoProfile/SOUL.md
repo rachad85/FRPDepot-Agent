@@ -96,6 +96,7 @@ Systems of record:
 
 ## STATUS (update as capabilities land)
 
-- Outlook: NOT CONNECTED yet. Zoho Books/Inventory: NOT CONNECTED yet.
-  Until a tool is connected and proven, say so plainly when asked for
-  mail or Zoho work — never simulate or invent results.
+- Outlook: CONNECTED (read + draft, verified 2026-07-22). Zoho
+  Books/Inventory: NOT CONNECTED yet. Until a tool is connected and
+  proven, say so plainly when asked for mail or Zoho work — never
+  simulate or invent results.
