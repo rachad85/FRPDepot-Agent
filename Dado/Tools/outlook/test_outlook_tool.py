@@ -9,8 +9,10 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 import outlook_tool as tool
+import mailbox_audit
 
 
 def fake_token(scopes: str) -> str:
@@ -20,6 +22,31 @@ def fake_token(scopes: str) -> str:
 
 
 class OutlookToolTests(unittest.TestCase):
+    def test_mailbox_audit_excludes_different_company_participants(self) -> None:
+        message = {
+            "from": {"emailAddress": {"address": "person@troydualam.com"}},
+            "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+        }
+        self.assertTrue(mailbox_audit.has_forbidden_participant(message))
+        message["from"]["emailAddress"]["address"] = "customer@example.com"
+        self.assertFalse(mailbox_audit.has_forbidden_participant(message))
+
+    def test_device_flow_pending_error_keeps_oauth_error_code(self) -> None:
+        response = {
+            "error": "authorization_pending",
+            "error_description": "Authorization is pending. Continue polling.",
+        }
+        http_error = HTTPError(
+            "https://login.microsoftonline.com/token",
+            400,
+            "Bad Request",
+            {},
+            io.BytesIO(json.dumps(response).encode("utf-8")),
+        )
+        with patch.object(tool, "urlopen", side_effect=http_error):
+            with self.assertRaisesRegex(tool.OutlookError, "authorization_pending"):
+                tool.http_form("https://login.microsoftonline.com/token", {"x": "y"})
+
     def test_scope_boundary_excludes_send(self) -> None:
         self.assertNotIn("https://graph.microsoft.com/Mail.Send", tool.REQUESTED_SCOPES)
         self.assertEqual(tool.FORBIDDEN_TOKEN_SCOPE, "Mail.Send")

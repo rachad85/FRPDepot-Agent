@@ -227,10 +227,17 @@ def http_form(url: str, fields: dict[str, str]) -> dict[str, Any]:
         body = exc.read().decode("utf-8", errors="replace")
         try:
             detail = json.loads(body)
-            message = detail.get("error_description") or detail.get("error", {}).get("message") or body
+            error_value = detail.get("error")
+            error_code = error_value if isinstance(error_value, str) else ""
+            nested_message = error_value.get("message") if isinstance(error_value, dict) else ""
+            message = detail.get("error_description") or nested_message or body
         except json.JSONDecodeError:
+            error_code = ""
             message = body
-        raise OutlookError(f"Microsoft sign-in returned HTTP {exc.code}: {message}") from exc
+        code_prefix = f"{error_code}: " if error_code else ""
+        raise OutlookError(
+            f"Microsoft sign-in returned HTTP {exc.code}: {code_prefix}{message}"
+        ) from exc
     except URLError as exc:
         raise OutlookError(f"Microsoft sign-in could not be reached: {exc.reason}") from exc
 

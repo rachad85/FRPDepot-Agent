@@ -9,7 +9,7 @@ sheet — ask instead.
 - What we sell:
 - Location / warehouse:
 - Website / email domain:
-- Rachad's FRP Depot email address:
+- Rachad's FRP Depot email address: info@frpdepots.com (verified by Microsoft Graph)
 - Rachad's standard email signature block (paste exactly):
 
 ## Commercial rules
