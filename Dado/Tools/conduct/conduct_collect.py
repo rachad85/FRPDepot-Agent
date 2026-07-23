@@ -1,9 +1,9 @@
-"""Collect one day of Dodo behavior evidence into a single review bundle.
+"""Collect one day of Dado behavior evidence into a single review bundle.
 
 Deterministic and read-only. Called by conduct_review.py (the nightly
 judgment layer) but runnable by hand any time:
     python conduct_collect.py [YYYY-MM-DD]   (default: yesterday, local)
-Writes C:\\FRPDepot\\Dodo\\40_Logs\\conduct\\<date>.md and prints the path.
+Writes C:\\FRPDepot\\Dado\\40_Logs\\conduct\\<date>.md and prints the path.
 
 Lighter than Aze's collector on purpose (Rachad, 2026-07-22: "much
 quieter and easier"). The "## Auto-flags" section replaces Aze's
@@ -20,20 +20,20 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-OUT_DIR = Path(r"C:\FRPDepot\Dodo\40_Logs\conduct")
-MEM = Path(r"C:\FRPDepot\Dodo\30_Memory")
-LOGS40 = Path(r"C:\FRPDepot\Dodo\40_Logs")
+OUT_DIR = Path(r"C:\FRPDepot\Dado\40_Logs\conduct")
+MEM = Path(r"C:\FRPDepot\Dado\30_Memory")
+LOGS40 = Path(r"C:\FRPDepot\Dado\40_Logs")
 
 TURN_RE = re.compile(
     r"response ready: platform=(\S+) chat=(\S+) time=([\d.]+)s api_calls=(\d+)"
 )
-SLOW_SECONDS = 600   # >10 min on one reply = circling for Dodo's workload
+SLOW_SECONDS = 600   # >10 min on one reply = circling for Dado's workload
 MANY_CALLS = 30
 ERROR_REPEATS = 3
 
 
 def profile_logs() -> Path:
-    return Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dodo" / "logs"
+    return Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dado" / "logs"
 
 
 def day_lines(path: Path, day: str, limit: int = 3000) -> list[str]:
@@ -90,7 +90,7 @@ def main() -> int:
     flags = auto_flags(turns, errors)
 
     sections = [
-        f"# Dodo conduct bundle -- {day}",
+        f"# Dado conduct bundle -- {day}",
         "## Auto-flags (deterministic circling/error-loop detection)",
         "\n".join(flags) or "(none)",
         "## Turn statistics (every gateway turn: duration + internal steps)",

@@ -1,15 +1,15 @@
-"""Nightly conduct review for Dodo -- detect issues AND fix the small ones.
+"""Nightly conduct review for Dado -- detect issues AND fix the small ones.
 
 Rachad's ask (2026-07-22): monitoring like Aze's "so you can improve
 automatically when you detect issues... much quieter and easier than Aze."
 
-Design (one cron, not two -- Dodo's gateway loop-guardrails hard-stop
+Design (one cron, not two -- Dado's gateway loop-guardrails hard-stop
 runaway turns live, and conduct_collect.py computes the tripwire flags
 into the nightly bundle):
 
 1. conduct_collect.py builds the day's evidence bundle (deterministic).
-2. Headless Claude Code reviews the bundle against Dodo's constitution
-   (the repo mirror C:\\FRPDepot\\DodoProfile\\SOUL.md) and MAY apply
+2. Headless Claude Code reviews the bundle against Dado's constitution
+   (the repo mirror C:\\FRPDepot\\DadoProfile\\SOUL.md) and MAY apply
    small, bounded fixes inside C:\\FRPDepot (acceptEdits, no Bash).
 3. A deterministic guard: if the reviewer changed the "## HARD RULES"
    section of the SOUL mirror, the file is reverted from git and Rachad
@@ -23,7 +23,7 @@ into the nightly bundle):
    auto-fixed-only days are SILENT.
 
 Cron:
-    hermes -p dodo cron create "10 5 * * *" --name dodo-conduct-review \
+    hermes -p dado cron create "10 5 * * *" --name dado-conduct-review \
         --no-agent --script conduct_review.py --deliver telegram:891365639
 """
 
@@ -40,13 +40,13 @@ CLAUDE = Path.home() / ".local" / "bin" / "claude.exe"
 PYTHON = sys.executable
 COLLECTOR = Path(__file__).with_name("conduct_collect.py")
 REPO = Path(r"C:\FRPDepot")
-REVIEW_DIR = REPO / "Dodo" / "30_Memory" / "conduct_reviews"
-MIRROR_SOUL = REPO / "DodoProfile" / "SOUL.md"
-LIVE_SOUL = Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dodo" / "SOUL.md"
+REVIEW_DIR = REPO / "Dado" / "30_Memory" / "conduct_reviews"
+MIRROR_SOUL = REPO / "DadoProfile" / "SOUL.md"
+LIVE_SOUL = Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dado" / "SOUL.md"
 TIMEOUT_SECONDS = 20 * 60
 CLEAN_MARKER = "ALL CLEAN"
 
-PROMPT = """You are the nightly conduct reviewer AND maintainer for Dodo, the FRP
+PROMPT = """You are the nightly conduct reviewer AND maintainer for Dado, the FRP
 Depot operations assistant. Read these two files first (Read tool):
 1. {bundle}  -- one day of behavior evidence (auto-flags, turn stats,
    messages, errors, receipts, the company fit profile).
@@ -69,7 +69,7 @@ inside C:\\FRPDepot:
 - SOUL mirror wording in sections OTHER than "## HARD RULES";
 - the fit profile (30_Memory\\fit_profile.md) when the day's messages
   contain a company fact Rachad stated that is missing from it;
-- obvious bugs in Dodo's own tool scripts under Dodo\\Tools\\.
+- obvious bugs in Dado's own tool scripts under Dado\\Tools\\.
 NEVER: the "## HARD RULES" section, any .env or key/token, anything
 outside C:\\FRPDepot, any new capability (no send paths, no write tools),
 and no big rewrites -- keep the whole night's diff under ~30 changed
@@ -118,7 +118,7 @@ def main() -> int:
         capture_output=True, text=True, timeout=300,
     )
     if collected.returncode != 0 or not collected.stdout.strip():
-        print(f"Dodo conduct review skipped: evidence collection failed for {day} "
+        print(f"Dado conduct review skipped: evidence collection failed for {day} "
               f"({(collected.stderr or 'no output').strip()[:200]}). "
               "Run conduct_collect.py by hand to see why.")
         return 0
@@ -128,7 +128,7 @@ def main() -> int:
         hard_before = hard_rules_section(MIRROR_SOUL.read_text(encoding="utf-8"))
         live_before = LIVE_SOUL.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"Dodo conduct review skipped: cannot read SOUL ({exc}).")
+        print(f"Dado conduct review skipped: cannot read SOUL ({exc}).")
         return 0
 
     prompt = PROMPT.format(bundle=bundle, constitution=str(MIRROR_SOUL),
@@ -143,13 +143,13 @@ def main() -> int:
             timeout=TIMEOUT_SECONDS, cwd=str(REPO),
         )
     except subprocess.TimeoutExpired:
-        print(f"Dodo conduct review for {day} timed out after "
+        print(f"Dado conduct review for {day} timed out after "
               f"{TIMEOUT_SECONDS // 60} min; the bundle is saved -- ask the "
               "backend to review it in session.")
         return 0
     output = (review.stdout or "").strip()
     if review.returncode != 0 or not output:
-        print(f"Dodo conduct review for {day} could not run "
+        print(f"Dado conduct review for {day} could not run "
               f"(claude exit {review.returncode}: {(review.stderr or '')[:200]}). "
               "The evidence bundle is saved; ask the backend in session.")
         return 0
@@ -161,9 +161,9 @@ def main() -> int:
     except OSError:
         hard_after = ""
     if hard_after != hard_before:
-        git("checkout", "--", "DodoProfile/SOUL.md")
+        git("checkout", "--", "DadoProfile/SOUL.md")
         guard_note = ("GUARD TRIPPED: the reviewer modified the HARD RULES "
-                      "section of Dodo's SOUL; the change was reverted from git.")
+                      "section of Dado's SOUL; the change was reverted from git.")
     else:
         # Sync a (safely) changed mirror to the live profile SOUL.
         try:
@@ -175,7 +175,7 @@ def main() -> int:
 
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     (REVIEW_DIR / f"{day}.md").write_text(
-        f"# Dodo conduct review {day}\n\nBundle: {bundle}\n\n"
+        f"# Dado conduct review {day}\n\nBundle: {bundle}\n\n"
         + (f"{guard_note}\n\n" if guard_note else "")
         + output + "\n",
         encoding="utf-8",
@@ -194,11 +194,11 @@ def main() -> int:
     needs = next((l for l in output.splitlines() if l.startswith("NEEDS-RACHAD:")), "")
     needs_body = needs.replace("NEEDS-RACHAD:", "").strip().rstrip(".").lower()
     if guard_note:
-        print(f"Dodo nightly review {day}: {guard_note} Full report in "
-              "Dodo\\30_Memory\\conduct_reviews.")
+        print(f"Dado nightly review {day}: {guard_note} Full report in "
+              "Dado\\30_Memory\\conduct_reviews.")
     elif needs and needs_body not in ("nothing", "none", ""):
         summary = next((l for l in output.splitlines() if l.startswith("SUMMARY:")), "")
-        print(f"Dodo nightly review {day}: needs you -- "
+        print(f"Dado nightly review {day}: needs you -- "
               f"{needs.replace('NEEDS-RACHAD:', '').strip()} "
               + (summary.replace("SUMMARY:", "").strip() if summary else ""))
     return 0

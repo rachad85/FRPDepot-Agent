@@ -1,10 +1,10 @@
-# FRP Depot — company fit profile (Dodo's fact sheet)
+# FRP Depot — company fit profile (Dado's fact sheet)
 
-Dodo: read this at the start of every session. Add facts here the
+Dado: read this at the start of every session. Add facts here the
 moment Rachad states them (dated). NEVER invent a fact not on this
 sheet — ask instead.
 
-## Company basics (Rachad to fill / Dodo to capture as told)
+## Company basics (Rachad to fill / Dado to capture as told)
 - Legal name:
 - What we sell:
 - Location / warehouse:
@@ -24,5 +24,5 @@ sheet — ask instead.
 - (others as learned)
 
 ## Dated notes
-- 2026-07-22: Dodo commissioned. Systems: Outlook email, Zoho
+- 2026-07-22: Dado commissioned. Systems: Outlook email, Zoho
   Books/Invoice, Zoho Inventory. Quotes are catalog/price-list based.

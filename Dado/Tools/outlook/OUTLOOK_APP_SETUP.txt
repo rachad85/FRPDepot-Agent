@@ -1,0 +1,55 @@
+FRP DEPOT OUTLOOK APP SETUP
+============================
+
+Goal
+----
+Give Dado mailbox read, calendar read, and draft creation access.
+Dado must never receive email sending permission.
+
+Microsoft Entra steps
+---------------------
+1. Sign in at entra.microsoft.com with the FRP Depot Microsoft 365 admin account.
+
+2. Open Identity > Applications > App registrations.
+
+3. Click New registration.
+
+4. Name it: FRP Depot Dado Outlook
+
+5. Select: Accounts in this organizational directory only (Single tenant).
+
+6. Leave Redirect URI blank, then click Register.
+
+7. On Overview, keep the page open. You will need:
+   - Application (client) ID
+   - Directory (tenant) ID
+
+8. Open Authentication.
+
+9. Under Advanced settings, set Allow public client flows to Yes, then Save.
+
+10. Open API permissions.
+
+11. Click Add a permission > Microsoft Graph > Delegated permissions.
+
+12. Add only:
+    - Mail.ReadWrite
+    - Calendars.Read
+    - User.Read
+
+13. DO NOT add Mail.Send. Dado is drafts-only.
+
+14. Click Grant admin consent for the FRP Depot tenant, then confirm.
+
+15. Check that all three permissions show Granted.
+
+16. Close this note and double-click SET_DADO_OUTLOOK_APP.bat.
+
+17. Paste the Directory (tenant) ID and Application (client) ID into that local window.
+    These are identifiers. Never paste a client secret, password, access token, or refresh token.
+
+18. Double-click CONNECT_DADO_OUTLOOK.bat and follow its Microsoft device-login steps.
+
+19. Sign in only to the FRP Depot mailbox.
+
+20. When the window shows the mailbox address, type YES only if it is the correct FRP Depot mailbox.
