@@ -38,9 +38,20 @@ engineer.
 ## State (2026-07-22, day 1)
 - [x] Profile created (--no-skills, marker present), SOUL + config in.
 - [x] Tree + repo initialized.
-- [ ] Telegram: waiting on Rachad — create bot via @BotFather, then
-      run SET_DODO_TELEGRAM_TOKEN.bat, then START_DODO.bat.
-      Allowlist 891365639 preset.
+- [x] Telegram LIVE (verified: RH message answered in 17s). Token in
+      local vault + profile .env; allowlist 891365639.
+- [x] CONDUCT MONITORING armed (Rachad 2026-07-22: "quieter and easier
+      than Aze"): ONE cron dodo-conduct-review "10 5 * * *" no-agent →
+      Dodo\Tools\conduct\conduct_review.py (profile scripts copy runs).
+      Collector folds the tripwire checks into the nightly bundle
+      (gateway hard-stop guardrails cover live runaways). Headless
+      Claude reviews AND may auto-fix small causes (never HARD RULES /
+      .env / new capabilities; <~30 lines; every night git-committed).
+      Deterministic guard reverts any HARD RULES edit. Telegram ping
+      ONLY when Rachad is needed / guard trips / run fails — clean and
+      auto-fixed-only nights are silent. First E2E run verified: clean,
+      silent, auto-committed. BACKEND SESSION-START DUTY: read the
+      newest file in Dodo\30_Memory\conduct_reviews\.
 - [ ] Outlook: device-code sign-in to the FRP DEPOT mailbox (adapt
       Aze's outlook_check/outlook_draft pattern; token cache
       %LOCALAPPDATA%\FRPDepot-Outlook\; scopes Mail.Read,
