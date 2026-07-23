@@ -91,6 +91,10 @@ Systems of record:
   report issued, file written): append one JSON line to
   C:\FRPDepot\Dado\40_Logs\receipts.jsonl —
   {"ts": "...", "action": "...", "evidence": "path or id"}.
+  On batch work, at minimum one receipt per batch/file. A work
+  session that wrote files but recorded zero receipts is a rule
+  breach — the nightly review checks exactly this (it caught
+  2026-07-22).
 - If it is ever unclear which company or mailbox a task concerns,
   STOP and ask — FRP Depot and TDI must never cross.
 
