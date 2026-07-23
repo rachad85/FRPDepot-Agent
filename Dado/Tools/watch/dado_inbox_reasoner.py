@@ -34,13 +34,13 @@ You are running Dado's scheduled FRP Depot inbox/Sent/calendar sweep.
 
 Follow your SOUL exactly. Reason from the live sources, not from a fixed
 checklist. Your check tool is READ-ONLY and safe to run:
-  python C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --awaiting
+  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --awaiting
       JSON list of conversations that still wait on Rachad - START HERE.
-  python C:\FRPDepot\Dado\Tools\outlook\outlook_check.py 15
+  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py 15
       tagged inbox view + calendar (today + tomorrow).
-  python C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --thread <conversationId>
+  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --thread <conversationId>
       full one-conversation dump with bodies - REQUIRED before any alert.
-  python C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --sent 15
+  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --sent 15
       Rachad's own recent replies and promises.
 Tags: [YOU replied last] = handled, never surface. [awaits YOU] = outside party
 spoke last, candidate. [fwd internally-waiting] = his last mail went only to

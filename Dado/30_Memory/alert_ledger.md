@@ -12,5 +12,7 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
   `- YYYY-MM-DD <thread subject or short id> — <one-line what was alerted / why closed>`
 
 ## ALERTED
+- 2026-07-23 Inbox monitoring failure — Outlook sweep could not start because the check script path was not resolved by the Python runner; needs attention.
 
 ## CLOSED
+- 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
