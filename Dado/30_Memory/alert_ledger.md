@@ -13,6 +13,8 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 
 ## ALERTED
 - 2026-07-23 Inbox monitoring failure — Outlook sweep could not start because the check script path was not resolved by the Python runner; needs attention.
+- 2026-07-23 Inbox monitoring failure (19:19 ET) — Outlook sweep failed before mail could be checked because MSYS rewrote the script path to C:\c\FRPDepot; monitoring needs attention.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
+- 2026-07-23 Inbox monitoring failure (19:19 ET) — root cause fixed by backend: the wrapper now collects the triage data itself with no shell in the path, and reports collection failures deterministically without relying on the model; verified by rerun.

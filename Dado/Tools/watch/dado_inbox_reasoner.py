@@ -28,28 +28,34 @@ RUN_LOCK = Path(r"C:\FRPDepot\Dado\40_Logs\dado_inbox_reasoner.lock")
 RUN_LOCK_STALE_SECONDS = 3600
 UNDELIVERED = Path(r"C:\FRPDepot\Dado\40_Logs\undelivered_alerts.txt")
 MAX_QUEUE_AGE_HOURS = 24
+VENV_PY = r"C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"
+CHECK_PY = r"C:\FRPDepot\Dado\Tools\outlook\outlook_check.py"
+SWEEP_DIR = Path(r"C:\FRPDepot\Dado\20_Working\inbox_watch")
 
 PROMPT = r"""
 You are running Dado's scheduled FRP Depot inbox/Sent/calendar sweep.
 
 Follow your SOUL exactly. Reason from the live sources, not from a fixed
-checklist. Your check tool is READ-ONLY and safe to run:
-  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --awaiting
-      JSON list of conversations that still wait on Rachad - START HERE.
-  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py 15
+checklist. FRESH TRIAGE DATA IS ALREADY ON DISK - this run collected it from
+the live mailbox minutes ago. Read these with your FILE tools (not terminal):
+  C:\FRPDepot\Dado\20_Working\inbox_watch\awaiting.json
+      conversations that still wait on Rachad, oldest first - START HERE.
+  C:\FRPDepot\Dado\20_Working\inbox_watch\inbox_calendar.txt
       tagged inbox view + calendar (today + tomorrow).
-  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --thread <conversationId>
-      full one-conversation dump with bodies - REQUIRED before any alert.
-  C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe C:\FRPDepot\Dado\Tools\outlook\outlook_check.py --sent 15
+  C:\FRPDepot\Dado\20_Working\inbox_watch\sent.txt
       Rachad's own recent replies and promises.
 Tags: [YOU replied last] = handled, never surface. [awaits YOU] = outside party
 spoke last, candidate. [fwd internally-waiting] = his last mail went only to
 internal addresses; the outside party still waits. [draft pending] = a prepared
 reply draft exists that Rachad has NOT sent. [to you] vs [cc]: only [to you]
 threads use the normal 1-2-business-day rule; [cc]-only threads stay silent.
-Titles, tags and previews are triage only: before ANY alert, read the full
-conversation (--thread) and, when ownership is unclear, --sent. If Rachad
-already replied or the ask is resolved, clear it silently.
+Titles, tags and previews are triage only: before ANY alert you MUST read the
+full conversation. Run in the terminal, exactly as written here including the
+forward slashes (they survive every shell) and the quotes around the id:
+  C:/Users/TDI-service/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe C:/FRPDepot/Dado/Tools/outlook/outlook_check.py --thread "<conversationId>"
+If Rachad already replied or the ask is resolved, clear it silently. If the
+deep read fails, do not guess from the preview - skip that item and say
+nothing about it (uncertain = silent).
 
 THE ALERT LEDGER IS BINDING: before composing any alert, read
 C:\FRPDepot\Dado\30_Memory\alert_ledger.md. CLOSED item = silent permanently
@@ -229,6 +235,43 @@ def scrub_noise(text):
     return body.strip()
 
 
+def collect(name, args_list, timeout=300):
+    """Run outlook_check.py directly (argv list, no shell - immune to path
+    mangling) and return its stdout. Raises on failure."""
+    proc = subprocess.run(
+        [VENV_PY, CHECK_PY] + args_list,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        capture_output=True,
+        timeout=timeout,
+    )
+    out = (proc.stdout or "").strip()
+    if proc.returncode != 0 or not out:
+        detail = (proc.stderr or out or "no output").strip()[:300]
+        raise RuntimeError(f"{name} collection failed rc={proc.returncode}: {detail}")
+    return out
+
+
+def prefetch_triage():
+    """Deterministically pull the sweep's source data before the brain runs.
+    Added 2026-07-23 after E2E runs 1-2: the brain's own terminal mangled
+    script paths two different ways (bare `python` unresolved, MSYS rewrote
+    C:\\ paths), and its failure message was then lost to the noise scrub.
+    Collection and failure reporting must not depend on the model."""
+    stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+    awaiting = collect("awaiting", ["--awaiting"])
+    inbox = collect("inbox", ["15"])
+    sent = collect("sent", ["--sent", "15"])
+    SWEEP_DIR.mkdir(parents=True, exist_ok=True)
+    (SWEEP_DIR / "awaiting.json").write_text(awaiting + "\n", encoding="utf-8")
+    (SWEEP_DIR / "inbox_calendar.txt").write_text(
+        f"collected {stamp}\n{inbox}\n", encoding="utf-8")
+    (SWEEP_DIR / "sent.txt").write_text(
+        f"collected {stamp}\n{sent}\n", encoding="utf-8")
+    log("triage data collected")
+
+
 def run_dado():
     env = os.environ.copy()
     env["HERMES_ACCEPT_HOOKS"] = "1"
@@ -336,13 +379,24 @@ def flush_undelivered():
 
 def run_once():
     flush_undelivered()
+    try:
+        prefetch_triage()
+    except Exception as exc:
+        reason = f"{type(exc).__name__}: {exc}"
+        log(f"prefetch failed: {reason}")
+        send_clean(
+            "Inbox sweep failed before mail was checked - "
+            f"{str(exc)[:200]}. Backend attention needed; next automatic "
+            "attempt in about 2 hours."
+        )
+        return 0
     msg = run_dado()
     if is_silent(msg):
         log("silent")
         return 0
     clean = scrub_noise(msg)
     if is_silent(clean) or len(clean) < 8:
-        log("suppressed tooling noise (no business content after scrub)")
+        log(f"suppressed tooling noise (no business content after scrub); raw={msg[:200]!r}")
         return 0
     if clean != msg.strip():
         log("stripped tool-noise lines before send")
