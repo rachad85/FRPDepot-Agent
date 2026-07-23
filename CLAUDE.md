@@ -52,6 +52,16 @@ engineer.
       auto-fixed-only nights are silent. First E2E run verified: clean,
       silent, auto-committed. BACKEND SESSION-START DUTY: read the
       newest file in Dado\30_Memory\conduct_reviews\.
+- [x] INTER-COMPANY LINE to TDI/Aze LIVE (Rachad 2026-07-23): Dado may talk to
+      Troy Dualam's Aze BOTH WAYS via the ONE sanctioned relay
+      `python C:\Intercompany\intercompany_relay.py --to aze --message "..."`
+      (returns Aze's reply on stdout; audit log C:\Intercompany\intercompany_log.jsonl).
+      Hard Rule 4 amended + committed (ad3d6f0). DATA WALL UNCHANGED: message
+      pass-through only, no TDI file/mailbox/Zoho reads, no FRP Depot financials/
+      margins disclosed — arm's-length sibling company. See the intercompany-relay
+      memory + Aze fingerprints_notes 2026-07-23. Relay config/keys are neutral
+      (%LOCALAPPDATA%\Intercompany-Relay\config.json); re-run build_config.py after
+      any gateway key rotation.
 - [ ] Outlook: device-code sign-in to the FRP DEPOT mailbox (adapt
       Aze's outlook_check/outlook_draft pattern; token cache
       %LOCALAPPDATA%\FRPDepot-Outlook\; scopes Mail.Read,
