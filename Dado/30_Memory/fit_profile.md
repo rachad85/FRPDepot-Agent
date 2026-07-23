@@ -41,4 +41,8 @@ sheet — ask instead.
 - 2026-07-23: Rachad commissioned the named **FRP Depot Zoho Customer & Quote
   Draft Tool**. It may create customers and draft estimates in Zoho Books only
   after Rachad approves the record and every quote number. It cannot send,
-  update, delete, mark sent, accept, or decline. Zoho Inventory remains read-only.
+  update, delete, mark sent, accept, or decline.
+- 2026-07-23: Rachad commissioned the named **FRP Depot Zoho Inventory Item
+  Catalog Tool**. It may create approved items and update only approved existing
+  item names/SKUs. It cannot delete items, change existing prices, adjust stock,
+  change quantities, or write orders, invoices, transfers, or payments.

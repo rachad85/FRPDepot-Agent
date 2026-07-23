@@ -64,6 +64,8 @@ READ_SCOPES = (
 ALLOWED_WRITE_SCOPES = (
     "ZohoBooks.contacts.CREATE",
     "ZohoBooks.estimates.CREATE",
+    "ZohoInventory.items.CREATE",
+    "ZohoInventory.items.UPDATE",
 )
 SCOPES = READ_SCOPES + ALLOWED_WRITE_SCOPES
 FORBIDDEN_SCOPE_PARTS = (".UPDATE", ".DELETE", ".ALL", "fullaccess")
@@ -75,19 +77,14 @@ class ZohoError(RuntimeError):
 
 def validate_scopes(scopes: list[str] | tuple[str, ...]) -> None:
     for scope in scopes:
+        if scope in ALLOWED_WRITE_SCOPES:
+            continue
         lowered = scope.casefold()
         if any(part.casefold() in lowered for part in FORBIDDEN_SCOPE_PARTS):
             raise ZohoError(f"REFUSED: forbidden Zoho scope configured: {scope}")
         if scope.endswith(".READ"):
             continue
-        if scope not in ALLOWED_WRITE_SCOPES:
-            raise ZohoError(f"REFUSED: uncommissioned Zoho write scope configured: {scope}")
-    inventory_writes = [
-        scope for scope in scopes
-        if scope.startswith("ZohoInventory.") and not scope.endswith(".READ")
-    ]
-    if inventory_writes:
-        raise ZohoError("REFUSED: Zoho Inventory write scope configured.")
+        raise ZohoError(f"REFUSED: uncommissioned Zoho write scope configured: {scope}")
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -323,11 +320,12 @@ def command_connect(_: argparse.Namespace) -> None:
         "connected_utc": datetime.now(timezone.utc).isoformat(),
     }
     save_vault(vault)
-    append_receipt("zoho_connected_restricted_customer_quote_draft_tool", str(VAULT_PATH))
+    append_receipt("zoho_connected_restricted_named_write_tools", str(VAULT_PATH))
     print("Zoho Books: CONNECTED AND VERIFIED")
-    print("Zoho Inventory: CONNECTED AND VERIFIED READ-ONLY")
+    print("Zoho Inventory: CONNECTED AND VERIFIED RESTRICTED")
     print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE ONLY")
-    print("Send/update/delete scopes: ABSENT")
+    print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
+    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
 
 
 def command_check(_: argparse.Namespace) -> None:
@@ -335,7 +333,12 @@ def command_check(_: argparse.Namespace) -> None:
     scopes = [str(scope) for scope in vault.get("scopes") or []]
     validate_scopes(scopes)
     if not set(ALLOWED_WRITE_SCOPES).issubset(scopes):
-        raise ZohoError("The saved Zoho connection lacks the commissioned customer/quote scopes.")
+        missing = sorted(set(ALLOWED_WRITE_SCOPES) - set(scopes))
+        raise ZohoError(
+            "The saved Zoho connection lacks newly commissioned scope(s): "
+            + ", ".join(missing)
+            + ". Generate a new grant code and run CONNECT_DADO_ZOHO.bat."
+        )
     access_token, vault = refresh_access_token(vault)
     api_domain = str(vault["api_domain"])
     books_org = api_get(
@@ -357,12 +360,13 @@ def command_check(_: argparse.Namespace) -> None:
     append_receipt("zoho_restricted_connection_verified", str(VAULT_PATH))
     organization = books_org.get("organization") or {}
     print("Zoho Books connection: VERIFIED RESTRICTED")
-    print("Zoho Inventory connection: VERIFIED READ-ONLY")
+    print("Zoho Inventory connection: VERIFIED RESTRICTED")
     print(f"Organization: {organization.get('name') or vault.get('books_organization_name')}")
     print(f"Books invoice read: VERIFIED ({len(invoice_result.get('invoices') or [])} sample row)")
     print(f"Inventory item read: VERIFIED ({len(inventory_items.get('items') or [])} sample row)")
     print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE ONLY")
-    print("Send/update/delete scopes: ABSENT")
+    print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
+    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
 
 
 def build_parser() -> argparse.ArgumentParser:

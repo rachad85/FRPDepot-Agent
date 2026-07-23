@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 import zoho_tool as tool
 import zoho_customer_quote_tool as draft
+import zoho_inventory_item_tool as item_tool
 
 
 class FakeResponse:
@@ -30,13 +31,19 @@ class ZohoToolTests(unittest.TestCase):
         tool.validate_scopes(tool.SCOPES)
         self.assertEqual(
             set(tool.ALLOWED_WRITE_SCOPES),
-            {"ZohoBooks.contacts.CREATE", "ZohoBooks.estimates.CREATE"},
+            {
+                "ZohoBooks.contacts.CREATE",
+                "ZohoBooks.estimates.CREATE",
+                "ZohoInventory.items.CREATE",
+                "ZohoInventory.items.UPDATE",
+            },
         )
-        self.assertFalse(
-            [
+        self.assertEqual(
+            {
                 scope for scope in tool.SCOPES
                 if scope.startswith("ZohoInventory.") and not scope.endswith(".READ")
-            ]
+            },
+            {"ZohoInventory.items.CREATE", "ZohoInventory.items.UPDATE"},
         )
 
     def test_uncommissioned_scopes_are_refused(self) -> None:
@@ -44,7 +51,7 @@ class ZohoToolTests(unittest.TestCase):
             ["ZohoBooks.contacts.UPDATE"],
             ["ZohoBooks.estimates.DELETE"],
             ["ZohoBooks.fullaccess.all"],
-            ["ZohoInventory.items.CREATE"],
+            ["ZohoInventory.inventoryadjustments.CREATE"],
             ["ZohoBooks.invoices.CREATE"],
         ):
             with self.assertRaises(tool.ZohoError):
@@ -167,6 +174,119 @@ class ZohoToolTests(unittest.TestCase):
                     {"organization_id": "2", "name": "FRP Depot Test"},
                 ]
             )
+
+
+    def test_item_tool_write_endpoints_and_payload_are_narrow(self) -> None:
+        captured = []
+
+        def fake_urlopen(request, timeout):
+            captured.append((request.get_method(), request.full_url, json.loads(request.data)))
+            return FakeResponse({"code": 0, "item": {"item_id": "123", "name": "Panel", "sku": "P-1"}})
+
+        with patch.object(item_tool, "urlopen", side_effect=fake_urlopen):
+            item_tool.api_write_allowed(
+                "token", tool.EXPECTED_API_DOMAIN, "POST", "/inventory/v1/items", "99",
+                {"name": "Panel", "sku": "P-1"},
+            )
+            item_tool.api_write_allowed(
+                "token", tool.EXPECTED_API_DOMAIN, "PUT", "/inventory/v1/items/123", "99",
+                {"name": "Panel revised", "sku": "P-2"},
+            )
+        self.assertEqual(captured[0][0], "POST")
+        self.assertEqual(captured[1][0], "PUT")
+        with self.assertRaises(item_tool.ItemToolError):
+            item_tool.api_write_allowed(
+                "token", tool.EXPECTED_API_DOMAIN, "PUT", "/inventory/v1/items/123", "99",
+                {"name": "Panel", "initial_stock": 100},
+            )
+        with self.assertRaises(item_tool.ItemToolError):
+            item_tool.api_write_allowed(
+                "token", tool.EXPECTED_API_DOMAIN, "DELETE", "/inventory/v1/items/123", "99", {},
+            )
+        with self.assertRaises(item_tool.ItemToolError):
+            item_tool.api_write_allowed(
+                "token", tool.EXPECTED_API_DOMAIN, "POST", "/inventory/v1/items/active", "99", {},
+            )
+
+    def test_item_create_staging_requires_sources_and_forbids_stock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            input_path = temp_path / "item.json"
+            input_path.write_text(
+                json.dumps(
+                    {
+                        "name": "FRP panel",
+                        "sku": "FRP-001",
+                        "rate": 25,
+                        "sources": {
+                            "name": "Rachad's words",
+                            "sku": "Rachad's words",
+                            "rate": "approved price list",
+                        },
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(item_tool, "PLAN_DIR", temp_path / "plans"), patch.object(
+                item_tool.zoho_tool, "append_receipt"
+            ):
+                item_tool.command_stage_create(argparse.Namespace(input=str(input_path)))
+            plans = list((temp_path / "plans").glob("*.json"))
+            self.assertEqual(len(plans), 1)
+            plan = json.loads(plans[0].read_text(encoding="utf-8"))
+            self.assertEqual(plan["payload"]["sku"], "FRP-001")
+            self.assertNotIn("initial_stock", plan["payload"])
+
+            input_path.write_text(
+                json.dumps(
+                    {
+                        "name": "Bad stock write",
+                        "initial_stock": 5,
+                        "sources": {"name": "test", "initial_stock": "test"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(item_tool.ItemToolError, "REFUSED"):
+                item_tool.command_stage_create(argparse.Namespace(input=str(input_path)))
+
+            input_path.write_text(
+                json.dumps({"name": "Missing source", "sku": "X", "sources": {"name": "test"}}),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(item_tool.ItemToolError, "sources.sku"):
+                item_tool.command_stage_create(argparse.Namespace(input=str(input_path)))
+
+    def test_name_sku_plan_reads_current_item_and_changes_only_name_sku(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            input_path = temp_path / "change.json"
+            input_path.write_text(
+                json.dumps(
+                    {
+                        "item_id": "123",
+                        "new_name": "Panel - Standard",
+                        "new_sku": "PNL-STD",
+                        "sources": {"name": "Rachad's words", "sku": "Rachad's words"},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            fake_vault = {"api_domain": tool.EXPECTED_API_DOMAIN, "inventory_organization_id": "99"}
+            with patch.object(item_tool, "PLAN_DIR", temp_path / "plans"), patch.object(
+                item_tool.zoho_tool, "append_receipt"
+            ), patch.object(item_tool.zoho_tool, "load_vault", return_value=fake_vault), patch.object(
+                item_tool.zoho_tool, "refresh_access_token", return_value=("token", fake_vault)
+            ), patch.object(item_tool.zoho_tool, "save_vault"), patch.object(
+                item_tool, "get_item", return_value={"item_id": "123", "name": "Old", "sku": "OLD"}
+            ):
+                item_tool.command_stage_name_sku(argparse.Namespace(input=str(input_path)))
+            plan_path = next((temp_path / "plans").glob("*.json"))
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            self.assertEqual(plan["payload"], {"name": "Panel - Standard", "sku": "PNL-STD"})
+            self.assertEqual(plan["summary"]["before"]["name"], "Old")
+            self.assertNotIn("rate", plan["payload"])
+            self.assertNotIn("stock_on_hand", plan["payload"])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,7 @@ if errorlevel 1 (
   echo CONNECTION FAILED. Read the error above.
 ) else (
   echo.
-  echo ZOHO CONNECTED WITH RESTRICTED CUSTOMER AND DRAFT QUOTE CREATION.
+  echo ZOHO CONNECTED WITH THE RESTRICTED NAMED WRITE TOOLS.
 )
 pause
 endlocal

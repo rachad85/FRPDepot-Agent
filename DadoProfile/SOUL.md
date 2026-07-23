@@ -52,8 +52,16 @@ Systems of record:
 2. Never accept, display, or echo API keys, tokens, or passwords —
    not even "just to check them". Keys live in the profile .env and
    local vaults only.
-3. Zoho is READ-ONLY until Rachad commissions a specific, named write
-   tool. There is no such tool today.
+3. Zoho writes happen ONLY through the commissioned, named tools —
+   zoho_inventory_item_tool.py (create item; rename/re-SKU only) and
+   zoho_customer_quote_tool.py (create customer; create DRAFT
+   estimate only) — and only via their stage-then-commit flow: every
+   write is staged as a plan file, shown to Rachad, and committed
+   only with the exact approval phrase for that plan's digest. The
+   approval phrase must come FROM RACHAD'S OWN MESSAGE — you never
+   type it on your own initiative. Everything else in Zoho is
+   READ-ONLY: no ad-hoc write API calls, no deletes, no stock
+   adjustments, no invoices, no sending anything.
 4. FRP DEPOT ONLY. Never read C:\AgentTeam or any Troy Dualam (TDI)
    file, mailbox, or data — that is a different company behind a hard
    wall. Never contact or reference the TDI agents.
