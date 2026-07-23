@@ -50,6 +50,7 @@ REQUESTED_SCOPES = (
 REQUIRED_TOKEN_SCOPES = {"User.Read", "Mail.ReadWrite", "Calendars.Read"}
 FORBIDDEN_TOKEN_SCOPE = "Mail.Send"
 DPAPI_DESCRIPTION = "FRP Depot Outlook refresh token"
+FORBIDDEN_REPLY_DOMAINS = {"troydualam.com"}
 
 
 class OutlookError(RuntimeError):
@@ -536,6 +537,194 @@ def plain_text_to_html(value: str) -> str:
     return "".join(paragraphs)
 
 
+def message_address(field: dict[str, Any] | None) -> str:
+    return str(((field or {}).get("emailAddress") or {}).get("address") or "").strip().casefold()
+
+
+def recipient_addresses(values: list[dict[str, Any]] | None) -> list[str]:
+    return [address for address in (message_address(value) for value in values or []) if address]
+
+
+def message_participants(message: dict[str, Any]) -> set[str]:
+    values = [message.get("from"), message.get("sender")]
+    values.extend(message.get("toRecipients") or [])
+    values.extend(message.get("ccRecipients") or [])
+    values.extend(message.get("replyTo") or [])
+    return {address for address in (message_address(value) for value in values) if address}
+
+
+def assert_reply_participants_safe(addresses: set[str]) -> None:
+    forbidden = sorted(
+        address
+        for address in addresses
+        if any(address.endswith("@" + domain) for domain in FORBIDDEN_REPLY_DOMAINS)
+    )
+    if forbidden:
+        raise OutlookError(
+            "Reply All blocked by the company wall; use only the sanctioned inter-company relay."
+        )
+
+
+def message_datetime(message: dict[str, Any]) -> str:
+    return str(
+        message.get("receivedDateTime")
+        or message.get("sentDateTime")
+        or message.get("createdDateTime")
+        or ""
+    )
+
+
+def conversation_messages(access_token: str, conversation_id: str) -> list[dict[str, Any]]:
+    safe_conversation_id = conversation_id.replace("'", "''")
+    query = urlencode(
+        {
+            "$filter": f"conversationId eq '{safe_conversation_id}'",
+            "$select": (
+                "id,conversationId,subject,from,sender,toRecipients,ccRecipients,replyTo,"
+                "receivedDateTime,sentDateTime,createdDateTime,lastModifiedDateTime,isDraft"
+            ),
+            "$top": "100",
+        }
+    )
+    result = graph_request(access_token, "GET", "/me/messages?" + query)
+    if result.get("@odata.nextLink"):
+        raise OutlookError("Reply All blocked: the conversation exceeds the 100-message safety limit.")
+    return list(result.get("value") or [])
+
+
+def latest_non_draft(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    candidates = [message for message in messages if message.get("isDraft") is not True]
+    return max(candidates, key=message_datetime) if candidates else None
+
+
+def resolve_source_message(access_token: str, match: str) -> dict[str, Any]:
+    """Resolve a reply target by a short, reliable search term instead of a raw
+    ~150-char Graph message id. Hand-carrying that id through a JSON input file is
+    what corrupts it and produces the 'malformed id' HTTP 400 - the encoding and
+    the general /me/messages/{id} endpoint are both fine with a clean id.
+
+    Returns the newest EXTERNAL, non-draft message whose sender address or subject
+    contains *match* (case-insensitive). Raises with a candidate list when the term
+    is empty, matches nothing, or spans more than one conversation."""
+    needle = str(match or "").strip().casefold()
+    if not needle:
+        raise OutlookError("Reply All resolve: source_match is empty.")
+    query = (
+        "/me/messages?$top=50&$orderby="
+        + quote("receivedDateTime desc", safe="")
+        + "&$select="
+        + quote("id,conversationId,subject,from,sender,receivedDateTime,isDraft", safe="")
+    )
+    messages = graph_request(access_token, "GET", query).get("value") or []
+    hits: list[dict[str, Any]] = []
+    for message in messages:
+        if message.get("isDraft") is True:
+            continue
+        sender = message_address(message.get("from")) or message_address(message.get("sender"))
+        if not sender or sender.endswith("@frpdepots.com"):
+            continue  # external senders only
+        subject = str(message.get("subject") or "").casefold()
+        if needle in sender or needle in subject:
+            hits.append(message)
+    if not hits:
+        raise OutlookError(
+            f"Reply All resolve: no external message in the recent mailbox matches '{match}'."
+        )
+    newest_by_conversation: dict[str, dict[str, Any]] = {}
+    for message in hits:
+        cid = str(message.get("conversationId") or "")
+        if cid not in newest_by_conversation or message_datetime(message) > message_datetime(
+            newest_by_conversation[cid]
+        ):
+            newest_by_conversation[cid] = message
+    if len(newest_by_conversation) > 1:
+        listing = "; ".join(
+            f'"{str(m.get("subject") or "")[:50]}" from '
+            f'{message_address(m.get("from")) or message_address(m.get("sender"))}'
+            for m in sorted(newest_by_conversation.values(), key=message_datetime, reverse=True)[:5]
+        )
+        raise OutlookError(
+            f"Reply All resolve: '{match}' matches {len(newest_by_conversation)} conversations - "
+            f"use a more specific source_match. Candidates: {listing}"
+        )
+    return max(hits, key=message_datetime)
+
+
+def find_standalone_drafts(access_token: str, recipient_address: str) -> list[dict[str, Any]]:
+    """Draft messages addressed (To or Cc) to *recipient_address*. Used to locate an
+    obsolete standalone draft to supersede without hand-carrying its id either."""
+    target = str(recipient_address or "").strip().casefold()
+    if not target:
+        return []
+    query = (
+        "/me/mailFolders/drafts/messages?$top=50&$orderby="
+        + quote("lastModifiedDateTime desc", safe="")
+        + "&$select="
+        + quote("id,subject,toRecipients,ccRecipients,conversationId,isDraft,createdDateTime", safe="")
+    )
+    drafts = graph_request(access_token, "GET", query).get("value") or []
+    matches: list[dict[str, Any]] = []
+    for draft in drafts:
+        if draft.get("isDraft") is not True:
+            continue
+        recipients = recipient_addresses(draft.get("toRecipients")) + recipient_addresses(
+            draft.get("ccRecipients")
+        )
+        if target in recipients:
+            matches.append(draft)
+    return matches
+
+
+def add_official_inline_attachments(
+    access_token: str,
+    draft_id: str,
+    signature_bundle: dict[str, Any],
+) -> int:
+    encoded_id = quote(draft_id, safe="")
+    expected_content_ids: set[str] = set()
+    for attachment in signature_bundle["inline_attachments"]:
+        attachment_path = Path(str(attachment.get("path") or ""))
+        try:
+            content_bytes = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
+        except OSError as exc:
+            raise OutlookError(f"Official signature image is unreadable: {attachment_path}") from exc
+        content_id = str(attachment.get("content_id") or "")
+        attachment_payload = {
+            "@odata.type": "#microsoft.graph.fileAttachment",
+            "name": str(attachment.get("name") or attachment_path.name),
+            "contentType": str(attachment.get("content_type") or "application/octet-stream"),
+            "contentBytes": content_bytes,
+            "contentId": content_id,
+            "isInline": True,
+        }
+        graph_request(
+            access_token,
+            "POST",
+            f"/me/messages/{encoded_id}/attachments",
+            attachment_payload,
+        )
+        if content_id:
+            expected_content_ids.add(content_id)
+
+    verified = graph_request(access_token, "GET", f"/me/messages/{encoded_id}?$select=id,isDraft")
+    if verified.get("isDraft") is not True:
+        raise OutlookError("Microsoft Graph could not re-verify the signed message as a draft.")
+    # Microsoft documents that hasAttachments stays false for inline-only attachments.
+    attachment_rows = graph_request(
+        access_token,
+        "GET",
+        f"/me/messages/{encoded_id}/attachments",
+    ).get("value") or []
+    found_content_ids = {
+        str(row.get("contentId") or "")
+        for row in attachment_rows
+        if row.get("isInline") is True
+    }
+    if not expected_content_ids.issubset(found_content_ids):
+        raise OutlookError("Microsoft Graph did not confirm the inline signature logo attachment.")
+    return len(signature_bundle["inline_attachments"])
+
+
 def command_draft(args: argparse.Namespace) -> None:
     signature_bundle = load_official_signature_bundle()
     plain_signature = fit_profile_signature()
@@ -581,28 +770,7 @@ def command_draft(args: argparse.Namespace) -> None:
 
     inline_count = 0
     if signature_bundle:
-        encoded_id = quote(draft_id, safe="")
-        for attachment in signature_bundle["inline_attachments"]:
-            attachment_path = Path(str(attachment.get("path") or ""))
-            try:
-                content_bytes = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
-            except OSError as exc:
-                raise OutlookError(f"Official signature image is unreadable: {attachment_path}") from exc
-            attachment_payload = {
-                "@odata.type": "#microsoft.graph.fileAttachment",
-                "name": str(attachment.get("name") or attachment_path.name),
-                "contentType": str(attachment.get("content_type") or "application/octet-stream"),
-                "contentBytes": content_bytes,
-                "contentId": str(attachment.get("content_id") or ""),
-                "isInline": True,
-            }
-            graph_request(access_token, "POST", f"/me/messages/{encoded_id}/attachments", attachment_payload)
-            inline_count += 1
-        verified = graph_request(access_token, "GET", f"/me/messages/{encoded_id}?$select=id,isDraft,hasAttachments")
-        if verified.get("isDraft") is not True:
-            raise OutlookError("Microsoft Graph could not re-verify the signed message as a draft.")
-        if inline_count and verified.get("hasAttachments") is not True:
-            raise OutlookError("Microsoft Graph did not confirm the inline signature logo attachment.")
+        inline_count = add_official_inline_attachments(access_token, draft_id, signature_bundle)
 
     append_receipt("outlook_draft_created", draft_id)
     print(
@@ -624,6 +792,230 @@ def command_draft(args: argparse.Namespace) -> None:
     )
 
 
+def command_reply_all(args: argparse.Namespace) -> None:
+    signature_bundle = load_official_signature_bundle()
+    if not signature_bundle:
+        raise OutlookError("Reply All blocked: the official HTML Outlook signature bundle is missing.")
+    try:
+        draft_input = json.loads(Path(args.input).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise OutlookError("Reply All input must be a readable JSON file.") from exc
+
+    # Identify the message to reply to WITHOUT hand-carrying a fragile ~150-char
+    # Graph id: prefer a short `source_match` (sender address or subject substring)
+    # that the tool resolves to the exact id itself. A clean `source_message_id`
+    # still works for callers that already hold one.
+    source_message_id = str(draft_input.get("source_message_id") or "").strip()
+    source_match = str(draft_input.get("source_match") or "").strip()
+
+    # Body may be inline (`body_text`/`body_html`) or read raw from a file
+    # (`body_text_file`/`body_html_file`) - the file form avoids corruption when the
+    # body is long or was produced by a line-numbering reader.
+    body_text = str(draft_input.get("body_text") or "").rstrip()
+    body_html = str(draft_input.get("body_html") or "").strip()
+    for field, is_html in (("body_text_file", False), ("body_html_file", True)):
+        path_value = str(draft_input.get(field) or "").strip()
+        if not path_value:
+            continue
+        try:
+            content = Path(path_value).read_text(encoding="utf-8")
+        except OSError as exc:
+            raise OutlookError(f"Reply All input: cannot read {field} '{path_value}'.") from exc
+        if is_html and not body_html:
+            body_html = content.strip()
+        elif not is_html and not body_text:
+            body_text = content.rstrip()
+
+    if not (source_message_id or source_match) or not (body_text or body_html):
+        raise OutlookError(
+            "Reply All input needs source_message_id or source_match, plus body_text/body_html "
+            "(or body_text_file/body_html_file)."
+        )
+
+    superseded_draft_id = str(draft_input.get("superseded_draft_id") or "").strip()
+    superseded_subject = str(draft_input.get("superseded_subject") or "").strip()
+    replace_standalone = bool(draft_input.get("replace_standalone"))
+    if bool(superseded_draft_id) != bool(superseded_subject):
+        raise OutlookError(
+            "Replacing a draft requires both superseded_draft_id and superseded_subject."
+        )
+
+    access_token, _ = refresh_access_token()
+    if not source_message_id:
+        source_message_id = str(resolve_source_message(access_token, source_match).get("id") or "")
+        if not source_message_id:
+            raise OutlookError("Reply All resolve: could not determine a source message id.")
+    encoded_source_id = quote(source_message_id, safe="")
+    source = graph_request(
+        access_token,
+        "GET",
+        (
+            f"/me/messages/{encoded_source_id}?$select=id,conversationId,subject,from,sender,"
+            "toRecipients,ccRecipients,replyTo,receivedDateTime,sentDateTime,createdDateTime,isDraft"
+        ),
+    )
+    if source.get("isDraft") is True:
+        raise OutlookError("Reply All blocked: the selected source message is a draft.")
+    conversation_id = str(source.get("conversationId") or "")
+    if not conversation_id:
+        raise OutlookError("Reply All blocked: the source message has no Outlook conversation ID.")
+    source_sender = message_address(source.get("from")) or message_address(source.get("sender"))
+    if not source_sender or source_sender.endswith("@frpdepots.com"):
+        raise OutlookError("Reply All blocked: select the latest external message in the thread.")
+    assert_reply_participants_safe(message_participants(source))
+
+    # Auto-detect the obsolete standalone draft to supersede (so its id, too, need
+    # not be hand-carried). Only a draft OUTSIDE this conversation counts as the
+    # standalone one; same-thread drafts are handled by the duplicate-draft guard.
+    if replace_standalone and not superseded_draft_id:
+        standalones = [
+            draft
+            for draft in find_standalone_drafts(access_token, source_sender)
+            if str(draft.get("conversationId") or "") != conversation_id
+        ]
+        if len(standalones) == 1:
+            superseded_draft_id = str(standalones[0].get("id") or "")
+            superseded_subject = str(standalones[0].get("subject") or "")
+        elif len(standalones) > 1:
+            raise OutlookError(
+                "Reply All: more than one standalone draft is addressed to this recipient; "
+                "set superseded_draft_id explicitly to choose one."
+            )
+        # zero standalone drafts -> nothing to supersede; proceed
+
+    messages = conversation_messages(access_token, conversation_id)
+    latest = latest_non_draft(messages)
+    if not latest or str(latest.get("id") or "") != source_message_id:
+        raise OutlookError("Reply All blocked: a newer non-draft message exists in the live thread.")
+    same_response_drafts = [
+        message
+        for message in messages
+        if message.get("isDraft") is True
+        and message_datetime(message) >= message_datetime(source)
+    ]
+    if same_response_drafts:
+        raise OutlookError("Reply All blocked: an active reply draft already exists for this response.")
+
+    if superseded_draft_id:
+        encoded_superseded_id = quote(superseded_draft_id, safe="")
+        superseded = graph_request(
+            access_token,
+            "GET",
+            f"/me/messages/{encoded_superseded_id}?$select=id,isDraft,subject",
+        )
+        if superseded.get("isDraft") is not True or superseded.get("subject") != superseded_subject:
+            raise OutlookError("The named superseded Outlook draft did not pass its identity check.")
+
+    created = graph_request(
+        access_token,
+        "POST",
+        f"/me/messages/{encoded_source_id}/createReplyAll",
+    )
+    draft_id = str(created.get("id") or "")
+    if not draft_id or created.get("isDraft") is not True:
+        raise OutlookError("Microsoft Graph did not confirm the Reply All message as a draft.")
+    encoded_draft_id = quote(draft_id, safe="")
+    reply_state = graph_request(
+        access_token,
+        "GET",
+        (
+            f"/me/messages/{encoded_draft_id}?$select=id,isDraft,conversationId,subject,body,"
+            "toRecipients,ccRecipients,bccRecipients"
+        ),
+    )
+    generated_to = recipient_addresses(reply_state.get("toRecipients"))
+    generated_cc = recipient_addresses(reply_state.get("ccRecipients"))
+    generated_bcc = recipient_addresses(reply_state.get("bccRecipients"))
+    if not generated_to or generated_bcc:
+        raise OutlookError("Reply All blocked: Microsoft generated unsafe recipient fields.")
+    if len(generated_to + generated_cc) != len(set(generated_to + generated_cc)):
+        raise OutlookError("Reply All blocked: Microsoft generated duplicate recipients.")
+    assert_reply_participants_safe(set(generated_to + generated_cc))
+
+    quoted_body = str((reply_state.get("body") or {}).get("content") or "")
+    quoted_type = str((reply_state.get("body") or {}).get("contentType") or "")
+    quoted_html = quoted_body if quoted_type.casefold() == "html" else plain_text_to_html(quoted_body)
+    new_body_html = body_html or plain_text_to_html(body_text)
+    full_body = (
+        new_body_html
+        + '<br><br><div class="frp-depots-official-signature">'
+        + str(signature_bundle["html"])
+        + "</div><br><br>"
+        + quoted_html
+    )
+    graph_request(
+        access_token,
+        "PATCH",
+        f"/me/messages/{encoded_draft_id}",
+        {"body": {"contentType": "HTML", "content": full_body}},
+    )
+    inline_count = add_official_inline_attachments(
+        access_token,
+        draft_id,
+        signature_bundle,
+    )
+
+    final = graph_request(
+        access_token,
+        "GET",
+        (
+            f"/me/messages/{encoded_draft_id}?$select=id,isDraft,conversationId,subject,body,"
+            "toRecipients,ccRecipients,bccRecipients"
+        ),
+    )
+    final_body = str((final.get("body") or {}).get("content") or "")
+    final_to = recipient_addresses(final.get("toRecipients"))
+    final_cc = recipient_addresses(final.get("ccRecipients"))
+    final_bcc = recipient_addresses(final.get("bccRecipients"))
+    checks = {
+        "is_draft": final.get("isDraft") is True,
+        "same_conversation": final.get("conversationId") == conversation_id,
+        "subject_preserved": final.get("subject") == reply_state.get("subject"),
+        "to_preserved": set(final_to) == set(generated_to),
+        "cc_preserved": set(final_cc) == set(generated_cc),
+        "bcc_empty": not final_bcc,
+        "quoted_history_preserved": quoted_html in final_body,
+        "official_signature_once": final_body.count('class="frp-depots-official-signature"') == 1,
+    }
+    if not all(checks.values()):
+        raise OutlookError("Reply All draft failed final verification: " + json.dumps(checks))
+    assert_reply_participants_safe(set(final_to + final_cc))
+
+    latest_after = latest_non_draft(conversation_messages(access_token, conversation_id))
+    if not latest_after or str(latest_after.get("id") or "") != source_message_id:
+        raise OutlookError("Reply All draft blocked: a newer source message arrived during drafting.")
+
+    if superseded_draft_id:
+        graph_request(
+            access_token,
+            "DELETE",
+            f"/me/messages/{quote(superseded_draft_id, safe='')}",
+        )
+        append_receipt("outlook_superseded_draft_removed", superseded_draft_id)
+
+    append_receipt("outlook_reply_all_draft_created", draft_id)
+    print(
+        json.dumps(
+            {
+                "status": "REPLY_ALL_DRAFT_CREATED_NOT_SENT",
+                "id": draft_id,
+                "source_message_id": source_message_id,
+                "conversation_id": conversation_id,
+                "to": final_to,
+                "cc": final_cc,
+                "subject": final.get("subject"),
+                "body_text": body_text,
+                "quoted_history_preserved": True,
+                "official_signature_source_message_id": signature_bundle.get("source_message_id"),
+                "inline_signature_images": inline_count,
+                "superseded_draft_removed": bool(superseded_draft_id),
+                "checks": checks,
+            },
+            indent=2,
+        )
+    )
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="FRP Depot Outlook read/draft-only connector")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -639,6 +1031,12 @@ def build_parser() -> argparse.ArgumentParser:
     draft = commands.add_parser("draft", help="Create an Outlook draft from JSON")
     draft.add_argument("--input", required=True)
     draft.set_defaults(func=command_draft)
+    reply_all = commands.add_parser(
+        "reply-all",
+        help="Create a Reply All draft in the live Outlook conversation from JSON",
+    )
+    reply_all.add_argument("--input", required=True)
+    reply_all.set_defaults(func=command_reply_all)
     return parser
 
 
