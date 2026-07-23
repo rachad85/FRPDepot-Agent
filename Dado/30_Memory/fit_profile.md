@@ -14,7 +14,15 @@ sheet — ask instead.
   confirmed.
 - Website / email domain: www.frpdepots.com / frpdepots.com.
 - Rachad's FRP Depot email address: info@frpdepots.com (verified by Microsoft Graph)
-- Rachad's standard email signature block (paste exactly):
+- Rachad's standard email signature block (verified from repeated Outlook Sent Items):
+  Rachad Homsi
+  CEO
+
+  www.frpdepots.com
+  Direct : +1 613-704-7963
+  4507 Ferguson Dr.
+  Brockville, Ontario, Canada
+  K6T 1A9
 
 ## Commercial rules
 - Currency: Verified transactions use CAD and USD. No single default currency is confirmed.
@@ -46,3 +54,9 @@ sheet — ask instead.
   Catalog Tool**. It may create approved items and update only approved existing
   item names/SKUs. It cannot delete items, change existing prices, adjust stock,
   change quantities, or write orders, invoices, transfers, or payments.
+- 2026-07-23 correction from Rachad: An RFQ sweep must cross-check the live
+  Outlook thread against Zoho Books transaction/payment status and Zoho
+  Inventory item, price, and stock data before calling it open. Formal RFQs are
+  prepared as DRAFT estimates inside Zoho Books for Rachad to inspect and send.
+  Only when Rachad asks for quick item pricing is the response prepared as an
+  Outlook draft without a Zoho estimate. Dado never sends either one.

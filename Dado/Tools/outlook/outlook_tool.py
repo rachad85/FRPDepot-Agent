@@ -17,6 +17,7 @@ import ctypes
 from ctypes import wintypes
 from datetime import datetime, timezone
 import getpass
+import html
 import json
 import os
 from pathlib import Path
@@ -26,7 +27,7 @@ import sys
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
 import uuid
 
@@ -37,6 +38,8 @@ LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" /
 VAULT_DIR = LOCALAPPDATA / "FRPDepot-Outlook"
 CONFIG_PATH = VAULT_DIR / "config.json"
 TOKEN_PATH = VAULT_DIR / "refresh_token.dpapi"
+OFFICIAL_SIGNATURE_DIR = ROOT / "Dado" / "20_Working" / "outlook_signature"
+OFFICIAL_SIGNATURE_BUNDLE = OFFICIAL_SIGNATURE_DIR / "official_signature_bundle.json"
 GRAPH_BASE = "https://graph.microsoft.com/v1.0"
 REQUESTED_SCOPES = (
     "https://graph.microsoft.com/User.Read",
@@ -366,10 +369,10 @@ def mailbox_address(me: dict[str, Any]) -> str:
 
 def fit_profile_signature(path: Path = FIT_PROFILE) -> str:
     text = path.read_text(encoding="utf-8")
-    marker = "- Rachad's standard email signature block (paste exactly):"
+    marker = "- Rachad's standard email signature block"
     for index, line in enumerate(text.splitlines()):
         if line.startswith(marker):
-            same_line = line[len(marker) :].strip()
+            same_line = line.split(":", 1)[1].strip() if ":" in line else ""
             if same_line:
                 return same_line
             collected: list[str] = []
@@ -503,11 +506,42 @@ def command_unread(args: argparse.Namespace) -> None:
     print(json.dumps({"mailbox": load_config().get("mailbox"), "unread": messages}, indent=2))
 
 
+def load_official_signature_bundle(path: Path = OFFICIAL_SIGNATURE_BUNDLE) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        bundle = json.loads(path.read_text(encoding="utf-8"))
+        html_path = Path(str(bundle["signature_html_path"]))
+        signature_html = html_path.read_text(encoding="utf-8")
+    except (OSError, KeyError, json.JSONDecodeError) as exc:
+        raise OutlookError("Official Outlook signature bundle is unreadable.") from exc
+    if "Rachad Homsi" not in signature_html or "frpdepots.com" not in signature_html.casefold():
+        raise OutlookError("Official Outlook signature bundle failed its identity check.")
+    inline_attachments = bundle.get("inline_attachments") or []
+    if not isinstance(inline_attachments, list):
+        raise OutlookError("Official Outlook signature attachments are invalid.")
+    return {
+        "html": signature_html,
+        "inline_attachments": inline_attachments,
+        "source_message_id": bundle.get("source_message_id"),
+        "source_sent_datetime": bundle.get("source_sent_datetime"),
+    }
+
+
+def plain_text_to_html(value: str) -> str:
+    paragraphs = []
+    for paragraph in re.split(r"\n\s*\n", value.strip()):
+        lines = "<br>".join(html.escape(line) for line in paragraph.splitlines())
+        paragraphs.append(f'<p style="font-family:Calibri,Arial,sans-serif;font-size:11pt">{lines}</p>')
+    return "".join(paragraphs)
+
+
 def command_draft(args: argparse.Namespace) -> None:
-    signature = fit_profile_signature()
-    if not signature:
+    signature_bundle = load_official_signature_bundle()
+    plain_signature = fit_profile_signature()
+    if not signature_bundle and not plain_signature:
         raise OutlookError(
-            "Draft blocked: Rachad's standard email signature is missing from fit_profile.md."
+            "Draft blocked: Rachad's standard email signature is missing from Outlook and fit_profile.md."
         )
     try:
         draft_input = json.loads(Path(args.input).read_text(encoding="utf-8"))
@@ -518,16 +552,24 @@ def command_draft(args: argparse.Namespace) -> None:
         raise OutlookError("Draft input needs at least one To address.")
     subject = str(draft_input.get("subject") or "").strip()
     body_text = str(draft_input.get("body_text") or "").rstrip()
-    if not subject or not body_text:
-        raise OutlookError("Draft input needs both subject and body_text.")
-    full_body = body_text + "\n\n" + signature.rstrip()
+    body_html = str(draft_input.get("body_html") or "").strip()
+    if not subject or not (body_text or body_html):
+        raise OutlookError("Draft input needs a subject and body_text or body_html.")
+
+    if signature_bundle:
+        message_body = body_html or plain_text_to_html(body_text)
+        full_body = message_body + '<br><br><div class="frp-depots-official-signature">' + str(signature_bundle["html"]) + "</div>"
+        content_type = "HTML"
+    else:
+        full_body = body_text + "\n\n" + plain_signature.rstrip()
+        content_type = "Text"
 
     def graph_recipients(values: list[str]) -> list[dict[str, dict[str, str]]]:
         return [{"emailAddress": {"address": str(value).strip()}} for value in values]
 
     payload = {
         "subject": subject,
-        "body": {"contentType": "Text", "content": full_body},
+        "body": {"contentType": content_type, "content": full_body},
         "toRecipients": graph_recipients(recipients),
         "ccRecipients": graph_recipients(draft_input.get("cc") or []),
     }
@@ -536,6 +578,32 @@ def command_draft(args: argparse.Namespace) -> None:
     draft_id = str(created.get("id") or "")
     if not draft_id or created.get("isDraft") is not True:
         raise OutlookError("Microsoft Graph did not confirm that the message is a draft.")
+
+    inline_count = 0
+    if signature_bundle:
+        encoded_id = quote(draft_id, safe="")
+        for attachment in signature_bundle["inline_attachments"]:
+            attachment_path = Path(str(attachment.get("path") or ""))
+            try:
+                content_bytes = base64.b64encode(attachment_path.read_bytes()).decode("ascii")
+            except OSError as exc:
+                raise OutlookError(f"Official signature image is unreadable: {attachment_path}") from exc
+            attachment_payload = {
+                "@odata.type": "#microsoft.graph.fileAttachment",
+                "name": str(attachment.get("name") or attachment_path.name),
+                "contentType": str(attachment.get("content_type") or "application/octet-stream"),
+                "contentBytes": content_bytes,
+                "contentId": str(attachment.get("content_id") or ""),
+                "isInline": True,
+            }
+            graph_request(access_token, "POST", f"/me/messages/{encoded_id}/attachments", attachment_payload)
+            inline_count += 1
+        verified = graph_request(access_token, "GET", f"/me/messages/{encoded_id}?$select=id,isDraft,hasAttachments")
+        if verified.get("isDraft") is not True:
+            raise OutlookError("Microsoft Graph could not re-verify the signed message as a draft.")
+        if inline_count and verified.get("hasAttachments") is not True:
+            raise OutlookError("Microsoft Graph did not confirm the inline signature logo attachment.")
+
     append_receipt("outlook_draft_created", draft_id)
     print(
         json.dumps(
@@ -545,7 +613,11 @@ def command_draft(args: argparse.Namespace) -> None:
                 "to": recipients,
                 "cc": draft_input.get("cc") or [],
                 "subject": subject,
-                "body": full_body,
+                "body_text": body_text,
+                "content_type": content_type,
+                "official_signature_source_message_id": (signature_bundle or {}).get("source_message_id"),
+                "official_signature_source_sent_datetime": (signature_bundle or {}).get("source_sent_datetime"),
+                "inline_signature_images": inline_count,
             },
             indent=2,
         )

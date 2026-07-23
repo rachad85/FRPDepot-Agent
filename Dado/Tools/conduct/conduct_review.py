@@ -190,6 +190,18 @@ def main() -> int:
         git("commit", "-m",
             f"nightly conduct review {day}: {findings} finding(s), {fixes} auto-fix(es)")
 
+    # Off-machine backup: push if a remote is configured. Failure is noted in
+    # the review file (backend reads it at session start), never pinged.
+    if "origin" in git("remote").stdout:
+        pushed = git("push", "origin", "main")
+        if pushed.returncode != 0:
+            with (REVIEW_DIR / f"{day}.md").open("a", encoding="utf-8") as handle:
+                handle.write(
+                    f"\nBACKUP NOTE: git push failed "
+                    f"({(pushed.stderr or 'no detail').strip()[:200]}); "
+                    "local history is intact.\n"
+                )
+
     # Quiet delivery policy: speak only when Rachad is genuinely needed.
     needs = next((l for l in output.splitlines() if l.startswith("NEEDS-RACHAD:")), "")
     needs_body = needs.replace("NEEDS-RACHAD:", "").strip().rstrip(".").lower()

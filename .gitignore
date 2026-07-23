@@ -4,3 +4,4 @@ Jobs/
 *.tmp
 __pycache__/
 Dado/20_Working/
+Dado/Tools/vendor/

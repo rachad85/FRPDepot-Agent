@@ -27,6 +27,12 @@ engineer.
   install).
 - Python: no `py` launcher on this server — use
   "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe".
+- GitHub remote: https://github.com/rachad85/FRPDepot-Agent (private,
+  wired 2026-07-23; nightly review pushes after its commit).
+  Dado\Tools\vendor\ is NOT tracked (~150MB reinstallable binaries she
+  bundled — cv2/onnxruntime/numpy/PIL for attachment reading; early
+  history still carries one copy). On a fresh clone, rebuild with
+  pip install --target Dado\Tools\vendor <packages>.
 
 ## Golden rules (mirror of Dado's SOUL — enforced in tools)
 1. DRAFTS ONLY — no send capability anywhere, ever.
