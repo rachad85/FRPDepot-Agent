@@ -68,14 +68,28 @@ engineer.
       memory + Aze fingerprints_notes 2026-07-23. Relay config/keys are neutral
       (%LOCALAPPDATA%\Intercompany-Relay\config.json); re-run build_config.py after
       any gateway key rotation.
-- [ ] Outlook: device-code sign-in to the FRP DEPOT mailbox (adapt
-      Aze's outlook_check/outlook_draft pattern; token cache
-      %LOCALAPPDATA%\FRPDepot-Outlook\; scopes Mail.Read,
-      Mail.ReadWrite, Calendars.Read — NEVER Mail.Send).
+- [x] Outlook LIVE (verified 2026-07-22): device-code sign-in to the FRP
+      DEPOT mailbox info@frpdepots.com; token cache
+      %LOCALAPPDATA%\FRPDepot-Outlook\; scopes User.Read, Mail.ReadWrite,
+      Calendars.Read — NEVER Mail.Send. Tools: Dado\Tools\outlook\
+      outlook_tool.py (connect/check/unread/draft/reply-all, verified
+      drafts) + outlook_check.py (READ-ONLY triage: who-spoke-last tags,
+      [draft pending], --awaiting JSON, --thread dump, --sent, calendar).
+- [x] INBOX WATCH cron LIVE (Rachad 2026-07-23, "same rules as Aze",
+      chose 2h cadence): dado-inbox-watch "0 7,9,11,13,15,17,19 * * *"
+      no-agent deliver-local → Dado\Tools\watch\dado_inbox_reasoner.py
+      (profile scripts copy runs — keep both in sync). Wrapper owns
+      delivery: [SILENT] contract, noise scrub, 3× Telegram retry +
+      undelivered queue. Charter: deep-read before alerting, alert once,
+      money-landing outranks quiet rules, uncertain = silent, DRAFTS ONLY
+      unchanged. Alert ledger Dado\30_Memory\alert_ledger.md is BINDING
+      (check before, append after, CLOSED = permanent silence). Cadence
+      offset from Aze's :30 sweeps to spread the shared openai-codex quota.
 - [ ] Zoho: Rachad creates an API client in the Zoho API console
       (one-time OAuth, like the Intuit flow); then build read-only
       Books/Inventory report tools.
-- [ ] GitHub remote (private) + first push.
+- [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
+      section above.
 
 ## How to work with Rachad
 Baby steps, numbered, one action per step with a CHECK. Buttons
