@@ -294,6 +294,87 @@ class OutlookToolTests(unittest.TestCase):
             self.assertIn(generated_body, updated_body)
             self.assertTrue(any(method == "DELETE" for method, _, _ in calls))
 
+    def test_reply_all_via_flags_resolves_match_reads_body_file_and_auto_supersedes(self) -> None:
+        with tempfile.TemporaryDirectory() as folder:
+            folder_path = Path(folder)
+            body_path = folder_path / "reply_body.txt"
+            # the exact characters that broke inline shell/python quoting
+            body_path.write_text('Dear Brian,\n\n- 12 × 6" FRP pipe, 150 psi, DK411\n\nRegards.', encoding="utf-8")
+            image_path = folder_path / "logo.jpeg"
+            image_path.write_bytes(b"not-a-real-logo")
+            bundle = {
+                "html": '<p>Rachad Homsi</p><img src="cid:logo-cid"><p>frpdepots.com</p>',
+                "inline_attachments": [{"path": str(image_path), "name": "logo.jpeg",
+                                        "content_type": "image/jpeg", "content_id": "logo-cid"}],
+                "source_message_id": "sig-src",
+            }
+            source = {
+                "id": "source-id", "conversationId": "conv-1", "subject": "RE: Pricing",
+                "from": {"emailAddress": {"address": "brian@example.com"}},
+                "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+                "ccRecipients": [], "receivedDateTime": "2026-07-23T11:00:00Z", "isDraft": False,
+            }
+            standalone = {
+                "id": "old-standalone", "conversationId": "conv-OTHER", "subject": "Pricing",
+                "toRecipients": [{"emailAddress": {"address": "brian@example.com"}}],
+                "ccRecipients": [], "isDraft": True, "createdDateTime": "2026-07-22T08:00:00Z",
+            }
+            updated_body = ""
+            calls = []
+
+            def fake_graph(token, method, path, payload=None):
+                nonlocal updated_body
+                calls.append((method, path))
+                if method == "GET" and path.startswith("/me/mailFolders/drafts/messages"):
+                    return {"value": [standalone]}
+                if method == "GET" and path.startswith("/me/messages?") and "conversationId" in path and "eq" in path:
+                    return {"value": [source]}
+                if method == "GET" and path.startswith("/me/messages?"):
+                    return {"value": [source]}
+                if method == "GET" and path.startswith("/me/messages/source-id"):
+                    return source
+                if method == "GET" and path.startswith("/me/messages/old-standalone"):
+                    return {"id": "old-standalone", "isDraft": True, "subject": "Pricing"}
+                if method == "POST" and path.endswith("/createReplyAll"):
+                    return {"id": "reply-id", "isDraft": True}
+                if method == "GET" and path.startswith("/me/messages/reply-id?"):
+                    return {"id": "reply-id", "isDraft": True, "conversationId": "conv-1",
+                            "subject": "RE: Pricing",
+                            "body": {"contentType": "HTML", "content": updated_body or "<div>hist</div>"},
+                            "toRecipients": [{"emailAddress": {"address": "brian@example.com"}}],
+                            "ccRecipients": [], "bccRecipients": []}
+                if method == "PATCH" and path == "/me/messages/reply-id":
+                    updated_body = payload["body"]["content"]
+                    return {"id": "reply-id", "isDraft": True}
+                if method == "POST" and path.endswith("/attachments"):
+                    return {"id": "att"}
+                if method == "GET" and path.endswith("/attachments"):
+                    return {"value": [{"contentId": "logo-cid", "isInline": True}]}
+                if method == "DELETE" and path == "/me/messages/old-standalone":
+                    return {}
+                self.fail(f"Unexpected Graph call: {method} {path}")
+
+            args = argparse.Namespace(
+                input=None, match="brian@example.com", source_id=None,
+                body_file=str(body_path), body_html_file=None,
+                replace_standalone=True, superseded_id=None, superseded_subject=None,
+            )
+            output = io.StringIO()
+            with (
+                patch.object(tool, "load_official_signature_bundle", return_value=bundle),
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+                patch.object(tool, "append_receipt"),
+                redirect_stdout(output),
+            ):
+                tool.command_reply_all(args)
+
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "REPLY_ALL_DRAFT_CREATED_NOT_SENT")
+            self.assertTrue(result["superseded_draft_removed"])
+            self.assertIn("12 × 6", updated_body)  # the x-sign special char survived via the file path
+            self.assertTrue(any(m == "DELETE" for m, _ in calls))
+
     def test_resolve_source_message_picks_newest_external_and_rejects_ambiguous(self) -> None:
         recent = {
             "value": [

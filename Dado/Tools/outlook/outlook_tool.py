@@ -796,10 +796,24 @@ def command_reply_all(args: argparse.Namespace) -> None:
     signature_bundle = load_official_signature_bundle()
     if not signature_bundle:
         raise OutlookError("Reply All blocked: the official HTML Outlook signature bundle is missing.")
-    try:
-        draft_input = json.loads(Path(args.input).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise OutlookError("Reply All input must be a readable JSON file.") from exc
+    if getattr(args, "input", None):
+        try:
+            draft_input = json.loads(Path(args.input).read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise OutlookError("Reply All input must be a readable JSON file.") from exc
+        if not isinstance(draft_input, dict):
+            raise OutlookError("Reply All input JSON must be an object.")
+    else:
+        # Plain-flag form: no JSON to hand-assemble, no inline quoting of the body.
+        draft_input = {
+            "source_match": getattr(args, "match", None),
+            "source_message_id": getattr(args, "source_id", None),
+            "body_text_file": getattr(args, "body_file", None),
+            "body_html_file": getattr(args, "body_html_file", None),
+            "replace_standalone": getattr(args, "replace_standalone", False),
+            "superseded_draft_id": getattr(args, "superseded_id", None),
+            "superseded_subject": getattr(args, "superseded_subject", None),
+        }
 
     # Identify the message to reply to WITHOUT hand-carrying a fragile ~150-char
     # Graph id: prefer a short `source_match` (sender address or subject substring)
@@ -1033,9 +1047,20 @@ def build_parser() -> argparse.ArgumentParser:
     draft.set_defaults(func=command_draft)
     reply_all = commands.add_parser(
         "reply-all",
-        help="Create a Reply All draft in the live Outlook conversation from JSON",
+        help="Create a Reply All draft in the live Outlook conversation",
     )
-    reply_all.add_argument("--input", required=True)
+    # Either pass a prebuilt JSON (--input) OR these plain flags (preferred: no
+    # JSON to hand-assemble, no inline quoting of the body). Write the reply body
+    # to a file with the write_file tool and point --body-file at it.
+    reply_all.add_argument("--input", help="Path to a prebuilt JSON input file (optional)")
+    reply_all.add_argument("--match", help="Short term (sender email or subject phrase) identifying the thread")
+    reply_all.add_argument("--source-id", help="Exact Graph message id, if you already hold a clean one")
+    reply_all.add_argument("--body-file", help="Path to a plain-text file holding ONLY the new reply text")
+    reply_all.add_argument("--body-html-file", help="Path to an HTML file holding ONLY the new reply body")
+    reply_all.add_argument("--replace-standalone", action="store_true",
+                           help="Auto-find and supersede the obsolete standalone draft to this recipient")
+    reply_all.add_argument("--superseded-id", help="Exact id of a draft to supersede (instead of --replace-standalone)")
+    reply_all.add_argument("--superseded-subject", help="Exact subject of the --superseded-id draft")
     reply_all.set_defaults(func=command_reply_all)
     return parser
 
