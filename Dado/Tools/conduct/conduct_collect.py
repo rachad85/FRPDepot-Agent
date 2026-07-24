@@ -44,12 +44,29 @@ def day_lines(path: Path, day: str, limit: int = 3000) -> list[str]:
     return [l for l in lines if l.startswith(day)][-limit:]
 
 
+# Receipts a batch tool emits per chunk. They are progress telemetry, not proof
+# of a business action, and a single bulk run can emit thousands -- on 2026-07-24
+# the Google indexer wrote 3,817 of the day's 4,616 receipts, so the last 60 were
+# ALL index batches and the review would have seen no draft, report or audit at
+# all. Collapsed to one line each so they cannot crowd out the real receipts.
+BATCH_RECEIPT = re.compile(r'"action":\s*"[^"]*(_batch|_index_batch)"')
+
+
 def tail_jsonl(path: Path, day: str, limit: int = 60) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
-    return [l for l in lines if day in l][-limit:]
+    today = [l for l in lines if day in l]
+    batch = [l for l in today if BATCH_RECEIPT.search(l)]
+    real = [l for l in today if not BATCH_RECEIPT.search(l)]
+    out = real[-limit:]
+    if batch:
+        out.append(
+            f'(plus {len(batch)} per-batch progress receipts collapsed -- '
+            f'telemetry, not business actions; last: {batch[-1][:160]})'
+        )
+    return out
 
 
 def whole_file(path: Path, limit_chars: int = 8000) -> str:
