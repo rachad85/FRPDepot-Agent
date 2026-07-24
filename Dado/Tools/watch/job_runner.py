@@ -80,16 +80,24 @@ def save(job: dict) -> None:
     tmp.replace(path)
 
 
-def all_jobs() -> list[dict]:
+def all_jobs() -> tuple[list[dict], list[str]]:
+    """Every job on record, plus the names of any files that would not parse.
+
+    Unreadable files are RETURNED, not swallowed. Silently skipping one means a
+    job is forgotten forever and its completion is never announced -- silence
+    that looks exactly like "nothing to report". (utf-8-sig so a stray BOM,
+    which is what PowerShell writes by default, cannot orphan a job.)
+    """
     if not JOBS_DIR.exists():
-        return []
-    jobs = []
+        return [], []
+    jobs: list[dict] = []
+    broken: list[str] = []
     for path in sorted(JOBS_DIR.glob("*.json")):
         try:
-            jobs.append(json.loads(path.read_text(encoding="utf-8")))
-        except (OSError, json.JSONDecodeError):
-            continue
-    return jobs
+            jobs.append(json.loads(path.read_text(encoding="utf-8-sig")))
+        except (OSError, json.JSONDecodeError, ValueError):
+            broken.append(path.name)
+    return jobs, broken
 
 
 def pid_alive(pid: int | None) -> bool:
@@ -111,6 +119,41 @@ def tail_of_log(job_id: str, chars: int = OUTPUT_TAIL_CHARS) -> str:
     except OSError:
         return ""
     return text[-chars:].strip()
+
+
+def summarize_output(job_id: str) -> str:
+    """One useful line for Rachad's phone.
+
+    The naive "last line of the log" is often junk: a job ending in
+    pretty-printed JSON leaves a bare "}". So prefer a trailing JSON object's
+    own summary fields, then fall back to the last line that carries real text.
+    """
+    try:
+        text = log_path(job_id).read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    tail = text[-4000:]
+    start = tail.rfind("\n{")
+    if start != -1:
+        try:
+            data = json.loads(tail[start:])
+        except (json.JSONDecodeError, ValueError):
+            data = None
+        if isinstance(data, dict):
+            bits = [f"{k}={data[k]}" for k in ("status", "resume") if data.get(k)]
+            counts = {k: v for k, v in data.items() if isinstance(v, dict)}
+            for name, block in counts.items():
+                interesting = {k: v for k, v in block.items()
+                               if k in {"processed", "fetched", "indexed", "withheld", "errors"} and v}
+                if interesting:
+                    bits.append(f"{name}: " + ", ".join(f"{k}={v}" for k, v in interesting.items()))
+            if bits:
+                return " | ".join(bits)[:300]
+    for line in reversed(tail.splitlines()):
+        stripped = line.strip().strip("{}[],")
+        if stripped:
+            return line.strip()[:200]
+    return ""
 
 
 def heartbeat_age_minutes(job_id: str) -> float | None:
@@ -200,7 +243,9 @@ def cmd_run(args: argparse.Namespace) -> int:
 # -------------------------------------------------------------------------- status
 
 def cmd_status(args: argparse.Namespace) -> int:
-    jobs = all_jobs()
+    jobs, broken = all_jobs()
+    for name in broken:
+        print(f"UNREADABLE job file: {name}")
     if not jobs:
         print("no background jobs on record")
         return 0
@@ -222,15 +267,21 @@ def cmd_status(args: argparse.Namespace) -> int:
 def cmd_watch(_: argparse.Namespace) -> int:
     """Cron mode. Announce each finished/dead job ONCE. Silent otherwise."""
     messages: list[str] = []
-    for job in all_jobs():
+    jobs, broken = all_jobs()
+    for name in broken:
+        messages.append(
+            f"A background job record could not be read ({name}). Whatever job it "
+            "tracked will never report its result — the backend should look."
+        )
+    for job in jobs:
         if job.get("reported"):
             continue
         status = job.get("status")
 
         if status in {"done", "failed"}:
-            tail = tail_of_log(job["id"], 300)
             verdict = "finished" if status == "done" else f"FAILED (exit {job['exit_code']})"
-            detail = f" Last output: {tail.splitlines()[-1][:200]}" if tail else ""
+            summary = summarize_output(job["id"])
+            detail = f" {summary}" if summary else ""
             messages.append(f"Background job '{job['name']}' {verdict}.{detail}")
             job["reported"] = True
             save(job)
