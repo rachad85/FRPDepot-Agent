@@ -166,14 +166,34 @@ engineer.
       (default 45) and resumable, since already-indexed ids are skipped.
       (4) a receipt per 20 items wrote 3,768 lines in a day, burying real
       business receipts; now one per run.
-      SCOPE IS STILL RACHAD'S CALL: the index holds ~29k personal Gmail
-      messages and Drive file CONTENT. That is broader than the narrow
-      read+draft access he scoped on 2026-07-24, whose own note called
-      "downloading every hit" deliberately out of bounds. Wall verified clean
-      after the fact: 0 rows containing "dualam"/"tdi" in any screened column
-      of either store. Note "tdi" is a SUBSTRING test, so it over-blocks
-      (one bounded 60-item run withheld 28); over-blocking is the safe
-      direction, but do not narrow "dualam" (see tdi_filter.py).
+      *** THE CACHE IS GATED CLOSED (2026-07-24) — HARD RULE 4 BREACH. ***
+      google_reference.py fails closed (exit 2) and must stay that way until
+      Rachad decides the cache's fate. Nothing was deleted.
+      WHAT HAPPENED: the screen only knows "dualam" and "tdi". Bare "troy" is
+      deliberately excluded (common name/city), so TDI material that spells out
+      neither term passed through. Verified in the live index: Aze's own
+      aze_active_task.json stored WITH CONTENT, 187 Drive rows + 240 Gmail
+      bodies mentioning "aze", 1,168 Gmail bodies mentioning "troy", 4 rows
+      naming TDI's troy_history DB, 120 Drive filenames carrying TDI's Q26-
+      quote numbering. Separately 2,610 Drive rows were stored after only their
+      FILENAME was screened: unreadable types, oversize files and extraction
+      errors return empty content, so the `if content:` screen in upsert_drive
+      is skipped and the row is written anyway — the exact inverse of this
+      tree's own rule, "SCREEN WHAT YOU RETURN, not what you happen to check."
+      METHOD WARNING — do not repeat this mistake: an initial check searched
+      stored rows for "dualam"/"tdi", found zero, and was reported as clean.
+      That is CIRCULAR — those are the terms the filter already removes, so the
+      query can only ever return zero. It proves the filter ran, NOT that TDI
+      content is absent. Probe for markers the filter does NOT screen.
+      NOT PATCHABLE IN PLACE: both index loops skip ids already stored, so
+      widening TDI_TERMS can never re-screen existing rows. Any fix is
+      delete-and-rebuild, and the rebuild needs a filter-version stamp.
+      SCOPE IS ALSO STILL RACHAD'S CALL: the index holds ~29k personal Gmail
+      messages spanning 2007-2026 plus Drive file CONTENT, ~305MB unencrypted
+      on the shared server. That is far broader than the narrow read+draft
+      access he scoped the same day, whose own note called "downloading every
+      hit" deliberately out of bounds. Default recommendation: revert to the
+      commissioned live per-query tool and keep no bulk cache.
 - [x] LONG-JOB DISCIPLINE (2026-07-24, after the 3-hour stall): Dado must
       NEVER wait on a job inside her turn. Anything over ~2 min goes through
       `Dado\Tools\watch\job_runner.py start --name X -- <cmd>` (returns in
