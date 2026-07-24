@@ -45,6 +45,32 @@ class ZohoToolTests(unittest.TestCase):
             },
             {"ZohoInventory.items.CREATE", "ZohoInventory.items.UPDATE"},
         )
+        self.assertTrue(all(scope.endswith(".READ") for scope in tool.READ_SCOPES))
+        self.assertTrue(
+            {
+                "ZohoBooks.accountants.READ",
+                "ZohoBooks.banking.READ",
+                "ZohoBooks.expenses.READ",
+                "ZohoInventory.warehouses.READ",
+                "ZohoInventory.inventorycount.READ",
+            }.issubset(set(tool.READ_SCOPES))
+        )
+
+    def test_scope_copy_uses_only_validated_configured_scopes(self) -> None:
+        with patch.object(tool.subprocess, "run") as mocked:
+            mocked.return_value.returncode = 0
+            tool.command_scope_list(argparse.Namespace(copy=True))
+        copied = mocked.call_args.kwargs["input"]
+        self.assertEqual(copied, ",".join(tool.SCOPES))
+        self.assertNotIn(".DELETE", copied)
+        self.assertNotIn("fullaccess", copied.casefold())
+
+    def test_access_probes_are_get_only_read_paths(self) -> None:
+        for _, product, template, _ in tool.READ_ACCESS_PROBES:
+            self.assertIn(product, {"books", "inventory"})
+            self.assertTrue(template.startswith(f"/{product}/"))
+            self.assertNotIn("/email", template)
+            self.assertNotIn("/send", template)
 
     def test_uncommissioned_scopes_are_refused(self) -> None:
         for scopes in (

@@ -34,6 +34,13 @@ EXPECTED_API_DOMAIN = "https://www.zohoapis.ca"
 DPAPI_DESCRIPTION = "FRP Depot Zoho restricted credentials"
 READ_SCOPES = (
     "ZohoBooks.settings.READ",
+    "ZohoBooks.accountants.READ",
+    "ZohoBooks.banking.READ",
+    "ZohoBooks.expenses.READ",
+    "ZohoBooks.debitnotes.READ",
+    "ZohoBooks.deliverychallans.READ",
+    "ZohoBooks.fixedasset.READ",
+    "ZohoBooks.projects.READ",
     "ZohoBooks.contacts.READ",
     "ZohoBooks.items.READ",
     "ZohoBooks.estimates.READ",
@@ -45,6 +52,15 @@ READ_SCOPES = (
     "ZohoBooks.bills.READ",
     "ZohoBooks.vendorpayments.READ",
     "ZohoInventory.settings.READ",
+    "ZohoInventory.debitnotes.READ",
+    "ZohoInventory.deliverychallans.READ",
+    "ZohoInventory.inventorycount.READ",
+    "ZohoInventory.moveorder.READ",
+    "ZohoInventory.picklists.READ",
+    "ZohoInventory.putaway.READ",
+    "ZohoInventory.purchasereturns.READ",
+    "ZohoInventory.reports.READ",
+    "ZohoInventory.warehouses.READ",
     "ZohoInventory.contacts.READ",
     "ZohoInventory.items.READ",
     "ZohoInventory.compositeitems.READ",
@@ -69,6 +85,14 @@ ALLOWED_WRITE_SCOPES = (
 )
 SCOPES = READ_SCOPES + ALLOWED_WRITE_SCOPES
 FORBIDDEN_SCOPE_PARTS = (".UPDATE", ".DELETE", ".ALL", "fullaccess")
+READ_ACCESS_PROBES = (
+    ("Books chart of accounts", "books", "/books/v3/chartofaccounts?organization_id={organization_id}&page=1&per_page=1", "chartofaccounts"),
+    ("Books journals", "books", "/books/v3/journals?organization_id={organization_id}&page=1&per_page=1", "journals"),
+    ("Books bank accounts", "books", "/books/v3/bankaccounts?organization_id={organization_id}&page=1&per_page=1", "bankaccounts"),
+    ("Books bank transactions", "books", "/books/v3/banktransactions?organization_id={organization_id}&page=1&per_page=1", "banktransactions"),
+    ("Books expenses", "books", "/books/v3/expenses?organization_id={organization_id}&page=1&per_page=1", "expenses"),
+    ("Inventory warehouses", "inventory", "/inventory/v1/settings/warehouses?organization_id={organization_id}", "warehouses"),
+)
 
 
 class ZohoError(RuntimeError):
@@ -328,16 +352,79 @@ def command_connect(_: argparse.Namespace) -> None:
     print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
 
 
+def command_scope_list(args: argparse.Namespace) -> None:
+    validate_scopes(SCOPES)
+    value = ",".join(SCOPES)
+    if args.copy:
+        result = subprocess.run(["clip.exe"], input=value, text=True, capture_output=True, check=False)
+        if result.returncode != 0:
+            raise ZohoError("Windows could not copy the Zoho scope list to the clipboard.")
+        print("Zoho scope list copied to the Windows clipboard.")
+        return
+    print(value)
+
+
+def command_reauthorize(_: argparse.Namespace) -> None:
+    """Replace the grant while reusing credentials held in the encrypted vault."""
+    validate_scopes(SCOPES)
+    vault = load_vault()
+    client_id = str(vault.get("client_id") or "")
+    client_secret = str(vault.get("client_secret") or "")
+    if not client_id or not client_secret:
+        raise ZohoError("The encrypted Zoho vault lacks the existing Self Client credentials.")
+    print("FRP Depot Zoho restricted reauthorization")
+    print("Enter the one-time Grant Code only in this local window. It will not be displayed.")
+    grant_code = getpass.getpass("Zoho one-time Grant Code (hidden): ").strip()
+    if not grant_code:
+        raise ZohoError("The one-time Grant Code is required.")
+    fields = {
+        "code": grant_code,
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "authorization_code",
+        "scope": ",".join(SCOPES),
+    }
+    result = token_post(fields, [client_id, client_secret, grant_code])
+    access_token = str(result.get("access_token") or "")
+    refresh_token = str(result.get("refresh_token") or "")
+    api_domain = str(result.get("api_domain") or "").rstrip("/")
+    if not access_token or not refresh_token:
+        raise ZohoError("Zoho did not return both access and refresh tokens. The existing vault was not changed.")
+    if api_domain != EXPECTED_API_DOMAIN:
+        raise ZohoError("Zoho returned a non-Canadian API domain. The existing vault was not changed.")
+
+    books_result = api_get(access_token, api_domain, "/books/v3/organizations")
+    inventory_result = api_get(access_token, api_domain, "/inventory/v1/organizations")
+    books_org = frp_organization(books_result.get("organizations") or [])
+    inventory_org = frp_organization(inventory_result.get("organizations") or [])
+    if organization_id(books_org) != str(vault.get("books_organization_id") or ""):
+        raise ZohoError("Books organization mismatch. The existing vault was not changed.")
+    if organization_id(inventory_org) != str(vault.get("inventory_organization_id") or ""):
+        raise ZohoError("Inventory organization mismatch. The existing vault was not changed.")
+
+    vault.update({
+        "refresh_token": refresh_token,
+        "api_domain": api_domain,
+        "scopes": list(SCOPES),
+        "reauthorized_utc": datetime.now(timezone.utc).isoformat(),
+    })
+    save_vault(vault)
+    append_receipt("zoho_reauthorized_expanded_restricted_access", str(VAULT_PATH))
+    print("Zoho reauthorization: SAVED FOR FRP DEPOT")
+    print("New granular read scopes: INCLUDED")
+    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
+
+
 def command_check(_: argparse.Namespace) -> None:
     vault = load_vault()
     scopes = [str(scope) for scope in vault.get("scopes") or []]
     validate_scopes(scopes)
-    if not set(ALLOWED_WRITE_SCOPES).issubset(scopes):
-        missing = sorted(set(ALLOWED_WRITE_SCOPES) - set(scopes))
+    if not set(SCOPES).issubset(scopes):
+        missing = sorted(set(SCOPES) - set(scopes))
         raise ZohoError(
-            "The saved Zoho connection lacks newly commissioned scope(s): "
+            "The saved Zoho connection lacks required restricted scope(s): "
             + ", ".join(missing)
-            + ". Generate a new grant code and run CONNECT_DADO_ZOHO.bat."
+            + ". Run PREPARE_DADO_ZOHO_ACCESS.bat, then REAUTHORIZE_DADO_ZOHO.bat."
         )
     access_token, vault = refresh_access_token(vault)
     api_domain = str(vault["api_domain"])
@@ -356,6 +443,12 @@ def command_check(_: argparse.Namespace) -> None:
         api_domain,
         f"/books/v3/invoices?organization_id={vault['books_organization_id']}&page=1&per_page=1",
     )
+    probe_results = []
+    for label, product, template, response_key in READ_ACCESS_PROBES:
+        org_id = vault[f"{product}_organization_id"]
+        result = api_get(access_token, api_domain, template.format(organization_id=org_id))
+        rows = result.get(response_key)
+        probe_results.append((label, len(rows) if isinstance(rows, list) else 0))
     save_vault(vault)
     append_receipt("zoho_restricted_connection_verified", str(VAULT_PATH))
     organization = books_org.get("organization") or {}
@@ -364,6 +457,8 @@ def command_check(_: argparse.Namespace) -> None:
     print(f"Organization: {organization.get('name') or vault.get('books_organization_name')}")
     print(f"Books invoice read: VERIFIED ({len(invoice_result.get('invoices') or [])} sample row)")
     print(f"Inventory item read: VERIFIED ({len(inventory_items.get('items') or [])} sample row)")
+    for label, count in probe_results:
+        print(f"{label}: VERIFIED ({count} sample row(s))")
     print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
@@ -374,6 +469,11 @@ def build_parser() -> argparse.ArgumentParser:
     commands = parser.add_subparsers(dest="command", required=True)
     connect = commands.add_parser("connect")
     connect.set_defaults(func=command_connect)
+    scope_list = commands.add_parser("scope-list")
+    scope_list.add_argument("--copy", action="store_true")
+    scope_list.set_defaults(func=command_scope_list)
+    reauthorize = commands.add_parser("reauthorize")
+    reauthorize.set_defaults(func=command_reauthorize)
     check = commands.add_parser("check")
     check.set_defaults(func=command_check)
     return parser

@@ -52,6 +52,12 @@ def extract_signature_html(content):
     paragraph_start = top.rfind("<p", 0, name_match.start())
     start = paragraph_start if paragraph_start >= 0 else name_match.start()
     signature = top[start:].strip()
+    signature = re.sub(
+        r'<p class="MsoNormal">',
+        '<p class="MsoNormal" style="margin:0; line-height:normal;">',
+        signature,
+        flags=re.I,
+    )
     postal = re.search(r"K6T(?:&nbsp;|\s)*1A9", signature, flags=re.I)
     if postal:
         paragraph_end = signature.find("</p>", postal.end())

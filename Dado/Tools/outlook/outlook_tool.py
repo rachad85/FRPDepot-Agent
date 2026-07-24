@@ -537,6 +537,20 @@ def plain_text_to_html(value: str) -> str:
     return "".join(paragraphs)
 
 
+def html_to_normalized_text(value: str) -> str:
+    """Compare Graph-generated HTML by meaning, not byte-for-byte markup.
+
+    Microsoft Graph may normalize attributes, whitespace, and HTML entities after
+    a draft PATCH even when the quoted Outlook history is still intact.
+    """
+    text = re.sub(r"(?is)<(script|style).*?>.*?</\1>", " ", value)
+    text = re.sub(r"(?i)<br\s*/?>", "\n", text)
+    text = re.sub(r"(?i)</(p|div|li|tr|h[1-6])>", "\n", text)
+    text = re.sub(r"(?s)<[^>]+>", " ", text)
+    text = html.unescape(text).replace("\xa0", " ")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def message_address(field: dict[str, Any] | None) -> str:
     return str(((field or {}).get("emailAddress") or {}).get("address") or "").strip().casefold()
 
@@ -747,7 +761,7 @@ def command_draft(args: argparse.Namespace) -> None:
 
     if signature_bundle:
         message_body = body_html or plain_text_to_html(body_text)
-        full_body = message_body + '<br><br><div class="frp-depots-official-signature">' + str(signature_bundle["html"]) + "</div>"
+        full_body = message_body + '<br><div class="frp-depots-official-signature">' + str(signature_bundle["html"]) + "</div>"
         content_type = "HTML"
     else:
         full_body = body_text + "\n\n" + plain_signature.rstrip()
@@ -952,9 +966,9 @@ def command_reply_all(args: argparse.Namespace) -> None:
     new_body_html = body_html or plain_text_to_html(body_text)
     full_body = (
         new_body_html
-        + '<br><br><div class="frp-depots-official-signature">'
+        + '<br><div class="frp-depots-official-signature">'
         + str(signature_bundle["html"])
-        + "</div><br><br>"
+        + "</div><br>"
         + quoted_html
     )
     graph_request(
@@ -981,6 +995,8 @@ def command_reply_all(args: argparse.Namespace) -> None:
     final_to = recipient_addresses(final.get("toRecipients"))
     final_cc = recipient_addresses(final.get("ccRecipients"))
     final_bcc = recipient_addresses(final.get("bccRecipients"))
+    quoted_text = html_to_normalized_text(quoted_html)
+    final_text = html_to_normalized_text(final_body)
     checks = {
         "is_draft": final.get("isDraft") is True,
         "same_conversation": final.get("conversationId") == conversation_id,
@@ -988,7 +1004,7 @@ def command_reply_all(args: argparse.Namespace) -> None:
         "to_preserved": set(final_to) == set(generated_to),
         "cc_preserved": set(final_cc) == set(generated_cc),
         "bcc_empty": not final_bcc,
-        "quoted_history_preserved": quoted_html in final_body,
+        "quoted_history_preserved": bool(quoted_text) and quoted_text in final_text,
         "official_signature_once": final_body.count('class="frp-depots-official-signature"') == 1,
     }
     if not all(checks.values()):

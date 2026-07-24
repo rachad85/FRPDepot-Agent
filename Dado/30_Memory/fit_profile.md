@@ -14,6 +14,9 @@ sheet — ask instead.
   confirmed.
 - Website / email domain: www.frpdepots.com / frpdepots.com.
 - Rachad's FRP Depot email address: info@frpdepots.com (verified by Microsoft Graph)
+- Outlook live-sweep rule: before declaring an RFQ open, fetch the full live conversation and verify the latest non-draft message is inbound, then cross-check Zoho Books transaction/payment status and Zoho Inventory price/stock data (learned 2026-07-23 after a false open-RFQ report).
+- Official Outlook signature rule: every customer-facing draft must use the verified HTML signature extracted from a real Sent Item, including the inline FRP DEPOTS logo and all contact details; the bundle is `Dado/20_Working/outlook_signature/official_signature_bundle.json` (source Sent Item dated 2026-07-21, verified 2026-07-23).
+- Outlook reply-thread rule (Rachad, 2026-07-23): every email reply draft must use **Reply All** from the latest live external non-draft message in the existing Outlook conversation—never a new standalone message. Preserve the existing subject, conversation identity, quoted history, and externally appropriate To/Cc roles; add the new reply above the history and the official HTML signature once. Check Drafts first, keep only one active response draft, then reopen it and verify the thread, recipients, body, signature, attachments, and that no newer source message arrived before reporting it ready.
 - Rachad's standard email signature block (verified from repeated Outlook Sent Items):
   Rachad Homsi
   CEO

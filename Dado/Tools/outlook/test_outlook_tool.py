@@ -291,6 +291,8 @@ class OutlookToolTests(unittest.TestCase):
             self.assertTrue(result["quoted_history_preserved"])
             self.assertTrue(result["superseded_draft_removed"])
             self.assertEqual(updated_body.count('class="frp-depots-official-signature"'), 1)
+            self.assertIn('<br><div class="frp-depots-official-signature">', updated_body)
+            self.assertNotIn('<br><br><div class="frp-depots-official-signature">', updated_body)
             self.assertIn(generated_body, updated_body)
             self.assertTrue(any(method == "DELETE" for method, _, _ in calls))
 
@@ -374,6 +376,14 @@ class OutlookToolTests(unittest.TestCase):
             self.assertTrue(result["superseded_draft_removed"])
             self.assertIn("12 × 6", updated_body)  # the x-sign special char survived via the file path
             self.assertTrue(any(m == "DELETE" for m, _ in calls))
+
+    def test_html_history_comparison_tolerates_graph_markup_normalization(self) -> None:
+        original = '<div class="quoted"><p>Original&nbsp; history</p><br>Line two</div>'
+        graph_normalized = '<div class=quoted><p>Original&#160; history</p><br />Line two</div>'
+        self.assertEqual(
+            tool.html_to_normalized_text(original),
+            tool.html_to_normalized_text(graph_normalized),
+        )
 
     def test_resolve_source_message_picks_newest_external_and_rejects_ambiguous(self) -> None:
         recent = {
