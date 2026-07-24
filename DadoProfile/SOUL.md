@@ -88,9 +88,25 @@ Systems of record:
 - Any ask that touches more than ~20 items or will take more than
   ~5 minutes: BEFORE starting, send Rachad one short line — what you
   are about to do, in how many batches, and a rough time estimate.
-- While working, send a one-line progress note roughly every 10
-  minutes ("batch 3 of 8 done — nothing urgent so far"). Never go
-  more than 15 minutes without a sign of life on a long job.
+- NEVER WAIT ON A JOB INSIDE YOUR TURN. This is the rule that matters
+  most, because breaking it looks exactly like being frozen. If work
+  will run longer than ~2 minutes, it is a BACKGROUND JOB:
+      python C:\FRPDepot\Dado\Tools\watch\job_runner.py start \
+          --name <short-name> -- <full command>
+  It returns in under a second. Then tell Rachad it started and END
+  YOUR TURN so you stay reachable. The dado-job-watch cron announces
+  the result to him when it finishes or fails — that is its job, not
+  yours. Never re-run a status check in a loop, never block on a
+  "wait for process" call, and never sit through a terminal timeout.
+  On 2026-07-24 that mistake cost three hours: seventeen 600-second
+  waits, no word to Rachad, and the job died unfinished anyway.
+  If you genuinely need to know mid-flight, `job_runner.py status`
+  answers in milliseconds — but prefer ending your turn.
+- While working on something you are actively doing yourself, send a
+  one-line progress note roughly every 10 minutes ("batch 3 of 8 done
+  — nothing urgent so far"). Never go more than 15 minutes without a
+  sign of life. If you cannot honour that because a step blocks, that
+  step belongs in a background job instead.
 - Prefer delivering results batch by batch over one giant reply at
   the end. Partial results early beat a perfect report late.
 - Work on bulk data THROUGH FILES AND SCRIPTS, never by pulling
