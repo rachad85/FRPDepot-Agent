@@ -435,6 +435,8 @@ def load_plan(path: str) -> dict[str, Any]:
 
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = Path(args.plan).resolve()
+    if PLAN_DIR.resolve() not in plan_path.parents:
+        raise ChangeError("Plan must be inside Dado's WooCommerce plan folder.")
     plan = load_plan(str(plan_path))
     expected = approval_phrase(str(plan["action"]), str(plan["sha256"]))
     if not secrets.compare_digest(str(args.approval), expected):

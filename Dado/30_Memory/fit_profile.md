@@ -72,13 +72,16 @@ sheet — ask instead.
   Search Console read-only are connected and verified. The TDI company wall
   remains binding for every Google result.
 - 2026-07-24: Rachad commissioned the named **FRP Depot WooCommerce Audit &
-  Approved Catalog Change Tool**. It may read products, variations, store
+  Approved Catalog Change Tool**. It may read products, variations, safe store
   settings, system status, shipping, payment gateways, customers, and orders.
-  Customer/order reports must suppress personal details. Product and variation
-  create/update writes are allowed only through an unchanged hashed plan shown to
-  Rachad and committed after his exact approval phrase for that digest. No delete,
-  customer, order, payment, refund, coupon, webhook, plugin/theme, user, or
-  arbitrary-setting writes are commissioned.
+  Customer/order API reads use positive projections that exclude identifying,
+  payment, note, metadata, and credential fields before they leave the store.
+  Product and variation create/update writes are allowed only through an unchanged
+  full-SHA-256 plan shown to Rachad, expiring after 24 hours, and committed after
+  his exact approval phrase for that digest. Creations are forced to draft; plans
+  are replay-locked before one write and verified by live readback. No delete,
+  customer, order, payment, refund, coupon, webhook, plugin/theme, user, stock,
+  publication, or arbitrary-setting writes are commissioned.
 - 2026-07-24: Rachad closed FRP Depot's Airwallex accounts. The July 23, 2026
   uncategorized deposits of CAD 78,146.27 and USD 21,642.71 into FRP Depot's
   Desjardins accounts are internal closure transfers from those Airwallex
