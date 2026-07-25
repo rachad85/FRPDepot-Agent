@@ -92,6 +92,26 @@ class RecentChasesTests(unittest.TestCase):
         tool.record_chase("conv-abc", "draft-1", "RE: Fittings - RFQ")
         self.assertIn("conv-abc", check.recent_chases())
 
+    def test_only_an_explicit_chase_is_logged(self):
+        """Dado's review, 2026-07-25.
+
+        record_chase originally fired on EVERY successful reply-all draft, so an
+        ordinary customer reply would suppress that thread from follow-up
+        monitoring for CHASE_QUIET_DAYS -- reintroducing, in narrower form, the
+        exact bug B-11 removed. Only a draft the caller declares a chase counts.
+        """
+        source = (Path(__file__).resolve().parent / "outlook_tool.py").read_text(
+            encoding="utf-8")
+        self.assertIn('if bool(draft_input.get("is_chase")):', source)
+        # The guard must sit immediately before the call, not somewhere else.
+        guard = source.index('if bool(draft_input.get("is_chase")):')
+        call = source.index("record_chase(conversation_id", guard)
+        between = source[guard:call]
+        self.assertNotIn("\n    ", between.rstrip(),
+                         "record_chase must be inside the is_chase guard")
+        self.assertIn('"--chase", action="store_true"', source,
+                      "the flag must exist for the digest to pass")
+
 
 class WaitingOnThemSuppressionTests(unittest.TestCase):
     """The regression itself, through show_waiting_on_them."""
@@ -160,10 +180,10 @@ class WaitingOnThemSuppressionTests(unittest.TestCase):
         result = self._run(self._thread(unrelated_draft))
         self.assertEqual(result["overdue_count"], 1,
                          "a draft we did not create must not remove the thread")
-        self.assertEqual(result["already_chased"], [])
+        self.assertEqual(result["chase_draft_waiting"], [])
         item = result["overdue"][0]
         self.assertFalse(item["chase_draft_pending"])
-        self.assertIsNone(item["chased_on"])
+        self.assertIsNone(item["chase_drafted_on"])
         self.assertEqual(item["drafts_in_thread"], 1,
                          "the draft is still reported, just not load-bearing")
 
@@ -171,9 +191,9 @@ class WaitingOnThemSuppressionTests(unittest.TestCase):
         tool.record_chase("conv-1", "draft-1", "RE: New submission from Contact")
         result = self._run(self._thread())
         self.assertEqual(result["overdue_count"], 0)
-        self.assertEqual(len(result["already_chased"]), 1)
-        self.assertTrue(result["already_chased"][0]["chase_draft_pending"])
-        self.assertIsNotNone(result["already_chased"][0]["chased_on"])
+        self.assertEqual(len(result["chase_draft_waiting"]), 1)
+        self.assertTrue(result["chase_draft_waiting"][0]["chase_draft_pending"])
+        self.assertIsNotNone(result["chase_draft_waiting"][0]["chase_drafted_on"])
 
     def test_the_thread_returns_once_the_chase_goes_stale(self):
         self.log.write_text(json.dumps({

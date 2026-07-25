@@ -548,7 +548,7 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
             "overdue": waited >= due_after,
             "urgent": category in URGENT_CATEGORIES,
             "chase_draft_pending": cid in chased,
-            "chased_on": (chased.get(cid) or "")[:10] or None,
+            "chase_drafted_on": (chased.get(cid) or "")[:10] or None,
             "drafts_in_thread": len(drafts),
             "messages_in_thread": len(human),
             "preview": preview[:300],
@@ -564,10 +564,12 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         "thresholds_business_days": FOLLOWUP_BUSINESS_DAYS,
         "note": ("Threads where YOU spoke last to an outside party. 'overdue' applies the "
                  "per-category threshold. Read the full thread with --thread before "
-                 "chasing: the answer may have arrived out of band. 'already_chased' "
-                 f"means WE created a chase draft within {CHASE_QUIET_DAYS} days "
-                 "(chased_on); it is not inferred from drafts in the thread, so an "
-                 "unrelated draft no longer hides a live thread. Threads marked "
+                 "chasing: the answer may have arrived out of band. "
+                 f"'chase_draft_waiting' means WE DRAFTED a chase within {CHASE_QUIET_DAYS} "
+                 "days (chase_drafted_on) and it is sitting UNSENT - Rachad has not "
+                 "pressed Send, so do not tell him the party was chased. It is not "
+                 "inferred from drafts in the thread, so an unrelated draft no longer "
+                 "hides a live thread. Threads marked "
                  "carried_forward are older than days_back and are kept on the list "
                  "until answered, so ageing cannot retire them unchased. If "
                  "sent_window_truncated is true the Sent scan hit its page cap and "
@@ -576,7 +578,7 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         "overdue_count": len(overdue),
         "overdue": overdue,
         "not_yet_due": [c for c in candidates if not c["overdue"]],
-        "already_chased": [c for c in candidates if c["chase_draft_pending"]],
+        "chase_draft_waiting": [c for c in candidates if c["chase_draft_pending"]],
     }, indent=2, ensure_ascii=False))
 
 

@@ -58,11 +58,17 @@ Fields per thread: subject, to, business_days_silent, category
 chase_draft_pending, conversation_id, preview. The wait clock counts WORKING
 days only and the thresholds are already applied - trust "overdue".
 
-Work ONLY the "overdue" list. Ignore "not_yet_due". Ignore "already_chased" -
-those are threads WE chased within the last "chase_quiet_days" days (each shows
-"chased_on"), so a draft is already waiting and must not be chased twice. Note
-"drafts_in_thread" is informational only: a draft someone else left in a thread
-does NOT mean it was chased, and such a thread stays on the overdue list.
+Work ONLY the "overdue" list. Ignore "not_yet_due". Ignore
+"chase_draft_waiting" - those are threads WE drafted a chase for within the last
+"chase_quiet_days" days (each shows "chase_drafted_on"). That draft is UNSENT:
+Rachad has not pressed Send. So never tell him those parties "were chased" - the
+honest phrasing is "a chase draft is waiting". Note "drafts_in_thread" is
+informational only: a draft someone else left in a thread does NOT mean it was
+chased, and such a thread stays on the overdue list.
+
+When you prepare a chase draft, pass --chase to outlook_tool.py reply-all. That
+flag is what records it. Do NOT pass it for an ordinary reply, or you will
+suppress follow-up monitoring on that thread for days.
 
 FOR EACH OVERDUE THREAD, IN THIS ORDER:
 1. READ THE WHOLE THREAD FIRST. Run, exactly as written (forward slashes

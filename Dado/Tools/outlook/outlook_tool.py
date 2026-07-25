@@ -909,6 +909,7 @@ def command_reply_all(args: argparse.Namespace) -> None:
             "body_text_file": getattr(args, "body_file", None),
             "body_html_file": getattr(args, "body_html_file", None),
             "replace_standalone": getattr(args, "replace_standalone", False),
+            "is_chase": getattr(args, "chase", False),
             "superseded_draft_id": getattr(args, "superseded_id", None),
             "superseded_subject": getattr(args, "superseded_subject", None),
         }
@@ -1117,7 +1118,12 @@ def command_reply_all(args: argparse.Namespace) -> None:
         append_receipt("outlook_superseded_draft_removed", superseded_draft_id)
 
     append_receipt("outlook_reply_all_draft_created", draft_id)
-    record_chase(conversation_id, draft_id, str(final.get("subject") or ""))
+    # ONLY when the caller says this is a follow-up chase. Logging every reply-all
+    # draft was wrong: an ordinary customer reply would then suppress that thread
+    # from follow-up monitoring for CHASE_QUIET_DAYS - reintroducing, in narrower
+    # form, the exact bug B-11 removed. Caught by Dado on review, 2026-07-25.
+    if bool(draft_input.get("is_chase")):
+        record_chase(conversation_id, draft_id, str(final.get("subject") or ""))
     print(
         json.dumps(
             {
@@ -1169,6 +1175,11 @@ def build_parser() -> argparse.ArgumentParser:
     reply_all.add_argument("--body-html-file", help="Path to an HTML file holding ONLY the new reply body")
     reply_all.add_argument("--replace-standalone", action="store_true",
                            help="Auto-find and supersede the obsolete standalone draft to this recipient")
+    reply_all.add_argument(
+        "--chase", action="store_true",
+        help="This draft is a FOLLOW-UP CHASE. Records it in chase_log.jsonl so the "
+             "tracker stops re-offering the thread for a few days. Omit for ordinary "
+             "replies, or they will suppress follow-up monitoring for that thread.")
     reply_all.add_argument("--superseded-id", help="Exact id of a draft to supersede (instead of --replace-standalone)")
     reply_all.add_argument("--superseded-subject", help="Exact subject of the --superseded-id draft")
     reply_all.set_defaults(func=command_reply_all)

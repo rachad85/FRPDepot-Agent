@@ -583,3 +583,66 @@ still the malformed-JSON receipt raised as FINDING 4 in the 2026-07-23 conduct
 review and never fixed.
 FIX — one writer, one format (UTC, `timezone.utc`), used everywhere; repair or
 quarantine line 90.
+
+
+---
+
+## Dado's review, 2026-07-25 — her findings, not mine
+
+Rachad asked for the night's work to be run past Dado before he woke. She read
+the backlog and her own live overdue list. She was right about the two things
+fixed below, and raised six more that are HIS call, not mine. Recorded verbatim
+in substance because she has mailbox context the backend does not.
+
+### D-01 FIXED (this commit) — record_chase fired on EVERY reply-all draft
+Her finding, and a regression I introduced with B-11. `command_reply_all` logged
+a chase after any successful draft, with no "this is a follow-up" distinction —
+so an ordinary customer reply would suppress that thread from follow-up
+monitoring for 7 days. That is the B-11 bug again, just narrower. Now gated on an
+explicit `--chase` / `is_chase`, and the digest prompt tells Dado to pass it for
+chases only.
+
+### D-02 FIXED (this commit) — "already_chased" was untrue
+Her point: the draft is UNSENT. Calling the thread "already chased" claims
+something the evidence does not support, and if Rachad never sends it the thread
+vanishes for 7 days. Renamed to `chase_draft_waiting` / `chase_drafted_on`, and
+the digest prompt now says the honest phrasing is "a chase draft is waiting".
+
+### D-03 OPEN — `support@info.airwallex.com` is not detected as automated
+`_is_automated` matches local-part prefixes only (no-reply, notification,
+bounce...). The live Airwallex deposit notices come from `support@`, which is a
+perfectly ordinary human address at most companies. This is the concrete evidence
+B-16 lacked. Fixing it needs either a known-automated-domain list or message
+headers — and blanket-treating `support@` as automated WOULD hide real threads.
+**Rachad's call.**
+
+### D-04 OPEN — threads where his last message closed the matter
+She read the actual previews. Three of the 15 "overdue" items are not waiting on
+anyone: "Bien reçu ; merci" (Fibre Mauricie payment confirmation), "Thanks for
+the Clarification Hunter" (LinkedIn), and "Je t'envoie le prix tt de suite"
+(Fibre Mauricie commande) — that last one is Rachad promising HIS next action, so
+it belongs under `--awaiting`, not here. Detecting acknowledgement and
+self-promise intent is a heuristic that can hide money if it over-fires.
+
+### D-05 OPEN — related conversations are not reconciled across conversation IDs
+"Re: Payment of CAD4,101.30 is outstanding for INV-000040" is overdue, but a
+NEWER separate conversation for the same invoice carries payment proof, and the
+alert ledger already records Plooto reporting it completed. Conversation ID alone
+is insufficient; invoice/quote/order numbers would need to be reconciled.
+
+### D-06 OPEN — the CLOSED ledger is applied too late
+The digest tells Dado to check `alert_ledger.md` per thread, AFTER the workload
+is built. With B-17 open (`agent.max_turns: 60`), closed items consume turns that
+money threads need. Pre-filtering CLOSED deterministically would fix it, but the
+ledger is prose, so parsing it reliably is its own risk.
+
+### D-07 OPEN — "Re: El Paso Projects" is addressed to Troy Dualam
+She flags that an answer wanted FROM Troy Dualam should go through the sanctioned
+Aze relay when Rachad instructs it, rather than into an automatic customer chase
+lane. Note this brushes Hard Rule 4 in both directions — raise it, do not act.
+
+### D-08 — her correction to my summary, and she is right
+"Silence now means silence" is not true system-wide while **B-08** (job-watch and
+tripwire deliver via cron with no retry or queue) and **B-17** (a 15-item digest
+can exceed `max_turns: 60` and truncate with no indication) are open. Both are
+the two items Rachad reserved for himself.
