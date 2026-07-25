@@ -22,6 +22,20 @@ def fake_token(scopes: str) -> str:
 
 
 class OutlookToolTests(unittest.TestCase):
+    def setUp(self) -> None:
+        # command_reply_all appends to the chase log on success. Redirect it for
+        # EVERY test in this class, not per-test: without this the reply-all
+        # tests write real rows into Dado/30_Memory/chase_log.jsonl, which the
+        # follow-up tracker then treats as genuine chases and uses to suppress
+        # live threads. Test runs must never touch operational state.
+        self._chase_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._chase_dir.cleanup)
+        patcher = patch.object(
+            tool, "CHASE_LOG", Path(self._chase_dir.name) / "chase_log.jsonl"
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
     def test_mailbox_audit_excludes_different_company_participants(self) -> None:
         message = {
             "from": {"emailAddress": {"address": "person@troydualam.com"}},
