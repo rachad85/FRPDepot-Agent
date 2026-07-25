@@ -59,7 +59,10 @@ chase_draft_pending, conversation_id, preview. The wait clock counts WORKING
 days only and the thresholds are already applied - trust "overdue".
 
 Work ONLY the "overdue" list. Ignore "not_yet_due". Ignore "already_chased" -
-those have a draft waiting and must never be chased twice.
+those are threads WE chased within the last "chase_quiet_days" days (each shows
+"chased_on"), so a draft is already waiting and must not be chased twice. Note
+"drafts_in_thread" is informational only: a draft someone else left in a thread
+does NOT mean it was chased, and such a thread stays on the overdue list.
 
 FOR EACH OVERDUE THREAD, IN THIS ORDER:
 1. READ THE WHOLE THREAD FIRST. Run, exactly as written (forward slashes

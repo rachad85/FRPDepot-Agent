@@ -179,6 +179,52 @@ FOLLOWUP_BUSINESS_DAYS = {"rfq_quote": 5, "payment": 7, "general": 3}
 # Money and new-work threads reach him the same sweep they go overdue; the rest
 # wait for the morning digest. Winning work and getting paid outrank quiet rules.
 URGENT_CATEGORIES = {"rfq_quote", "payment"}
+# How long a chase WE created keeps a thread off the list. Matches the promise
+# already in the digest prompt: "An item chased in the last 7 days is not chased
+# again." Calendar days, not working days - it is a quiet period, not a deadline.
+CHASE_QUIET_DAYS = 7
+
+
+def recent_chases() -> dict[str, str]:
+    """conversation_id -> ISO timestamp of the most recent chase WE created.
+
+    Only reply-all drafts this tree wrote are counted, and only for
+    CHASE_QUIET_DAYS. The old test was `any draft exists in the conversation`,
+    which is a different question with a much wider answer: it also matched an
+    ordinary reply draft, one of Rachad's own half-typed messages, and a chase
+    he read and rejected (a deleted draft still comes back from /me/messages,
+    which spans every folder). One such draft removed the thread from `overdue`
+    and from overdue_count PERMANENTLY, and the digest prompt is told to ignore
+    already_chased - so a live money thread could go quiet forever. Measured
+    2026-07-24: a CAD 9,936 budgetary quote to Nashtec, one working day old and
+    never chased, was already excluded on this basis.
+    """
+    log_path = ot.CHASE_LOG
+    if not log_path.exists():
+        return {}
+    cutoff = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(days=CHASE_QUIET_DAYS)
+    latest: dict[str, str] = {}
+    try:
+        lines = log_path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return {}
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            row = json.loads(line)
+            when = datetime.datetime.fromisoformat(str(row["ts"]))
+        except (ValueError, KeyError, TypeError):
+            continue  # a corrupt line must not blind the tracker
+        if when.tzinfo is None:
+            when = when.replace(tzinfo=datetime.timezone.utc)
+        if when < cutoff:
+            continue
+        cid = str(row.get("conversation_id") or "")
+        if cid and (cid not in latest or str(row["ts"]) > latest[cid]):
+            latest[cid] = str(row["ts"])
+    return latest
 
 _RFQ_WORDS = re.compile(
     r"\b(rfq|quot(?:e|ation)|estimate|pricing|proposal|tender|bid|budgetary)\b", re.I)
@@ -321,6 +367,7 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
     CAD 4,101.30 outstanding.
     """
     my_addr = my_address(token)
+    chased = recent_chases()
     cutoff = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(days=days_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
     sent = get(token, "/me/mailFolders/sentitems/messages?$top=250"
@@ -347,6 +394,8 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         external = [r for r in _recipients(last) if r and not _is_internal(r)]
         if not external:
             continue
+        # Informational only. This count must NEVER decide whether the thread is
+        # tracked - that was the bug. Whether WE chased it is `chased_on`.
         drafts = [x for x in msgs if x.get("isDraft") is True]
         subject = m.get("subject") or ""
         preview = (m.get("bodyPreview") or "").strip()
@@ -364,7 +413,9 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
             "due_after_business_days": due_after,
             "overdue": waited >= due_after,
             "urgent": category in URGENT_CATEGORIES,
-            "chase_draft_pending": bool(drafts),
+            "chase_draft_pending": cid in chased,
+            "chased_on": (chased.get(cid) or "")[:10] or None,
+            "drafts_in_thread": len(drafts),
             "messages_in_thread": len(human),
             "preview": preview[:300],
         })
@@ -376,7 +427,11 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         "thresholds_business_days": FOLLOWUP_BUSINESS_DAYS,
         "note": ("Threads where YOU spoke last to an outside party. 'overdue' applies the "
                  "per-category threshold. Read the full thread with --thread before "
-                 "chasing: the answer may have arrived out of band."),
+                 "chasing: the answer may have arrived out of band. 'already_chased' "
+                 f"means WE created a chase draft within {CHASE_QUIET_DAYS} days "
+                 "(chased_on); it is not inferred from drafts in the thread, so an "
+                 "unrelated draft no longer hides a live thread."),
+        "chase_quiet_days": CHASE_QUIET_DAYS,
         "overdue_count": len(overdue),
         "overdue": overdue,
         "not_yet_due": [c for c in candidates if not c["overdue"]],

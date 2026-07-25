@@ -170,7 +170,33 @@ rotated log when the newest turn start is older than the window.
 
 ## P1 — follow-up tracker correctness (beyond B-01)
 
-### B-11 OPEN — One unsent draft removes a live money thread from the tracker forever
+### B-11 FIXED (this commit) — One unsent draft removes a live money thread from the tracker forever
+
+Fixed 2026-07-25. `chase_draft_pending` now answers "did WE chase this thread",
+read from `Dado/30_Memory/chase_log.jsonl`, which `outlook_tool.record_chase`
+appends to whenever a reply-all draft is created. It expires after
+`CHASE_QUIET_DAYS = 7`, matching the promise already in the digest prompt, so
+an unsent chase resurfaces instead of hiding the thread forever. `chased_on` is
+reported; `drafts_in_thread` is kept but is now informational only and decides
+nothing. The digest prompt was updated to match.
+
+Behavioural proof, same input through both versions — a 21-day-old Nashtec
+thread with one unrelated draft and no chase ever made:
+`BEFORE: overdue_count=0 already_chased=1` → invisible;
+`AFTER: overdue_count=1 already_chased=0` → tracked.
+
+9 tests in `Dado/Tools/outlook/test_followup_tracker.py`, including the
+round-trip across the two modules (they must agree on the log format — that is
+the seam), stale-chase expiry, and corrupt/naive timestamps not blinding the
+tracker. NOTE those 9 only *error* against the pre-fix files (missing
+attribute), so the behavioural comparison above is what actually demonstrates
+the bug. `outlook_check.py` remains read-only over Graph — the chase log is a
+local file read, no new HTTP verbs.
+
+No migration needed: B-01 meant no chase draft had ever been successfully
+created, so there is no history to backfill.
+
+Original report follows.
 `outlook_check.py:350`. `chase_draft_pending` matches ANY draft in the
 conversation — an ordinary reply draft, a half-typed reply, a rejected chase
 (deleted drafts still return from `/me/messages`). Such threads go to

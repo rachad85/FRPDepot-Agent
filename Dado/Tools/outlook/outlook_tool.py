@@ -34,6 +34,12 @@ import uuid
 ROOT = Path(r"C:\FRPDepot")
 FIT_PROFILE = ROOT / "Dado" / "30_Memory" / "fit_profile.md"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
+# Reply-all drafts WE created, by conversation. The follow-up tracker reads this
+# to answer "did we already chase this thread?" - a question it previously
+# guessed at by asking whether the conversation contained any draft at all, which
+# also matched Rachad's own half-typed replies and rejected drafts and so removed
+# live threads from the watch list permanently. See outlook_check.recent_chases.
+CHASE_LOG = ROOT / "Dado" / "30_Memory" / "chase_log.jsonl"
 LOCALAPPDATA = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
 VAULT_DIR = LOCALAPPDATA / "FRPDepot-Outlook"
 CONFIG_PATH = VAULT_DIR / "config.json"
@@ -159,6 +165,29 @@ def append_receipt(action: str, evidence: str) -> None:
     }
     with RECEIPTS.open("a", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+
+
+def record_chase(conversation_id: str, draft_id: str, subject: str) -> None:
+    """Log that a reply-all draft now waits in this conversation.
+
+    Best-effort by design: a chase draft that exists but was not logged is a
+    missed suppression (the tracker offers it again and the duplicate-draft
+    guard stops the second one), whereas failing the whole command after the
+    draft is already created would leave Rachad with a draft and an error. The
+    draft is the deliverable; this file is only bookkeeping.
+    """
+    try:
+        CHASE_LOG.parent.mkdir(parents=True, exist_ok=True)
+        record = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "conversation_id": conversation_id,
+            "draft_id": draft_id,
+            "subject": subject,
+        }
+        with CHASE_LOG.open("a", encoding="utf-8", newline="\n") as handle:
+            handle.write(json.dumps(record, ensure_ascii=True) + "\n")
+    except OSError as exc:
+        print(json.dumps({"warning": "chase not logged", "error": f"{type(exc).__name__}: {exc}"}))
 
 
 def ensure_vault_dir() -> None:
@@ -1088,6 +1117,7 @@ def command_reply_all(args: argparse.Namespace) -> None:
         append_receipt("outlook_superseded_draft_removed", superseded_draft_id)
 
     append_receipt("outlook_reply_all_draft_created", draft_id)
+    record_chase(conversation_id, draft_id, str(final.get("subject") or ""))
     print(
         json.dumps(
             {
