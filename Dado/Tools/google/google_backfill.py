@@ -227,6 +227,7 @@ def candidates(con: sqlite3.Connection, kinds: set[str]) -> list[tuple]:
     rows = con.execute("""
         SELECT id, name, mime_type, size FROM drive_files
         WHERE content_status NOT LIKE 'indexed%'
+          AND content_status NOT LIKE 'backfill_%'
           AND content_status != 'folder_metadata'
           AND tdi_quarantined = 0
         ORDER BY size ASC
