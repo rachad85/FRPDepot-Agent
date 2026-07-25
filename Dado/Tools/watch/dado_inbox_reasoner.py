@@ -44,6 +44,10 @@ the live mailbox minutes ago. Read these with your FILE tools (not terminal):
       tagged inbox view + calendar (today + tomorrow).
   C:\FRPDepot\Dado\20_Working\inbox_watch\sent.txt
       Rachad's own recent replies and promises.
+  C:\FRPDepot\Dado\20_Working\inbox_watch\waiting_on_them.json
+      threads where RACHAD wrote last and nobody replied. See rule 3b - in THIS
+      sweep you only ever raise the money/new-work ones; the rest are the
+      morning digest's job, not yours.
 Tags: [YOU replied last] = handled, never surface. [awaits YOU] = outside party
 spoke last, candidate. [fwd internally-waiting] = his last mail went only to
 internal addresses; the outside party still waits. [draft pending] = a prepared
@@ -76,6 +80,13 @@ What deserves a message:
    FRP Depot business alerts the SAME sweep it appears, even if he already
    read it: name the thread, what the client is doing, and the one next step.
    Winning work outranks every quiet rule.
+3b. HE IS WAITING ON THEM, and it is money or new work. From
+   waiting_on_them.json, raise an entry ONLY when overdue=true AND urgent=true
+   (category payment or rfq_quote) AND chase_draft_pending=false. Read the full
+   thread first - the answer may have come by phone or portal. Alert once, name
+   the customer, the amount or quote number, and how many working days it has
+   been silent. Everything with urgent=false belongs to the morning digest;
+   never raise it here. Winning work and getting paid outrank quiet rules.
 4. [draft pending] reminder: a reply draft prepared for him that he has not
    sent for over 1 business day while the outside party still waits - once.
 5. An admin/service/deadline notice (renewals, account changes, expiries):
@@ -263,7 +274,11 @@ def prefetch_triage():
     awaiting = collect("awaiting", ["--awaiting"])
     inbox = collect("inbox", ["15"])
     sent = collect("sent", ["--sent", "15"])
+    # What HE is waiting on. Only the money/new-work ones are actionable in this
+    # sweep (charter rule 3b); the rest are the morning digest's.
+    waiting_on_them = collect("waiting_on_them", ["--waiting-on-them", "60"], timeout=900)
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
+    (SWEEP_DIR / "waiting_on_them.json").write_text(waiting_on_them + "\n", encoding="utf-8")
     (SWEEP_DIR / "awaiting.json").write_text(awaiting + "\n", encoding="utf-8")
     (SWEEP_DIR / "inbox_calendar.txt").write_text(
         f"collected {stamp}\n{inbox}\n", encoding="utf-8")

@@ -6,6 +6,10 @@ Run:  python outlook_check.py [n_messages]   inbox + calendar, each thread tagge
       python outlook_check.py --awaiting [days_back]
                                              JSON list of conversations that still
                                              wait on Rachad (the sweep's candidates)
+      python outlook_check.py --waiting-on-them [days_back]
+                                             JSON list of threads where RACHAD
+                                             spoke last and nobody replied -
+                                             the follow-up tracker's input
       python outlook_check.py --sent [n]     recent Sent Items (his own promises)
       python outlook_check.py --thread <convId>
                                              full one-conversation dump with bodies
@@ -167,6 +171,52 @@ def thread_state(token: str, conversation_id: str, my_addr: str) -> dict:
     return res
 
 
+# How long silence is allowed before a thread is worth raising, by what the
+# thread IS. Rachad's choice 2026-07-24: tiered, because a quote legitimately
+# takes a week while an unanswered question does not.
+FOLLOWUP_BUSINESS_DAYS = {"rfq_quote": 5, "payment": 7, "general": 3}
+
+# Money and new-work threads reach him the same sweep they go overdue; the rest
+# wait for the morning digest. Winning work and getting paid outrank quiet rules.
+URGENT_CATEGORIES = {"rfq_quote", "payment"}
+
+_RFQ_WORDS = re.compile(
+    r"\b(rfq|quot(?:e|ation)|estimate|pricing|proposal|tender|bid|budgetary)\b", re.I)
+_PAY_WORDS = re.compile(
+    r"\b(invoice|inv-\d|payment|outstanding|overdue|remittance|balance due|past due|"
+    r"deposit|wire|e-?transfer)\b", re.I)
+
+
+def classify_thread(subject: str, preview: str = "") -> str:
+    """rfq_quote / payment / general - a hint, not a verdict.
+
+    Deterministic so the wait-clock is reproducible; Dado still reads the whole
+    thread before she says anything, and may overrule this.
+    """
+    haystack = f"{subject or ''} {preview or ''}"
+    if _PAY_WORDS.search(haystack):
+        return "payment"
+    if _RFQ_WORDS.search(haystack):
+        return "rfq_quote"
+    return "general"
+
+
+def business_days_since(iso_timestamp: str) -> int:
+    """Working days elapsed, Monday-Friday. Weekends are not silence."""
+    try:
+        start = datetime.datetime.fromisoformat((iso_timestamp or "").replace("Z", "+00:00"))
+    except ValueError:
+        return 0
+    today = datetime.datetime.now(datetime.timezone.utc).date()
+    day = start.date()
+    count = 0
+    while day < today:
+        day += datetime.timedelta(days=1)
+        if day.weekday() < 5:
+            count += 1
+    return count
+
+
 def _waiting_since(msgs: list[dict], my_addr: str) -> str:
     """Date of the first external message nobody has answered (wait-clock start)."""
     human = [m for m in msgs
@@ -258,6 +308,79 @@ def show_awaiting(token: str, days_back: int) -> None:
         "days_back": days_back,
         "note": "oldest-waiting first; read --thread before alerting on any of these",
         "candidates": candidates,
+    }, indent=2, ensure_ascii=False))
+
+
+def show_waiting_on_them(token: str, days_back: int) -> None:
+    """The reverse of --awaiting: threads where RACHAD spoke last and nobody replied.
+
+    His sweep was one-directional until 2026-07-24 — [YOU replied last] meant
+    "handled, never surface", so a quote or an RFQ he sent could go silent
+    forever and nothing would notice. Measured when this was written: 20 such
+    threads, 11 of them a week or older, including an RFQ silent for 28 days and
+    CAD 4,101.30 outstanding.
+    """
+    my_addr = my_address(token)
+    cutoff = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(days=days_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    sent = get(token, "/me/mailFolders/sentitems/messages?$top=250"
+                      "&$select=subject,toRecipients,ccRecipients,sentDateTime,"
+                      "conversationId,bodyPreview"
+                      "&$filter=" + urllib.parse.quote(f"sentDateTime ge {cutoff}") +
+                      "&$orderby=sentDateTime%20desc")
+    seen: set[str] = set()
+    candidates = []
+    for m in sent.get("value", []):
+        cid = m.get("conversationId")
+        if not cid or cid in seen:
+            continue
+        seen.add(cid)
+        msgs = _conversation(token, cid)
+        human = [x for x in msgs if x.get("isDraft") is not True
+                 and not _is_automated(_addr(x, "from"))]
+        if not human:
+            continue
+        last = human[-1]
+        # Someone else spoke last -> that is the --awaiting case, already covered.
+        if _addr(last, "from") != my_addr:
+            continue
+        external = [r for r in _recipients(last) if r and not _is_internal(r)]
+        if not external:
+            continue
+        drafts = [x for x in msgs if x.get("isDraft") is True]
+        subject = m.get("subject") or ""
+        preview = (m.get("bodyPreview") or "").strip()
+        category = classify_thread(subject, preview)
+        waited = business_days_since(_when(last))
+        due_after = FOLLOWUP_BUSINESS_DAYS[category]
+        candidates.append({
+            "conversation_id": cid,
+            "subject": subject,
+            "to": external[0],
+            "all_external": external,
+            "last_sent": _when(last)[:16].replace("T", " "),
+            "business_days_silent": waited,
+            "category": category,
+            "due_after_business_days": due_after,
+            "overdue": waited >= due_after,
+            "urgent": category in URGENT_CATEGORIES,
+            "chase_draft_pending": bool(drafts),
+            "messages_in_thread": len(human),
+            "preview": preview[:300],
+        })
+    candidates.sort(key=lambda c: -c["business_days_silent"])
+    overdue = [c for c in candidates if c["overdue"] and not c["chase_draft_pending"]]
+    print(json.dumps({
+        "you": my_addr,
+        "days_back": days_back,
+        "thresholds_business_days": FOLLOWUP_BUSINESS_DAYS,
+        "note": ("Threads where YOU spoke last to an outside party. 'overdue' applies the "
+                 "per-category threshold. Read the full thread with --thread before "
+                 "chasing: the answer may have arrived out of band."),
+        "overdue_count": len(overdue),
+        "overdue": overdue,
+        "not_yet_due": [c for c in candidates if not c["overdue"]],
+        "already_chased": [c for c in candidates if c["chase_draft_pending"]],
     }, indent=2, ensure_ascii=False))
 
 
@@ -364,6 +487,9 @@ def main() -> int:
             return 0
         if args and args[0] == "--awaiting":
             show_awaiting(token, int(args[1]) if len(args) > 1 else 14)
+            return 0
+        if args and args[0] == "--waiting-on-them":
+            show_waiting_on_them(token, int(args[1]) if len(args) > 1 else 60)
             return 0
         n = int(args[0]) if args and args[0].isdigit() else 10
         show_inbox(token, n)
