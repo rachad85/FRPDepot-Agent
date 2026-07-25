@@ -646,3 +646,44 @@ lane. Note this brushes Hard Rule 4 in both directions — raise it, do not act.
 tripwire deliver via cron with no retry or queue) and **B-17** (a 15-item digest
 can exceed `max_turns: 60` and truncate with no indication) are open. Both are
 the two items Rachad reserved for himself.
+
+
+---
+
+## Found by the watch sweep, 2026-07-25 14:30
+
+### W-01 FIXED (this commit) — Dado's gateway had no auto-start; she was unreachable ~13h
+
+Rachad asked "confirm that you're watching dado". The sweep answered it: port
+8647 had no listener. TDI's 8642 was fine, so it was Dado specifically.
+
+TIMELINE. Last gateway activity 01:19:33 (an idle-cache eviction after his 00:16
+exchange). Port already dead when checked at ~10:25. PC restarted 10:51-10:54
+(event 1074, user-initiated). Still down at 14:35 when he asked.
+
+CAUSE OF THE DEATH: not determined, and not claimed. No Windows crash event
+(1000/1001/1026), nothing in errors.log, and gateway-exit-diag.log records only
+`gateway.start` — verified to stay silent through a forced kill, so its missing
+exit line is not evidence either way.
+
+CAUSE OF STAYING DOWN: no auto-start existed. TDI/Aze has three (watchdog task,
+Startup .vbs, restart task); FRP Depot had none. The reboot alone guaranteed
+this outcome regardless of what killed the process.
+
+WHY NOTHING CAUGHT IT: every other health signal looked fine. The crons kept
+running and reporting `ok` — they do not depend on the gateway listener — so
+conduct review, inbox watch, tripwire and job-watch all passed while the one
+thing Rachad actually uses was dead. **A green cron list is not evidence the
+gateway is up.** The session-start sweep checks port 8647 for exactly this
+reason; it is the check that found this.
+
+FIX: `dado_gateway_watchdog.ps1` + a 5-minute scheduled task + a logon .vbs, all
+deferring to a disable flag so STOP_DADO.bat still means stop. Verified by
+killing the live gateway (pid 16096) with no flag set and watching the watchdog
+bring it back as pid 19244, with both events logged.
+
+STILL OPEN: nothing alerts Rachad that the gateway is down. The watchdog fixes it
+silently, which is right, but if it ever cannot fix it the only trace is a line
+in gateway_watchdog.log. Worth wiring "STILL DOWN after 36s" into the Telegram
+path — except that path is exactly what is broken in that scenario, so it needs
+a different channel. Rachad's call.

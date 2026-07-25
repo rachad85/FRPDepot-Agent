@@ -19,6 +19,32 @@ engineer.
   (SOUL.md + config.yaml + .env). Mirror in this repo: DadoProfile\.
 - Gateway port: 8647 (127.0.0.1). Start/stop: START_DADO.bat /
   STOP_DADO.bat at the repo root.
+- *** GATEWAY KEEP-ALIVE (added 2026-07-25) — TWO PIECES, ONE OUTSIDE THE REPO. ***
+  Dado had NO auto-start of any kind while TDI/Aze had three (a watchdog task, a
+  Startup entry, a restart task). Her gateway stopped some time between 01:19 and
+  10:25 on 2026-07-25 — no exit record, no Windows crash event, nothing in
+  errors.log — and the 10:51 PC restart then left it down. Rachad could not reach
+  her on Telegram for ~13h, and NOTHING flagged it: the crons kept running, so
+  every other health signal looked fine. Two failure modes to survive, not one.
+  1. `Dado\Tools\watch\dado_gateway_watchdog.ps1` (in the repo) — starts the
+     gateway iff 8647 has no listener; silent when healthy; logs to
+     40_Logs\gateway_watchdog.log.
+  2. Scheduled task "FRPDepot Dado Gateway Keep-Alive", every 5 min. Registered
+     with `schtasks`, NOT the PowerShell cmdlet — Register-ScheduledTask returns
+     "Access is denied" for this user.
+  3. `%APPDATA%\...\Start Menu\Programs\Startup\FRPDepot_Dado_AutoStart.vbs`
+     (NOT in the repo — recreate by hand on a rebuild) so logon recovery takes
+     seconds rather than up to 5 minutes.
+  DELIBERATE STOPS ARE RESPECTED: STOP_DADO.bat writes
+  40_Logs\gateway_disabled.flag and START_DADO.bat clears it; both mechanisms
+  check it, so neither can resurrect a gateway stopped on purpose. Do not remove
+  that flag handling without replacing it, or STOP_DADO becomes a 5-minute pause.
+  LIMIT: the task runs only while TDI-service is logged on (running otherwise
+  needs a stored password, which is not acceptable). TDI's own auto-start has the
+  same constraint.
+  NOTE gateway-exit-diag.log records ONLY `gateway.start`, never an exit — it was
+  verified to stay silent through a forced kill, so a missing exit line there is
+  NOT evidence about how a gateway died.
 - Model: gpt-5.6-sol on openai-codex (global OAuth, shared plan with
   the TDI five — quota pressure is a known watch item). NO fallback
   provider on purpose: primary down = honest failure, never silent
