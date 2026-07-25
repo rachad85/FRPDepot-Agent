@@ -55,7 +55,18 @@ if (Test-GatewayUp) { exit 0 }
 if ($WhatIfOnly) { Write-Log "WOULD START: port $Port has no listener"; exit 0 }
 
 if (-not (Test-Path $Hermes)) {
+    # This must alert too. A missing hermes.exe is MORE serious than a crashed
+    # gateway, not less - it means the install itself is broken - and the first
+    # version of this script exited here silently, which would have produced the
+    # same thirteen-hour blackout it was written to prevent.
     Write-Log "CANNOT START: hermes.exe not found at $Hermes"
+    $missingMsg = "DADO IS DOWN and cannot be restarted: hermes.exe is missing from $Hermes. Her gateway (port 8647) is not running and the keep-alive has nothing to launch. This is an install-level problem, not a crash - the backend needs to look."
+    try {
+        & $VenvPython $Alerter --reason gateway_no_binary --message $missingMsg 2>&1 |
+            ForEach-Object { Write-Log "alerter: $_" }
+    } catch {
+        Write-Log "ALERTER FAILED: $($_.Exception.Message)"
+    }
     exit 1
 }
 
