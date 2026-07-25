@@ -377,6 +377,167 @@ class OutlookToolTests(unittest.TestCase):
             self.assertIn("12 × 6", updated_body)  # the x-sign special char survived via the file path
             self.assertTrue(any(m == "DELETE" for m, _ in calls))
 
+    # --- follow-up chase drafts (regression, 2026-07-24) -------------------
+    # The tracker only surfaces threads where WE spoke last, so our own Sent
+    # copy is the newest non-draft in every one of them. Guarding on "newest
+    # message" made a chase draft impossible to create: 15 overdue threads
+    # produced 0 drafts on the feature's first live run. Every earlier
+    # reply-all test modelled a conversation containing ONLY the external
+    # message, which is why nothing caught it.
+
+    def _chase_thread(self):
+        """Old inbound message + our newer reply - the shape of every chase."""
+        inbound = {
+            "id": "inbound-id", "conversationId": "conv-chase", "subject": "RE: Fittings - RFQ",
+            "from": {"emailAddress": {"address": "buyer@sctfrp.com"}},
+            "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+            "ccRecipients": [], "receivedDateTime": "2026-06-24T14:00:00Z", "isDraft": False,
+        }
+        our_reply = {
+            "id": "our-sent-id", "conversationId": "conv-chase", "subject": "RE: Fittings - RFQ",
+            "from": {"emailAddress": {"address": "info@frpdepots.com"}},
+            "toRecipients": [{"emailAddress": {"address": "buyer@sctfrp.com"}}],
+            "ccRecipients": [], "receivedDateTime": "2026-06-26T09:00:00Z", "isDraft": False,
+        }
+        return inbound, our_reply
+
+    def test_latest_live_external_non_draft_ignores_our_own_newer_sent_message(self) -> None:
+        inbound, our_reply = self._chase_thread()
+        # latest_non_draft picks OUR message - which is what broke the chase.
+        self.assertEqual(tool.latest_non_draft([inbound, our_reply])["id"], "our-sent-id")
+        # the reply-all resolver must pick the last thing THEY said instead.
+        self.assertEqual(
+            tool.latest_live_external_non_draft([inbound, our_reply])["id"], "inbound-id"
+        )
+
+    def test_latest_live_external_non_draft_skips_bounces_and_subdomains(self) -> None:
+        inbound, our_reply = self._chase_thread()
+        bounce = dict(inbound, id="bounce-id", receivedDateTime="2026-06-27T10:00:00Z",
+                      **{"from": {"emailAddress": {"address": "no-reply@sctfrp.com"}}})
+        subdomain = dict(inbound, id="sub-id", receivedDateTime="2026-06-28T10:00:00Z",
+                         **{"from": {"emailAddress": {"address": "billing@mail.frpdepots.com"}}})
+        picked = tool.latest_live_external_non_draft([inbound, our_reply, bounce, subdomain])
+        self.assertEqual(picked["id"], "inbound-id")
+        self.assertTrue(tool.is_automated_address("Bounce-1@sctfrp.com"))
+        self.assertTrue(tool.is_internal_address("billing@MAIL.frpdepots.com"))
+        self.assertFalse(tool.is_internal_address("buyer@notfrpdepots.com"))
+
+    def test_reply_all_chase_succeeds_when_our_own_sent_message_is_newest(self) -> None:
+        inbound, our_reply = self._chase_thread()
+        with tempfile.TemporaryDirectory() as folder:
+            folder_path = Path(folder)
+            body_path = folder_path / "chase.txt"
+            body_path.write_text("Hi - just checking whether you need anything from us.",
+                                 encoding="utf-8")
+            image_path = folder_path / "logo.jpeg"
+            image_path.write_bytes(b"not-a-real-logo")
+            bundle = {
+                "html": '<p>Rachad Homsi</p><img src="cid:logo-cid"><p>frpdepots.com</p>',
+                "inline_attachments": [{"path": str(image_path), "name": "logo.jpeg",
+                                        "content_type": "image/jpeg", "content_id": "logo-cid"}],
+                "source_message_id": "sig-src",
+            }
+            updated_body = ""
+
+            def fake_graph(token, method, path, payload=None):
+                nonlocal updated_body
+                if method == "GET" and path.startswith("/me/messages?") and "conversationId" in path:
+                    return {"value": [inbound, our_reply]}
+                if method == "GET" and path.startswith("/me/messages/inbound-id"):
+                    return inbound
+                if method == "POST" and path.endswith("/createReplyAll"):
+                    return {"id": "reply-id", "isDraft": True}
+                if method == "GET" and path.startswith("/me/messages/reply-id?"):
+                    return {"id": "reply-id", "isDraft": True, "conversationId": "conv-chase",
+                            "subject": "RE: Fittings - RFQ",
+                            "body": {"contentType": "HTML",
+                                     "content": updated_body or "<div>hist</div>"},
+                            "toRecipients": [{"emailAddress": {"address": "buyer@sctfrp.com"}}],
+                            "ccRecipients": [], "bccRecipients": []}
+                if method == "PATCH" and path == "/me/messages/reply-id":
+                    updated_body = payload["body"]["content"]
+                    return {"id": "reply-id", "isDraft": True}
+                if method == "POST" and path.endswith("/attachments"):
+                    return {"id": "att"}
+                if method == "GET" and path.endswith("/attachments"):
+                    return {"value": [{"contentId": "logo-cid", "isInline": True}]}
+                self.fail(f"Unexpected Graph call: {method} {path}")
+
+            args = argparse.Namespace(
+                input=None, match=None, source_id="inbound-id",
+                body_file=str(body_path), body_html_file=None,
+                replace_standalone=False, superseded_id=None, superseded_subject=None,
+            )
+            output = io.StringIO()
+            with (
+                patch.object(tool, "load_official_signature_bundle", return_value=bundle),
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+                patch.object(tool, "append_receipt"),
+                redirect_stdout(output),
+            ):
+                tool.command_reply_all(args)
+
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "REPLY_ALL_DRAFT_CREATED_NOT_SENT")
+            self.assertEqual(result["conversation_id"], "conv-chase")
+
+    def test_reply_all_still_blocks_when_they_replied_after_the_source(self) -> None:
+        """The real safety property: a NEWER EXTERNAL reply must still block."""
+        inbound, our_reply = self._chase_thread()
+        their_newer = dict(inbound, id="their-newer-id",
+                           receivedDateTime="2026-06-30T08:00:00Z")
+
+        def fake_graph(token, method, path, payload=None):
+            if method == "GET" and path.startswith("/me/messages?") and "conversationId" in path:
+                return {"value": [inbound, our_reply, their_newer]}
+            if method == "GET" and path.startswith("/me/messages/inbound-id"):
+                return inbound
+            self.fail(f"Unexpected Graph call: {method} {path}")
+
+        args = argparse.Namespace(
+            input=None, match=None, source_id="inbound-id",
+            body_file=None, body_html_file=None, replace_standalone=False,
+            superseded_id=None, superseded_subject=None,
+        )
+        args.body_text = None
+        with (
+            patch.object(tool, "refresh_access_token", return_value=("t", set())),
+            patch.object(tool, "graph_request", side_effect=fake_graph),
+        ):
+            with self.assertRaisesRegex(tool.OutlookError, "newer external reply"):
+                tool.command_reply_all(
+                    argparse.Namespace(input=None, match=None, source_id="inbound-id",
+                                       body_file=None, body_html_file=None,
+                                       replace_standalone=False, superseded_id=None,
+                                       superseded_subject=None, body_text="chase")
+                )
+
+    def test_reply_all_refuses_an_automated_sender_as_the_chase_target(self) -> None:
+        bounce = {
+            "id": "bounce-id", "conversationId": "conv-chase", "subject": "Undeliverable",
+            "from": {"emailAddress": {"address": "postmaster@sctfrp.com"}},
+            "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+            "ccRecipients": [], "receivedDateTime": "2026-06-30T08:00:00Z", "isDraft": False,
+        }
+
+        def fake_graph(token, method, path, payload=None):
+            if method == "GET" and path.startswith("/me/messages/bounce-id"):
+                return bounce
+            self.fail(f"Unexpected Graph call: {method} {path}")
+
+        with (
+            patch.object(tool, "refresh_access_token", return_value=("t", set())),
+            patch.object(tool, "graph_request", side_effect=fake_graph),
+        ):
+            with self.assertRaisesRegex(tool.OutlookError, "automated sender"):
+                tool.command_reply_all(
+                    argparse.Namespace(input=None, match=None, source_id="bounce-id",
+                                       body_file=None, body_html_file=None,
+                                       replace_standalone=False, superseded_id=None,
+                                       superseded_subject=None, body_text="chase")
+                )
+
     def test_html_history_comparison_tolerates_graph_markup_normalization(self) -> None:
         original = '<div class="quoted"><p>Original&nbsp; history</p><br>Line two</div>'
         graph_normalized = '<div class=quoted><p>Original&#160; history</p><br />Line two</div>'

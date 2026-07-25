@@ -25,6 +25,28 @@ engineer.
   model drift (TDI learned this the hard way 2026-07-16).
 - Hermes is PINNED — never `hermes update` casually (TDI rule, same
   install).
+- *** LOCAL PATCH TO SHARED HERMES (2026-07-24) — RE-APPLY AFTER ANY UPDATE. ***
+  File: %LOCALAPPDATA%\hermes\hermes-agent\tools\file_operations.py
+  Adds ShellFileOperations._escape_native_path_arg and uses it for the PATH
+  argument at the three `rg` call sites (_search_content once, _search_files_rg
+  twice). Rachad approved patching the shared install 2026-07-24.
+  THE BUG: _escape_shell_arg rewrites C:\x to the MSYS /c/x form because bash
+  builtins need it, then single-quotes it. `rg` here is rg.exe, a NATIVE
+  Windows binary — and single-quoting SUPPRESSES MSYS's usual argument
+  conversion, so rg received the literal "/c/FRPDepot/..." and died with
+  "IO error ... (os error 3)". The tell: `test -e '/c/FRPDepot/...'` SUCCEEDS
+  (bash builtin, resolves POSIX fine) and only the following rg call fails on
+  the identical path. Dado then retried the same doomed search — that is the
+  mechanism behind 2026-07-23 conduct FINDING 3 (15+ failures) and 7 more on
+  2026-07-24, and a large part of why her turns ran long.
+  NOT CHANGED, deliberately: _search_with_grep. grep here comes from Git Bash
+  and IS an MSYS binary, so it wants the POSIX form. Only native binaries get
+  the Windows form.
+  A first attempt patched file_tools.search_tool instead and was reverted — it
+  normalised the path earlier, but _escape_shell_arg converted it straight back,
+  so it was a no-op. Fix the ARGUMENT HANDED TO THE NATIVE BINARY, not the
+  caller. Verified after: MSYS, Windows, /c/Intercompany, target=content and
+  target=files all return matches; /home/x, relative paths and "." unchanged.
 - Python: STILL no `py` launcher, and it cannot be installed — a Software
   Restriction Policy (HKLM\SOFTWARE\Policies\Microsoft\Windows\Safer) blocks
   running downloaded installers, so winget/python.org .exe fails with 1625.

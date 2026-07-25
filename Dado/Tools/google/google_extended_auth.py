@@ -71,19 +71,31 @@ def _save(creds) -> None:
     TOKEN_FILE.write_text(creds.to_json(), encoding="utf-8")
 
 
-def get_creds(interactive: bool = False):
+def get_creds(interactive: bool = False, force: bool = False):
+    """force=True skips every reuse path and always re-consents in a browser.
+
+    WHY THIS EXISTS (2026-07-24): Rachad moved the OAuth app from "Testing" to
+    "In production" to kill Google's 7-day sign-in expiry. That only helps
+    tokens MINTED AFTER the switch - a refresh token's lifetime is fixed when
+    it is issued, and refreshing it does not reset the clock. He double-clicked
+    the connect button, the branch below found the stored token still valid,
+    returned early WITHOUT opening a browser, and printed "VERIFIED" - so the
+    old 7-day token stayed in place while the output implied success. The only
+    reliable cure was deleting the token file by hand. Use force instead:
+        python google_extended_auth.py reconnect
+    """
     from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
     creds = None
-    if TOKEN_FILE.exists():
+    if TOKEN_FILE.exists() and not force:
         try:
             creds = Credentials.from_authorized_user_file(str(TOKEN_FILE))
         except ValueError:
             creds = None
     scope_ok = bool(creds) and bool(creds.scopes) and creds.has_scopes(SCOPES)
-    if creds and creds.valid and scope_ok:
+    if creds and creds.valid and scope_ok and not force:
         return creds
     if creds and creds.expired and creds.refresh_token and scope_ok:
         try:
@@ -155,8 +167,8 @@ def _screen_count(records: list[dict], *fields: str) -> tuple[int, int]:
     return safe, withheld
 
 
-def self_check(interactive: bool) -> bool:
-    creds = get_creds(interactive=interactive)
+def self_check(interactive: bool, force: bool = False) -> bool:
+    creds = get_creds(interactive=interactive, force=force)
     token = creds.token
     granted = set(creds.scopes or [])
     missing = [SCOPE_NAMES[s] for s in SCOPES if s not in granted]
@@ -239,7 +251,11 @@ def main() -> int:
         return 0 if self_check(interactive=True) else 1
     if command == "check":
         return 0 if self_check(interactive=False) else 1
-    raise SystemExit("Use 'connect' or 'check'.")
+    if command == "reconnect":
+        # Always re-consents in a browser, even when the stored token still
+        # looks fine. See get_creds() for why "connect" alone is not enough.
+        return 0 if self_check(interactive=True, force=True) else 1
+    raise SystemExit("Use 'connect', 'check', or 'reconnect'.")
 
 
 if __name__ == "__main__":

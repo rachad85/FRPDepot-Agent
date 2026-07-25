@@ -105,14 +105,22 @@ def _check_client_file():
             f"Guide: {GUIDE}")
 
 
-def get_creds(interactive=False):
-    """Silent (load + refresh) first; browser sign-in only when interactive."""
+def get_creds(interactive=False, force=False):
+    """Silent (load + refresh) first; browser sign-in only when interactive.
+
+    force=True skips every reuse path and always re-consents in a browser.
+    Needed because "connect" returns early when the stored token is still
+    valid - which silently defeated the 2026-07-24 move to "In production".
+    That switch only lengthens tokens MINTED AFTER it; refreshing an old one
+    does not reset its 7-day clock. See google_extended_auth.get_creds for the
+    full incident note. Use: python google_tool.py reconnect
+    """
     from google.auth.exceptions import RefreshError
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
     creds = None
-    if os.path.exists(TOKEN_FILE):
+    if os.path.exists(TOKEN_FILE) and not force:
         try:
             # Load WITHOUT forcing SCOPES: we want creds.scopes to reflect what
             # was actually GRANTED, not what we now request, so the coverage
@@ -123,7 +131,7 @@ def get_creds(interactive=False):
 
     scope_ok = bool(creds) and bool(creds.scopes) and creds.has_scopes(SCOPES)
 
-    if creds and creds.valid and scope_ok:
+    if creds and creds.valid and scope_ok and not force:
         return creds
     if creds and creds.expired and creds.refresh_token and scope_ok:
         try:
@@ -180,8 +188,8 @@ def _get(token, url):
         return json.loads(r.read())
 
 
-def self_check(interactive):
-    creds = get_creds(interactive=interactive)
+def self_check(interactive, force=False):
+    creds = get_creds(interactive=interactive, force=force)
     token = creds.token
     granted = set(creds.scopes or [])
     ok = True
@@ -209,8 +217,17 @@ def self_check(interactive):
               + ". Re-run CONNECT_DADO_GOOGLE.bat and tick every box.")
     if ok:
         print("SIGNED IN OK. Token vault: " + TOKEN_FILE)
-        print("Reminder: Google expires this in 7 days - when a tool says "
-              "the sign-in expired, double-click CONNECT_DADO_GOOGLE.bat again.")
+        # The 7-day expiry is gone: Rachad moved the dado-frpd OAuth app from
+        # "Testing" to "In production" on 2026-07-24. Per Google's own docs it
+        # is PUBLISHING STATUS, not verification status, that sets the 7-day
+        # limit - an unverified production app still gets long-lived refresh
+        # tokens (it only carries the "unverified app" warning and a 100-user
+        # cap, neither of which matters for one operator). A token minted
+        # BEFORE that switch keeps its old 7-day clock, so any sign-in older
+        # than 2026-07-24 must be re-consented once to benefit.
+        print("Sign-in should now be long-lived (the app is In production). "
+              "If a tool ever reports it expired, double-click "
+              "CONNECT_DADO_GOOGLE.bat again.")
     return ok
 
 
@@ -220,6 +237,8 @@ if __name__ == "__main__":
         result_ok = self_check(interactive=True)
     elif cmd == "check":
         result_ok = self_check(interactive=False)
+    elif cmd == "reconnect":
+        result_ok = self_check(interactive=True, force=True)
     else:
-        sys.exit(f"Unknown command {cmd!r}. Use 'connect' or 'check'.")
+        sys.exit(f"Unknown command {cmd!r}. Use 'connect', 'check', or 'reconnect'.")
     sys.exit(0 if result_ok else 1)

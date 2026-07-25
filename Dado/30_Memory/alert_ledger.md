@@ -18,6 +18,10 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-23 Important: Account Closure Notification — Airwallex access ends 2026-08-15; remaining balance withdrawal and records download require verification.
 - 2026-07-23 Interac Autodeposit registration replaced — info@frpdepots.com was moved from DCBank to Desjardins account ending 1140; authorization requires verification.
 - 2026-07-24 Payment from Structural Composite Technologies Ltd. was successfully completed — Plooto says CAD 4,101.30 for INV-000040 was sent July 16, conflicting with the July 22 collection email; bank receipt requires verification.
+- 2026-07-24 FRP Flanges — CSG still owes pressure ratings after 35 working days; follow-up draft blocked because Outlook rejected the older inbound source after Rachad's newer sent message.
+- 2026-07-24 BPO Flanges — J-Rain pricing request is still unanswered after 35 working days; follow-up draft blocked because Outlook rejected the older inbound source after Rachad's newer sent message.
+- 2026-07-24 Manway Covers — One Wabash still owes a drawing/sketch and quantities after 25 working days; follow-up draft blocked because Outlook rejected the older inbound source after Rachad's newer sent message.
+- 2026-07-24 Fittings - RFQ — SCT has not responded to the partial availability and elbow price after 20 working days; follow-up draft blocked by the same Outlook source-message safeguard.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

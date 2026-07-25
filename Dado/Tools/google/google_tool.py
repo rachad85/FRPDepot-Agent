@@ -97,6 +97,17 @@ def command_connect(args: argparse.Namespace) -> None:
         raise GoogleError("sign-in incomplete - see the warnings above")
 
 
+def command_reconnect(args: argparse.Namespace) -> None:
+    """Force a brand-new sign-in even if the stored one still works.
+
+    'connect' returns early on a healthy token and never opens a browser, so it
+    cannot replace a token minted under the old "Testing" publishing status.
+    Use this whenever a NEW token is the point, not merely a working one.
+    """
+    if not google_auth.self_check(interactive=True, force=True):
+        raise GoogleError("re-consent incomplete - see the warnings above")
+
+
 def command_check(args: argparse.Namespace) -> None:
     if not google_auth.self_check(interactive=False):
         raise GoogleError("check failed - see the warnings above")
@@ -230,6 +241,9 @@ def build_parser() -> argparse.ArgumentParser:
     connect.set_defaults(func=command_connect)
     check = commands.add_parser("check", help="Verify Gmail + Drive access, no browser")
     check.set_defaults(func=command_check)
+    reconnect = commands.add_parser(
+        "reconnect", help="Force a brand-new sign-in even if the current one still works")
+    reconnect.set_defaults(func=command_reconnect)
 
     gs = commands.add_parser("gmail-search", help="Search personal Gmail (TDI-filtered)")
     gs.add_argument("--query", required=True, help="Gmail search syntax, e.g. 'from:x subject:y'")

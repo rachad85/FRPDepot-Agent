@@ -51,6 +51,14 @@ REQUIRED_TOKEN_SCOPES = {"User.Read", "Mail.ReadWrite", "Calendars.Read"}
 FORBIDDEN_TOKEN_SCOPE = "Mail.Send"
 DPAPI_DESCRIPTION = "FRP Depot Outlook refresh token"
 FORBIDDEN_REPLY_DOMAINS = {"troydualam.com"}
+INTERNAL_DOMAIN = "frpdepots.com"
+# Senders that are never a reply target: a bounce or a no-reply notice is not
+# the other party speaking. Mirrors outlook_check.AUTO_PREFIXES.
+AUTO_SENDER_PREFIXES = (
+    "no-reply", "noreply", "no_reply", "donotreply", "do-not-reply",
+    "mailer-daemon", "mailerdaemon", "postmaster", "bounce",
+    "notification", "notifications", "automated", "auto-reply",
+)
 
 
 class OutlookError(RuntimeError):
@@ -611,6 +619,53 @@ def latest_non_draft(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
     return max(candidates, key=message_datetime) if candidates else None
 
 
+def is_internal_address(address: str) -> bool:
+    """Our own mailbox, including any frpdepots.com subdomain."""
+    value = (address or "").casefold()
+    return value.endswith("@" + INTERNAL_DOMAIN) or value.endswith("." + INTERNAL_DOMAIN)
+
+
+def is_automated_address(address: str) -> bool:
+    """Bounce / no-reply / notification senders. Never a reply target."""
+    value = (address or "").casefold()
+    local = value.split("@", 1)[0]
+    return (
+        any(local.startswith(prefix) for prefix in AUTO_SENDER_PREFIXES)
+        or "mailer-daemon" in value
+        or "postmaster" in value
+    )
+
+
+def latest_live_external_non_draft(messages: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Newest message from a real person on the OTHER side of the thread.
+
+    Deliberately not "newest message". A follow-up chase exists precisely because
+    WE spoke last, so our own Sent copy is the newest non-draft in every thread
+    the follow-up tracker selects (outlook_check.show_waiting_on_them only emits
+    a thread when the last message is ours). Comparing the reply source against
+    it made a chase draft impossible to create: the external-sender guard
+    rejected our own message and the newest-message guard rejected every older
+    external one. Measured 2026-07-24 on the tracker's first live run - 15
+    overdue threads, 0 drafts, 4 logged as "Outlook rejected the older inbound
+    source after Rachad's newer sent message".
+
+    The real safety property is kept: if THEY have replied since the chosen
+    source, that reply is newer and the caller is still blocked as stale.
+
+    Automated senders are skipped as well, so a bounce or a no-reply notice
+    landing after our mail cannot become the message a chase replies to.
+    """
+    candidates = []
+    for message in messages:
+        if message.get("isDraft") is True:
+            continue
+        sender = message_address(message.get("from")) or message_address(message.get("sender"))
+        if not sender or is_internal_address(sender) or is_automated_address(sender):
+            continue
+        candidates.append(message)
+    return max(candidates, key=message_datetime) if candidates else None
+
+
 def resolve_source_message(access_token: str, match: str) -> dict[str, Any]:
     """Resolve a reply target by a short, reliable search term instead of a raw
     ~150-char Graph message id. Hand-carrying that id through a JSON input file is
@@ -888,8 +943,13 @@ def command_reply_all(args: argparse.Namespace) -> None:
     if not conversation_id:
         raise OutlookError("Reply All blocked: the source message has no Outlook conversation ID.")
     source_sender = message_address(source.get("from")) or message_address(source.get("sender"))
-    if not source_sender or source_sender.endswith("@frpdepots.com"):
+    if not source_sender or is_internal_address(source_sender):
         raise OutlookError("Reply All blocked: select the latest external message in the thread.")
+    if is_automated_address(source_sender):
+        raise OutlookError(
+            "Reply All blocked: that message is from an automated sender "
+            "(bounce/no-reply); it is not something to reply to."
+        )
     assert_reply_participants_safe(message_participants(source))
 
     # Auto-detect the obsolete standalone draft to supersede (so its id, too, need
@@ -912,9 +972,13 @@ def command_reply_all(args: argparse.Namespace) -> None:
         # zero standalone drafts -> nothing to supersede; proceed
 
     messages = conversation_messages(access_token, conversation_id)
-    latest = latest_non_draft(messages)
-    if not latest or str(latest.get("id") or "") != source_message_id:
-        raise OutlookError("Reply All blocked: a newer non-draft message exists in the live thread.")
+    latest = latest_live_external_non_draft(messages)
+    if not latest:
+        raise OutlookError(
+            "Reply All blocked: this thread has no live external message to reply to."
+        )
+    if str(latest.get("id") or "") != source_message_id:
+        raise OutlookError("Reply All blocked: a newer external reply exists in the live thread.")
     same_response_drafts = [
         message
         for message in messages
@@ -1011,9 +1075,9 @@ def command_reply_all(args: argparse.Namespace) -> None:
         raise OutlookError("Reply All draft failed final verification: " + json.dumps(checks))
     assert_reply_participants_safe(set(final_to + final_cc))
 
-    latest_after = latest_non_draft(conversation_messages(access_token, conversation_id))
+    latest_after = latest_live_external_non_draft(conversation_messages(access_token, conversation_id))
     if not latest_after or str(latest_after.get("id") or "") != source_message_id:
-        raise OutlookError("Reply All draft blocked: a newer source message arrived during drafting.")
+        raise OutlookError("Reply All draft blocked: a newer external reply arrived during drafting.")
 
     if superseded_draft_id:
         graph_request(

@@ -529,7 +529,11 @@ def command_store(_: argparse.Namespace) -> None:
             })
 
     # Two-pass settings read: metadata for all options, values only for reviewed safe IDs.
+    # Some WooCommerce/plugin combinations advertise a settings group that returns
+    # rest_setting_setting_group_invalid when opened. Record and skip that stale
+    # advertisement instead of discarding the entire otherwise-valid store audit.
     settings_safe: dict[str, Any] = {}
+    settings_group_warnings: list[dict[str, str]] = []
     groups, _ = wc.api_get(
         "/settings", {"_fields": "id,label,parent_id,sub_groups"}, vault
     )
@@ -537,9 +541,19 @@ def command_store(_: argparse.Namespace) -> None:
         gid = str(group.get("id") or "")
         if not gid:
             continue
-        metadata, _ = wc.api_get(
-            f"/settings/{gid}", {"_fields": "id,label,type,group_id"}, vault
-        )
+        try:
+            metadata, _ = wc.api_get(
+                f"/settings/{gid}", {"_fields": "id,label,type,group_id"}, vault
+            )
+        except wc.WooError as exc:
+            detail = str(exc)
+            if "HTTP 404" in detail and "rest_setting_setting_group_invalid" in detail:
+                settings_group_warnings.append({
+                    "group": gid,
+                    "warning": "Advertised settings group returned HTTP 404 and was skipped.",
+                })
+                continue
+            raise
         for setting in metadata if isinstance(metadata, list) else []:
             sid = str(setting.get("id") or "")
             setting_type = str(setting.get("type") or "").casefold()
@@ -629,7 +643,9 @@ def command_store(_: argparse.Namespace) -> None:
             "guest_unique_customers_estimated": False,
         },
         "configuration": {
-            "settings": settings_safe, "payment_gateways": gateway_rows,
+            "settings": settings_safe,
+            "settings_group_warnings": settings_group_warnings,
+            "payment_gateways": gateway_rows,
             "shipping_methods": shipping_methods,
             "shipping_zone_location_type_counts": dict(zone_location_type_counts),
             "system_status": safe_system_status(system_raw),
