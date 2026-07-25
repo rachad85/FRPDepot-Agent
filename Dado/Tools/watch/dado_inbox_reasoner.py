@@ -288,38 +288,62 @@ def prefetch_triage():
 
 
 def run_dado():
+    """Returns the model's text, or None if the run never produced one.
+
+    None and "" mean different things and must not be conflated. run_dado used
+    to return "" on failure, is_silent("") is True, so a quota exhaustion on the
+    shared openai-codex plan, a gateway outage or a dead provider (there is no
+    fallback, by design) logged "silent" and sent nothing - identical to a clean
+    sweep. Rachad reads that quiet as "nothing needs me" when in fact no mail was
+    reasoned over at all. Collection failures alerted; brain failures did not,
+    which is what made the gap invisible.
+    """
     env = os.environ.copy()
     env["HERMES_ACCEPT_HOOKS"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
-        cwd=WORKDIR,
-        env=env,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=2700,
-    )
+    try:
+        proc = subprocess.run(
+            [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
+            cwd=WORKDIR,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=2700,
+        )
+    except Exception as exc:
+        # timeout=2700 raises TimeoutExpired, which used to escape run_once and
+        # kill the process with a traceback - again with no message to Rachad.
+        log(f"dado run raised: {type(exc).__name__}: {exc}")
+        return None
     if proc.returncode != 0:
         log(f"dado failed rc={proc.returncode} stderr={(proc.stderr or '')[:500]!r}")
-        return ""
+        return None
     return (proc.stdout or "").strip()
 
 
 def _try_send(message):
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        [hermes_exe(), "-p", PROFILE, "send", "-q", "-t", TARGET, message],
-        cwd=WORKDIR,
-        env=env,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        capture_output=True,
-        timeout=60,
-    )
+    try:
+        proc = subprocess.run(
+            [hermes_exe(), "-p", PROFILE, "send", "-q", "-t", TARGET, message],
+            cwd=WORKDIR,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=60,
+        )
+    except Exception as exc:
+        # A hung Telegram call raises TimeoutExpired; a missing hermes binary
+        # raises FileNotFoundError. Neither was caught, so the exception escaped
+        # send_clean, queue_undelivered never ran, and the alert was destroyed
+        # outright - in exactly the transient outage the retry policy exists for.
+        # Report it as a failed attempt so the retry and the queue still happen.
+        return -1, f"{type(exc).__name__}: {exc}"
     return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
 
@@ -327,15 +351,21 @@ def send_clean(message):
     """Send, retrying transient failures; queue for the next run if it never
     lands so an alert is never silently lost (Aze's dropped-RFQ lesson)."""
     last = ""
-    for attempt in range(1, 4):
-        rc, err = _try_send(message)
-        if rc == 0:
-            log(f"sent business message (attempt {attempt})")
-            return True
-        last = err
-        log(f"send attempt {attempt}/3 failed rc={rc} err={err[:200]!r}")
-        if attempt < 3:
-            time.sleep(5 * attempt)
+    try:
+        for attempt in range(1, 4):
+            rc, err = _try_send(message)
+            if rc == 0:
+                log(f"sent business message (attempt {attempt})")
+                return True
+            last = err
+            log(f"send attempt {attempt}/3 failed rc={rc} err={err[:200]!r}")
+            if attempt < 3:
+                time.sleep(5 * attempt)
+    except Exception as exc:
+        # Belt and braces. Nothing between here and queue_undelivered may throw,
+        # or the alert dies with the traceback instead of waiting for next sweep.
+        last = f"{type(exc).__name__}: {exc}"
+        log(f"send loop raised, falling through to the queue: {last}")
     queue_undelivered(message)
     log(f"send failed after 3 attempts; queued for next sweep. last_err={last[:200]!r}")
     return False
@@ -406,6 +436,16 @@ def run_once():
         )
         return 0
     msg = run_dado()
+    if msg is None:
+        # Must be checked BEFORE is_silent - is_silent(None) is True, which is
+        # precisely how this failure used to disguise itself as a quiet sweep.
+        log("brain run failed; alerting rather than going quiet")
+        send_clean(
+            "Inbox sweep could not be reviewed - Dado's run failed or timed out, "
+            "so no mail was read this cycle. This is NOT an all-clear. Backend "
+            "attention needed; next automatic attempt in about 2 hours."
+        )
+        return 0
     if is_silent(msg):
         log("silent")
         return 0

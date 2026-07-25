@@ -168,18 +168,30 @@ def prefetch() -> int:
     return int(data.get("overdue_count", 0))
 
 
-def run_dado() -> str:
+def run_dado() -> str | None:
+    """Returns the model's text, or None if the run never produced one.
+
+    Same lesson as dado_inbox_reasoner.run_dado: "" was returned on failure and
+    is_silent("") is True, so a failed run looked exactly like a quiet morning.
+    Observed live 2026-07-24 - a run started 21:47 with 15 overdue threads on
+    file (QT-000023 at 42 working days, CAD 4,101.30 at 9) died around 22:32 and
+    left nothing but "collected: 15 overdue" in the log. Rachad was told nothing.
+    """
     env = os.environ.copy()
     env["HERMES_ACCEPT_HOOKS"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    proc = subprocess.run(
-        [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
-        cwd=WORKDIR, env=env, text=True, encoding="utf-8", errors="replace",
-        capture_output=True, timeout=2700,
-    )
+    try:
+        proc = subprocess.run(
+            [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
+            cwd=WORKDIR, env=env, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=2700,
+        )
+    except Exception as exc:
+        log(f"dado run raised: {type(exc).__name__}: {exc}")
+        return None
     if proc.returncode != 0:
         log(f"dado failed rc={proc.returncode} stderr={(proc.stderr or '')[:400]!r}")
-        return ""
+        return None
     return (proc.stdout or "").strip()
 
 
@@ -197,12 +209,30 @@ def run_once() -> int:
         log("nothing overdue - silent")
         return 0
     msg = run_dado()
+    if not msg:
+        # None = the run failed or timed out. "" on a clean exit = it produced
+        # nothing even though prefetch just PROVED there is work. The prompt
+        # requires either a digest or the literal [SILENT], so neither is an
+        # all-clear. Checked before is_silent, which returns True for both.
+        log(f"no usable digest ({'run failed' if msg is None else 'empty output'}); alerting")
+        send_clean(
+            f"Follow-up digest could not be produced - {overdue} threads are "
+            "overdue and were not reviewed, so no chase drafts were prepared. "
+            "This is NOT an all-clear. Backend attention needed."
+        )
+        return 0
     if is_silent(msg):
         log("silent")
         return 0
     clean = scrub_noise(msg)
     if is_silent(clean) or len(clean) < 8:
-        log(f"suppressed tooling noise; raw={msg[:200]!r}")
+        # It spoke, but nothing survived the scrub. With overdue > 0 that is a
+        # lost digest, not a quiet morning.
+        log(f"nothing survived the scrub; alerting. raw={msg[:200]!r}")
+        send_clean(
+            f"Follow-up digest came back unreadable - {overdue} threads are "
+            "overdue and were not reviewed. Backend attention needed."
+        )
         return 0
     send_clean(clean)
     return 0

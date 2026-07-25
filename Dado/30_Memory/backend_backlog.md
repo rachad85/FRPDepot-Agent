@@ -68,7 +68,21 @@ that in the same change by requiring the source to be a non-automated external.
 
 ## P1 — monitoring that fails silently (Rachad reads quiet as "nothing needs me")
 
-### B-02 OPEN — A failed brain run is indistinguishable from a clean sweep
+### B-02 FIXED (this commit) — A failed brain run is indistinguishable from a clean sweep
+
+Fixed 2026-07-25. `run_dado` now returns **None** for "the run never produced
+text", distinct from `""`, and catches `TimeoutExpired`. Both callers check
+`msg is None` **before** `is_silent`, which returns True for None — that
+ordering is the whole fix, and a test pins it. The sweep alerts with "This is
+NOT an all-clear"; the digest additionally names the overdue count, and because
+`prefetch` has already proven there is work, empty output and output that
+scrubs to nothing now alert too instead of going dark. Genuine `[SILENT]` is
+untouched. 14 tests in `Dado/Tools/watch/test_watch_delivery.py`, 10 of which
+fail against the pre-fix modules (the other 4 are controls asserting that quiet
+mornings stay quiet). Both **profile script copies re-synced** — the cron runs
+those, not the repo.
+
+Original report follows.
 `dado_inbox_reasoner.py:409` and the same hole at `dado_followup_digest.py:180`.
 `run_dado` returns `""` on any non-zero exit — quota exhaustion on the shared
 openai-codex plan, gateway down, provider outage (**no fallback by design**).
@@ -79,7 +93,17 @@ FIX — return a sentinel distinct from a genuine empty reply; alert on it; catc
 `TimeoutExpired`. Never treat empty output as silent when prefetch already
 proved there is work.
 
-### B-03 OPEN — `send_clean` loses the alert when a send hangs
+### B-03 FIXED (this commit) — `send_clean` loses the alert when a send hangs
+
+Fixed 2026-07-25. `_try_send` wraps its `subprocess.run` and reports any
+exception as `(-1, "<Type>: <msg>")`, so a hung Telegram call
+(`TimeoutExpired`) or a missing binary (`FileNotFoundError`) becomes a failed
+attempt that still retries and still queues. `send_clean`'s retry loop is
+additionally wrapped so nothing between the first attempt and
+`queue_undelivered` can throw the alert away. Covered by
+`test_watch_delivery.py`; both cases error out against the pre-fix module.
+
+Original report follows.
 `dado_inbox_reasoner.py:331`. `_try_send` runs `hermes send` with `timeout=60`;
 `TimeoutExpired` (the exact transient outage the 3-retry policy exists for) is
 caught nowhere, so it escapes `send_clean` and `queue_undelivered` is never
@@ -226,7 +250,19 @@ sources and tell the prompt the data is unavailable this run.
 
 ## P1 — Drive OCR backfill (`google_backfill.py`)
 
-### B-19 OPEN — Never converges: successful rows are re-downloaded and re-OCR'd every run
+### B-19 FIXED bb1f697 (another session) — Never converges: successful rows are re-downloaded and re-OCR'd every run
+
+Closed by one line in `candidates()`: `AND content_status NOT LIKE 'backfill_%'`,
+which excludes rows a previous run already read. Runs converge now. Verified by
+reading the predicate, not by re-running the job.
+
+SIDE EFFECT worth knowing: line ~301 writes `backfill_no_text` for rows that
+produced nothing, and the new predicate excludes those too — so a file whose OCR
+came back empty is never retried. Bounded, which is what was wanted, but it means
+that population joins B-20's "indexed but empty" rows as permanently unread.
+**B-20 is still open and is the more important of the two.**
+
+Original report follows.
 **:308** writes `content_status = f"backfill_{kind}"`, but `candidates()` admits
 any row whose status does not start with `indexed`. So every row a run succeeds
 on is a candidate again next run, in the same `ORDER BY size ASC`. From the live
@@ -277,7 +313,22 @@ FIX — have each extractor report completeness; store `backfill_partial_<kind>`
 keep partial rows in the pool, or surface `content_status` verbatim so a partial
 row reads as a pointer to verify.
 
-### B-23 OPEN — `text_from_msg` leaks an open handle, leaving raw Drive bytes in %TEMP%
+### B-23 FIXED (this commit) — `text_from_msg` leaks an open handle, leaving raw Drive bytes in %TEMP%
+
+Fixed 2026-07-25. `contextlib.closing` guarantees `close()` runs before the
+unlink, the temp file gets a unique `tempfile.mkstemp` name per item instead of
+one per-PID path shared by every `.msg` in a run, and a failed unlink now prints
+a `{"phase": "warn", "temp_unlink_failed": ...}` line instead of being swallowed
+by `except OSError: pass`. `Dado/Tools/google/test_google_backfill.py` pins it —
+against the pre-fix file the parse-error case leaves `_dado_backfill_<pid>.msg`
+behind and the test fails on exactly that.
+
+NOTE the "one bad message poisons the next" test passes against the pre-fix file
+too: whether the stale handle blocks the following `write_bytes` depends on GC
+timing. It is a real invariant worth holding, but the leftover-file assertion is
+the one that actually demonstrated the bug.
+
+Original report follows.
 **:142**. `m.close()` is only on the success path. Any parse error propagates
 with the handle open, so `tmp.unlink()` fails on Windows and `except OSError:
 pass` absorbs it. The full raw bytes sit at `%TEMP%\_dado_backfill_<pid>.msg`
