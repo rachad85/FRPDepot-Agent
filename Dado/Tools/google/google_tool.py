@@ -1,4 +1,4 @@
-"""Dado's personal Gmail + Drive tool (read + draft-only, TDI-filtered).
+"""Dado's personal Gmail + unrestricted Drive tool (read + draft-only).
 
 Run:  python google_tool.py connect                       one-time / weekly sign-in
       python google_tool.py check                         verify access, no browser
@@ -261,12 +261,12 @@ def build_parser() -> argparse.ArgumentParser:
     gd.add_argument("--body-html-file", help="Optional path to an HTML alternative body")
     gd.set_defaults(func=command_gmail_draft)
 
-    ds = commands.add_parser("drive-search", help="Search personal Drive (TDI-filtered)")
+    ds = commands.add_parser("drive-search", help="Search personal Drive (unrestricted)")
     ds.add_argument("--query", required=True, help="Text to search for in file contents/names")
     ds.add_argument("--limit", type=int, default=10, help=f"max {MAX_SEARCH_LIMIT}")
     ds.set_defaults(func=command_drive_search)
 
-    dr = commands.add_parser("drive-read", help="Read one Drive file's text content by id (TDI-filtered)")
+    dr = commands.add_parser("drive-read", help="Read one Drive file's text content by id (unrestricted)")
     dr.add_argument("--id", required=True)
     dr.set_defaults(func=command_drive_read)
 

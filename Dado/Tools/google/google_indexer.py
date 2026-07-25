@@ -1,8 +1,8 @@
-"""Build Dado's private, read-only, TDI-filtered Google reference index.
+"""Build Dado's private, read-only Google reference index.
 
 The index is stored outside the FRP Depot Git repository under
 %LOCALAPPDATA%\FRPDepot-Google\reference. Google is never modified.
-Raw TDI-flagged records are discarded before anything is stored or reported.
+Gmail remains screened. Drive is unrestricted by Rachad's instruction.
 """
 from __future__ import annotations
 
@@ -111,9 +111,8 @@ def db_open() -> sqlite3.Connection:
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
     """)
-    # Quarantine columns: a row can be STORED but withheld from every query.
-    # Added 2026-07-24 with the deep screen; google_reference.py refuses to
-    # serve an index that lacks them, so this must run for a fresh DB too.
+    # Quarantine columns remain for Gmail and schema compatibility. Drive does
+    # not use them and every Drive row is queryable.
     for table in ("gmail_messages", "drive_files"):
         cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
         if "tdi_quarantined" not in cols:
@@ -398,21 +397,10 @@ def upsert_drive(con: sqlite3.Connection, drive: Any, item: dict[str, Any],
                  known_new: bool = False) -> str:
     owners = " | ".join((x.get("displayName") or x.get("emailAddress") or "") for x in item.get("owners") or [])
     name = item.get("name") or ""
-    meta_fields = [name, item.get("description") or "", owners]
-    # deep_tdi_marker, not just is_tdi_flagged: the narrow term list misses TDI
-    # quote numbers, Aze artifacts and the "Dumalac" misspelling (2026-07-24).
-    if deep_tdi_marker(*meta_fields, name=name):
-        con.execute("INSERT OR REPLACE INTO withheld_hashes(kind,id_hash,screened_at) VALUES('drive',?,?)",
-                    (sha(item["id"]), now()))
-        return "withheld"
     try:
         content, status = extract_drive_content(drive, item)
     except Exception as exc:
         content, status = "", f"extract_error:{type(exc).__name__}"
-    if content and deep_tdi_marker(content):
-        con.execute("INSERT OR REPLACE INTO withheld_hashes(kind,id_hash,screened_at) VALUES('drive',?,?)",
-                    (sha(item["id"]), now()))
-        return "withheld"
     values = (
         item["id"], item.get("name") or "", item.get("mimeType") or "", item.get("createdTime") or "",
         item.get("modifiedTime") or "", int(item.get("size") or 0), owners,
@@ -456,9 +444,6 @@ def drive_index(con: sqlite3.Connection, drive: Any, max_items: int | None,
         for item in items:
             fid = item["id"]
             if con.execute("SELECT 1 FROM drive_files WHERE id=?", (fid,)).fetchone():
-                stats["already_indexed"] += 1
-                continue
-            if con.execute("SELECT 1 FROM withheld_hashes WHERE kind='drive' AND id_hash=?", (sha(fid),)).fetchone():
                 stats["already_indexed"] += 1
                 continue
             pending.append(item)
@@ -524,18 +509,18 @@ def report(con: sqlite3.Connection, gmail_stats: dict[str, int] | None, drive_st
     type_rows = con.execute("SELECT mime_type,count(*) FROM drive_files GROUP BY mime_type ORDER BY count(*) DESC LIMIT 25").fetchall()
     status_rows = con.execute("SELECT content_status,count(*) FROM drive_files GROUP BY content_status ORDER BY count(*) DESC").fetchall()
     withheld_gm = con.execute("SELECT count(*) FROM withheld_hashes WHERE kind='gmail'").fetchone()[0]
-    withheld_dr = con.execute("SELECT count(*) FROM withheld_hashes WHERE kind='drive'").fetchone()[0]
+
     meta = dict(con.execute("SELECT key,value FROM meta").fetchall())
     lines = [
         "# Private Google reference index", "", f"Updated: {now()}", "",
-        "Stored outside the FRP Depot Git repository. Read-only source access. TDI-flagged records are discarded.", "",
+        "Stored outside the FRP Depot Git repository. Read-only source access. Gmail is screened; Drive is unrestricted.", "",
         "## Coverage", "",
         f"- Gmail sweep status: {meta.get('gmail_sweep_status', 'unknown')}",
         f"- Gmail messages indexed: {gm_count:,}", f"- Gmail date range: {fmt_ms(gm_dates[0])} to {fmt_ms(gm_dates[1])}",
         f"- Gmail TDI-flagged messages withheld: {withheld_gm:,}",
         f"- Drive sweep status: {meta.get('drive_sweep_status', 'unknown')}",
-        f"- Drive files indexed/listed safely: {dr_count:,}",
-        f"- Drive TDI-flagged files withheld: {withheld_dr:,}", "",
+        f"- Drive files indexed/listed: {dr_count:,}",
+        "- Drive screening: none (Rachad's instruction)", "",
         "## Gmail top sender domains", "",
     ]
     lines.extend(f"- {domain}: {count:,}" for domain, count in top)
@@ -547,7 +532,7 @@ def report(con: sqlite3.Connection, gmail_stats: dict[str, int] | None, drive_st
               "- Gmail message bodies and attachment names are indexed; attachment file contents are not bulk-downloaded.",
               "- Drive text is indexed for Google Docs/Sheets/Slides/Drawings, text, PDF, DOCX, XLSX and PPTX within 30 MB.",
               "- Images, video, audio, archives, scanned PDFs without embedded text, and files over 30 MB remain metadata-only.",
-              "- TDI filtering is keyword-based; anything flagged is withheld and not described here.",
+              "- Gmail filtering is keyword-based; Drive is not company-filtered.",
               "- The index is a reference cache. Current-state questions should still be checked against live Google.", ""]
     REPORT_PATH.write_text("\n".join(lines), encoding="utf-8")
     receipt("google_index_report_written", str(REPORT_PATH))

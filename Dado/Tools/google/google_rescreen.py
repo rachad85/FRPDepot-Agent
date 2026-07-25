@@ -1,4 +1,4 @@
-"""Re-screen the already-built Google index for TDI content. NOTHING IS DELETED.
+"""Maintain the Gmail screen and release obsolete Drive quarantine flags.
 
 Why this exists (2026-07-24): the index was built with a screen that knows only
 "dualam" and "tdi", so Troy Dualam material spelling out neither term was stored
@@ -13,14 +13,14 @@ The index cannot be re-screened by re-running the indexer: both of its loops
 skip ids already stored, so a widened term list can never revisit them. Hence
 this pass, which walks the stored rows directly.
 
-WHAT IT DOES: sets a `tdi_quarantined` flag and records WHICH marker fired.
-google_reference.py then refuses to return flagged rows. The data itself is
-untouched - the server is Rachad's and it is his own data; the objective is to
-stop TDI material reaching an FRP Depot answer, not to destroy anything.
+Drive is unrestricted by Rachad's instruction. --apply screens Gmail only.
+--release-drive clears every Drive flag/hash and places OCR-quarantined files
+back in the extraction queue because their prior text was intentionally not stored.
 
     python google_rescreen.py              # dry run: report only, changes nothing
     python google_rescreen.py --apply      # set the flags
     python google_rescreen.py --show       # current quarantine summary
+    python google_rescreen.py --release-drive  # remove Drive-only restrictions
     python google_rescreen.py --release-all  # clear every flag (fully reversible)
 """
 from __future__ import annotations
@@ -64,8 +64,8 @@ def ensure_columns(con: sqlite3.Connection) -> None:
     con.commit()
 
 
-def scan(con: sqlite3.Connection) -> tuple[list[tuple], list[tuple]]:
-    """Return (gmail_hits, drive_hits) as (id, marker) — screening what is STORED."""
+def scan_gmail(con: sqlite3.Connection) -> list[tuple]:
+    """Return Gmail hits as (id, marker). Drive is deliberately not scanned."""
     gmail_hits = []
     for rid, subject, sender, recipients, cc, snippet, body, att in con.execute(
         "SELECT id,subject,sender,recipients,cc,snippet,body,attachment_names FROM gmail_messages"
@@ -74,14 +74,7 @@ def scan(con: sqlite3.Connection) -> tuple[list[tuple], list[tuple]]:
         if marker:
             gmail_hits.append((rid, marker))
 
-    drive_hits = []
-    for rid, name, owners, description, content in con.execute(
-        "SELECT id,name,owners,description,content FROM drive_files"
-    ):
-        marker = deep_tdi_marker(name, owners, description, content, name=name or "")
-        if marker:
-            drive_hits.append((rid, marker))
-    return gmail_hits, drive_hits
+    return gmail_hits
 
 
 def summarize(hits: list[tuple], label: str) -> None:
@@ -111,6 +104,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true", help="write the flags (default is a dry run)")
     parser.add_argument("--show", action="store_true", help="show the current quarantine state")
+    parser.add_argument("--release-drive", action="store_true", help="clear Drive flags/hashes and requeue OCR-quarantined files")
     parser.add_argument("--release-all", action="store_true", help="clear every flag")
     args = parser.parse_args()
 
@@ -121,6 +115,22 @@ def main() -> int:
     try:
         if args.show:
             return cmd_show(con)
+        if args.release_drive:
+            ensure_columns(con)
+            flagged = con.execute("SELECT count(*) FROM drive_files WHERE tdi_quarantined=1").fetchone()[0]
+            requeued = con.execute("SELECT count(*) FROM drive_files WHERE content_status='backfill_quarantined'").fetchone()[0]
+            hashes = con.execute("SELECT count(*) FROM withheld_hashes WHERE kind='drive'").fetchone()[0]
+            con.execute("UPDATE drive_files SET content_status='released_drive_reprocess' "
+                        "WHERE content_status='backfill_quarantined'")
+            con.execute("UPDATE drive_files SET tdi_quarantined=0, tdi_marker=NULL")
+            con.execute("DELETE FROM withheld_hashes WHERE kind='drive'")
+            con.execute("INSERT OR REPLACE INTO meta VALUES('drive_screening','none')")
+            con.commit()
+            result = {"status": "drive_unrestricted", "flags_cleared": flagged,
+                      "ocr_files_requeued": requeued, "withheld_hashes_deleted": hashes}
+            print(json.dumps(result, indent=2))
+            receipt("google_drive_restrictions_released", f"{DB_PATH}#{json.dumps(result, sort_keys=True)}")
+            return 0
         if args.release_all:
             ensure_columns(con)
             for table in ("gmail_messages", "drive_files"):
@@ -131,13 +141,12 @@ def main() -> int:
             return 0
 
         ensure_columns(con)
-        gmail_hits, drive_hits = scan(con)
+        gmail_hits = scan_gmail(con)
         print(f"{'APPLYING' if args.apply else 'DRY RUN - nothing changed'}\n")
         summarize(gmail_hits, "gmail")
-        summarize(drive_hits, "drive")
         total_rows = (con.execute("SELECT count(*) FROM gmail_messages").fetchone()[0]
                       + con.execute("SELECT count(*) FROM drive_files").fetchone()[0])
-        found = len(gmail_hits) + len(drive_hits)
+        found = len(gmail_hits)
         print(f"\n  {found:,} of {total_rows:,} stored rows "
               f"({found / total_rows * 100:.2f}%) carry a TDI marker.")
 
@@ -148,9 +157,7 @@ def main() -> int:
         con.executemany(
             "UPDATE gmail_messages SET tdi_quarantined=1, tdi_marker=? WHERE id=?",
             [(m, i) for i, m in gmail_hits])
-        con.executemany(
-            "UPDATE drive_files SET tdi_quarantined=1, tdi_marker=? WHERE id=?",
-            [(m, i) for i, m in drive_hits])
+
         con.execute("INSERT OR REPLACE INTO meta VALUES('rescreen_last_run',?)", (now(),))
         con.execute("INSERT OR REPLACE INTO meta VALUES('rescreen_marker_version','2026-07-24-deep')")
         con.commit()

@@ -137,7 +137,8 @@ engineer.
       (check before, append after, CLOSED = permanent silence). Cadence
       offset from Aze's :30 sweeps to spread the shared openai-codex quota.
 - [x] Google LIVE (connected + verified 2026-07-24): personal Gmail
-      read-only + Drive read-only + Gmail drafts, TDI-filtered.
+      read-only + drafts with its mailbox screen; Drive read-only and
+      unrestricted with no company filtering.
       Rachad asked (2026-07-24) to copy Aze's live Google
       credentials over to Dado so "whoever is free" can handle his personal
       Google needs — declined. Two reasons: (1) Aze's own tool notes
@@ -152,10 +153,10 @@ engineer.
       (%LOCALAPPDATA%\FRPDepot-Google\token.json, never in the repo),
       scopes gmail.readonly + gmail.compose (drafts, no send path anywhere
       in the tree — Golden Rule 1) + drive.readonly (no edit — same
-      commissioning rule as Zoho, Golden Rule 3). Every Gmail/Drive result
-      is screened by Dado\Tools\google\tdi_filter.py before Dado sees it:
-      flagged search hits are withheld and counted, a flagged direct --id
-      read is refused outright. Code: Dado\Tools\google\{google_auth,
+      commissioning rule as Zoho, Golden Rule 3). Gmail results are screened
+      by Dado\Tools\google\tdi_filter.py: flagged search hits are withheld and
+      counted, and a flagged direct --id read is refused. Drive has no such
+      screen. Code: Dado\Tools\google\{google_auth,
       google_tool,tdi_filter}.py, CONNECT_DADO_GOOGLE.bat/
       CHECK_DADO_GOOGLE.bat at repo root. OAuth project dado-frpd, app
       Dado_FRPD, publishing status stays TESTING (never PUBLISH — that
@@ -166,18 +167,15 @@ engineer.
       Verified live 2026-07-24: granted scopes are exactly gmail.readonly +
       gmail.compose + drive.readonly (NO send scope, NO Drive write), token
       sits outside the repo, draft create + read-back works and sends nothing.
-      TWO REAL FILTER BUGS FOUND AND FIXED on that first live run — do not
+      TWO REAL GMAIL FILTER BUGS FOUND AND FIXED on that first live run — do not
       regress either:
       (a) SCREEN WHAT YOU RETURN, not what you happen to check. The first
           cut screened Subject+From only, but a Gmail `q=` search matches
           BODY text, and gmail-read returned the full body after checking
           only the snippet. Live result: 10/10 "Troy Dualam" hits reached
           Dado, 0 withheld. Both Gmail paths now fetch format=full and screen
-          every header value + snippet + full body (_message_is_tdi);
-          drive-read screens fetched CONTENT, not just the filename.
-          drive-search still screens filenames ONLY (a listing exposes no
-          content and downloading every hit is unbounded) — that limitation
-          is stated in its own output; never treat a Drive hit as cleared.
+          every header value + snippet + full body (_message_is_tdi). Drive is
+          deliberately unrestricted and does not use this screen.
       (b) The term was the two-word phrase "troy dualam", which missed the
           no-space company DOMAIN troydualam.com — mail from TDI's own
           domain was passing. TDI_TERMS is now ["dualam","tdi"]; "dualam"
@@ -199,23 +197,14 @@ engineer.
       (default 45) and resumable, since already-indexed ids are skipped.
       (4) a receipt per 20 items wrote 3,768 lines in a day, burying real
       business receipts; now one per run.
-      *** CACHE RE-SCREENED AND REOPENED (2026-07-24). *** Rachad's decision,
-      and he was right to push back on "delete it": the server and the data are
-      his and he is the sole operator, so storage was never the exposure. The
-      real risk is TDI material reaching an FRP Depot ANSWER — the two firms
-      are separate entities that trade with each other, so pricing an FRP job
-      against TDI's own Q26 quotes is an ARM'S-LENGTH problem. Fixed by
-      controlling the read path, keeping every byte:
-      google_rescreen.py flags stored rows (147 of 70,733 = 0.21%) and
-      google_reference.py excludes them in SQL, reports the withheld count, and
-      refuses to serve an index without the marker-version stamp.
-      --release-all reverses it completely. Verified: Q26 / Dumalac / aze /
-      troy_history all leak 0; invoice / flange / resin / pipe unaffected.
-      NOT tightened: google_tool.py, the live per-query tool. Widening its
-      screen was built and then REVERTED — that file carries Rachad's standing
-      "do not add any walls unless I specifically ask for it". Raise it, do not
-      do it unasked.
-      WHAT THE BREACH WAS:
+      *** DRIVE CACHE UNRESTRICTED (2026-07-25). *** Rachad explicitly ordered
+      no Drive restrictions. google_reference.py no longer filters Drive;
+      google_indexer.py and google_backfill.py do not screen or quarantine
+      Drive content; google_rescreen.py --apply now affects Gmail only.
+      --release-drive cleared 428 stored Drive flags, deleted 3,677 legacy
+      Drive withheld hashes and requeued OCR files whose prior text had been
+      discarded. Do not reintroduce a Drive company wall without Rachad asking.
+      HISTORICAL BACKGROUND ONLY — this does not authorize Drive screening:
       WHAT HAPPENED: the screen only knows "dualam" and "tdi". Bare "troy" is
       deliberately excluded (common name/city), so TDI material that spells out
       neither term passed through. Verified in the live index: Aze's own
@@ -243,12 +232,9 @@ engineer.
       NOT PATCHABLE BY RE-RUNNING THE INDEXER: both loops skip ids already
       stored, so a widened list can never revisit them — that is exactly why
       google_rescreen.py walks the stored rows directly.
-      STILL OPEN, and it is Rachad's call: 2,610 Drive rows hold no content
-      (unreadable type, oversize, or failed extraction), so only their name,
-      owner and description were ever screened — a scanned TDI document with a
-      neutral filename would not be caught. They expose no content through the
-      query tool (there is none), and it says so in its own output; treat a
-      Drive hit as a pointer to verify, never as cleared.
+      Drive rows whose formats cannot be read remain metadata-only. That is an
+      extraction limit, not a company restriction; inspect the original file
+      when content is required.
 - [x] FOLLOW-UP TRACKER LIVE (2026-07-24, Rachad's choices): Dado's watch used
       to be ONE-DIRECTIONAL — [awaits YOU] only, with a thread he spoke last in
       treated as "handled, never surface", so a quote or RFQ HE sent could go
@@ -261,14 +247,13 @@ engineer.
       chase DRAFT per item — DRAFTS ONLY unchanged) plus inbox-watch charter
       rule 3b, which raises ONLY overdue+urgent (money/RFQ) items the same
       sweep. Everything else waits for the digest so it never becomes a stream.
-- [x] DRIVE BACKFILL / OCR (2026-07-24): the 2,605 rows stored with content
-      never screened are now read — images via rapidocr_onnxruntime (bundled in
+- [x] DRIVE BACKFILL / OCR (2026-07-24): metadata-only rows are read — images
+      via rapidocr_onnxruntime (bundled in
       vendor; ONNX, no installer, which matters under the SRP), .msg via
       extract-msg, .eml via stdlib, scanned PDFs via PyMuPDF render + OCR,
       legacy .xls via xlrd, zips by member name. Tool:
-      Dado\Tools\google\google_backfill.py, run through job_runner. Everything
-      extracted is screened with deep_tdi_marker BEFORE storage, so a row only
-      moves from unscreened to read-and-clear or quarantined. NOTE vendor is
+      Dado\Tools\google\google_backfill.py, run through job_runner. Drive text
+      is indexed without company filtering. NOTE vendor is
       APPENDED to sys.path, never inserted first — it carries its own
       cryptography copy and the venv pins 46.0.7 for hermes.
 - [x] LONG-JOB DISCIPLINE (2026-07-24, after the 3-hour stall): Dado must
@@ -307,9 +292,9 @@ engineer.
       SCOPE AND LIMITS: marketing METRICS only, read-only, via
       Dado\Tools\google\analytics_tool.py (list/report/compare; Admin-API
       GETs + Data-API runReport only, no administration, no writes). TDI
-      files/mailbox/Drive/Zoho stay walled and tdi_filter.py stays ON for
-      Gmail/Drive — analytics_tool.py deliberately does NOT import it, and
-      that asymmetry is the point. CONTAINMENT: --save writes only to
+      mailbox remains separate; Drive and Zoho are unrestricted. Gmail keeps
+      its mailbox screen. analytics_tool.py deliberately does NOT import it.
+      CONTAINMENT: --save writes only to
       %LOCALAPPDATA%\FRPDepot-Google\analytics_reports\ and the tool REFUSES
       to write inside C:\FRPDepot, so TDI figures cannot enter FRP's git
       history or the nightly conduct bundle. Hard Rule 4 amended in
@@ -326,9 +311,8 @@ engineer.
       CTR is flat, not collapsing. 99.2% of impressions come from
       zero-click queries sitting at positions 10-47 ("frp pipe" 365 imp at
       pos 12.8, "custom frp solutions", "frp pipe elbow").
-- [ ] Zoho: Rachad creates an API client in the Zoho API console
-      (one-time OAuth, like the Intuit flow); then build read-only
-      Books/Inventory report tools.
+- [x] Zoho Books + Inventory LIVE: read access verified. Named writes remain
+      restricted to the commissioned stage-then-commit tools in SOUL rule 3.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 

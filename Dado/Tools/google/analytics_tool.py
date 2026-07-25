@@ -22,9 +22,9 @@ Shown that, Rachad chose separately and deliberately to grant Dado READ access
 to Troy Dualam + Troy Dualam Services analytics so she can work TDI marketing
 alongside Aze. That is a real amendment to Hard Rule 4, recorded in CLAUDE.md
 and Dado's SOUL. Its LIMITS:
-  - ANALYTICS/marketing metrics only. TDI files, mailbox, Drive, Zoho and
-    records remain OFF LIMITS - the Gmail/Drive tdi_filter.py screen stays ON
-    and is deliberately NOT imported here.
+  - ANALYTICS/marketing metrics only. TDI mailbox remains separate. Drive and
+    Zoho are unrestricted by Rachad's later instruction; the Gmail screen is
+    deliberately not imported here.
   - READ-ONLY. Only Admin-API GETs and Data-API runReport (a read, despite
     being an HTTP POST). No property/stream/user administration, no writes.
   - CONTAINMENT. TDI figures must not enter FRP Depot's git history or the

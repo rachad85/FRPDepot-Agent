@@ -1,13 +1,7 @@
-"""Read the Drive files the indexer could not, and screen what they actually say.
+"""Read the Drive files the indexer could not extract normally.
 
-The gap this closes (2026-07-24): 2,605 stored Drive rows have NO content.
-extract_drive_content returns "" for unreadable types, oversize files and
-extraction errors, so the `if content:` screen in upsert_drive is skipped and
-the row is written anyway - screened on filename, owner and description only.
-That is the inverse of this tree's own rule, "SCREEN WHAT YOU RETURN, not what
-you happen to check", and it means a scanned TDI document called
-Scan_20260722_212729.jpg would not be caught. 1,073 of those rows are exactly
-that shape: JPEG scans.
+Drive is unrestricted by Rachad's explicit instruction. Extracted text is
+indexed without company-marker screening. Gmail policy is not handled here.
 
 WHAT IT ADDS, all offline - no installer runs on this box (SRP blocks them):
   images (1,142)  -> OCR via rapidocr_onnxruntime (ONNX, bundled in vendor)
@@ -17,9 +11,6 @@ WHAT IT ADDS, all offline - no installer runs on this box (SRP blocks them):
   legacy .xls (9) -> xlrd
   zip     (101)   -> member NAMES only (cheap, and names are often revealing)
 
-Whatever is extracted is screened with deep_tdi_marker before it is stored, so
-this pass can only ever move a row from "unscreened" to either "read and clear"
-or "quarantined". It never widens what Dado can see without screening it first.
 
     python google_backfill.py --dry-run           what would be attempted
     python google_backfill.py --max-minutes 45    do the work, bounded + resumable
@@ -52,7 +43,7 @@ if str(VENDOR) not in sys.path:
     sys.path.append(str(VENDOR))
 
 import google_auth
-from tdi_filter import deep_tdi_marker
+
 from googleapiclient.discovery import build
 from googleapiclient.http import MediaIoBaseDownload
 
@@ -229,7 +220,7 @@ def candidates(con: sqlite3.Connection, kinds: set[str]) -> list[tuple]:
         WHERE content_status NOT LIKE 'indexed%'
           AND content_status NOT LIKE 'backfill_%'
           AND content_status != 'folder_metadata'
-          AND tdi_quarantined = 0
+
         ORDER BY size ASC
     """).fetchall()
     out = []
@@ -295,26 +286,18 @@ def main() -> int:
                 con.commit()
                 continue
 
-            marker = deep_tdi_marker(text, name=name or "")
-            if marker:
-                # Screened on what we now RETURN, not on what we happened to check.
-                con.execute(
-                    "UPDATE drive_files SET tdi_quarantined=1, tdi_marker=?, "
-                    "content_status='backfill_quarantined' WHERE id=?", (marker, fid))
-                con.execute("DELETE FROM drive_fts WHERE id=?", (fid,))
-                stats["quarantined"] += 1
-            else:
-                con.execute(
-                    "UPDATE drive_files SET content=?, content_status=?, indexed_at=? WHERE id=?",
-                    (text, f"backfill_{kind}", now(), fid))
-                con.execute("DELETE FROM drive_fts WHERE id=?", (fid,))
-                con.execute(
-                    "INSERT INTO drive_fts VALUES(?,?,?,?,?,?)",
-                    (fid, name or "", mime or "",
-                     con.execute("SELECT owners FROM drive_files WHERE id=?", (fid,)).fetchone()[0] or "",
-                     con.execute("SELECT description FROM drive_files WHERE id=?", (fid,)).fetchone()[0] or "",
-                     text))
-                stats["read"] += 1
+            con.execute(
+                "UPDATE drive_files SET content=?, content_status=?, indexed_at=?, "
+                "tdi_quarantined=0, tdi_marker=NULL WHERE id=?",
+                (text, f"backfill_{kind}", now(), fid))
+            con.execute("DELETE FROM drive_fts WHERE id=?", (fid,))
+            con.execute(
+                "INSERT INTO drive_fts VALUES(?,?,?,?,?,?)",
+                (fid, name or "", mime or "",
+                 con.execute("SELECT owners FROM drive_files WHERE id=?", (fid,)).fetchone()[0] or "",
+                 con.execute("SELECT description FROM drive_files WHERE id=?", (fid,)).fetchone()[0] or "",
+                 text))
+            stats["read"] += 1
             con.commit()
             if n % 20 == 0:
                 print(json.dumps({"phase": "backfill", "done": n, "of": len(todo), **stats}),
