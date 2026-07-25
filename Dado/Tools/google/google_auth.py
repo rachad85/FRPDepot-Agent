@@ -42,6 +42,7 @@ click, back for another week. This is normal, not a fault.
 import glob
 import json
 import os
+from datetime import datetime
 import shutil
 import socket
 import sys
@@ -105,6 +106,43 @@ def _check_client_file():
             f"Guide: {GUIDE}")
 
 
+PRODUCTION_SWITCH_DATE = "2026-07-24"  # when the OAuth app left "Testing"
+# Written ONLY when a browser consent actually issues a new refresh token.
+MINTED_FILE = TOKEN_FILE + ".minted"
+
+
+def _record_mint() -> None:
+    """Stamp when a refresh token was genuinely ISSUED.
+
+    The token file's own mtime cannot answer this: _save() rewrites it on every
+    silent refresh too, so an old grant looks freshly minted. A refresh token's
+    lifetime is fixed when it is issued and refreshing does not reset it, so the
+    issue date is the only thing that says whether the "In production" switch
+    applies to this credential.
+    """
+    try:
+        with open(MINTED_FILE, "w", encoding="utf-8") as fh:
+            fh.write(datetime.now().strftime("%Y-%m-%d"))
+    except OSError:
+        pass
+
+
+def _minted_date() -> str | None:
+    """The recorded issue date, or None when we genuinely do not know."""
+    try:
+        with open(MINTED_FILE, encoding="utf-8") as fh:
+            value = fh.read().strip()
+    except OSError:
+        return None
+    return value if len(value) == 10 else None
+
+
+def _token_age_note() -> str:
+    """' (issued 2026-07-20)' - or '' when the issue date was never recorded."""
+    minted = _minted_date()
+    return f" (issued {minted})" if minted else ""
+
+
 def get_creds(interactive=False, force=False):
     """Silent (load + refresh) first; browser sign-in only when interactive.
 
@@ -132,6 +170,15 @@ def get_creds(interactive=False, force=False):
     scope_ok = bool(creds) and bool(creds.scopes) and creds.has_scopes(SCOPES)
 
     if creds and creds.valid and scope_ok and not force:
+        if interactive:
+            # Say so. `connect` returning early looks identical to a successful
+            # sign-in from the operator's side - no browser opens and the tool
+            # prints VERIFIED - which is exactly how the stale pre-production
+            # token survived a deliberate attempt to replace it on 2026-07-24.
+            print("Reused the sign-in already stored on this PC"
+                  + _token_age_note()
+                  + ". No browser opened, so NOTHING was replaced.")
+            print("To mint a genuinely NEW token, run RECONNECT_DADO_GOOGLE.bat.")
         return creds
     if creds and creds.expired and creds.refresh_token and scope_ok:
         try:
@@ -173,7 +220,17 @@ def get_creds(interactive=False, force=False):
         # destroy access. google_extended_auth.py has always passed both.
         access_type="offline",
         prompt="consent")
+    if not creds.refresh_token:
+        # Belt and braces behind prompt="consent". Writing a credential with no
+        # refresh token over a working one is the failure that kills every
+        # non-interactive caller an hour later; refuse rather than save it.
+        sys.exit("Google returned a sign-in with NO refresh token, so it would "
+                 "stop working within the hour. The existing token was left "
+                 "untouched. Try RECONNECT_DADO_GOOGLE.bat again and make sure "
+                 "you approve the consent screen rather than being skipped past "
+                 "it.")
     _save(creds)
+    _record_mint()   # the ONE place a refresh token is genuinely issued
     granted = set(creds.scopes or [])
     missing = [s for s in SCOPES if s not in granted]
     if missing:
@@ -229,17 +286,25 @@ def self_check(interactive, force=False):
               + ". Re-run CONNECT_DADO_GOOGLE.bat and tick every box.")
     if ok:
         print("SIGNED IN OK. Token vault: " + TOKEN_FILE)
-        # The 7-day expiry is gone: Rachad moved the dado-frpd OAuth app from
-        # "Testing" to "In production" on 2026-07-24. Per Google's own docs it
-        # is PUBLISHING STATUS, not verification status, that sets the 7-day
-        # limit - an unverified production app still gets long-lived refresh
-        # tokens (it only carries the "unverified app" warning and a 100-user
-        # cap, neither of which matters for one operator). A token minted
-        # BEFORE that switch keeps its old 7-day clock, so any sign-in older
-        # than 2026-07-24 must be re-consented once to benefit.
-        print("Sign-in should now be long-lived (the app is In production). "
-              "If a tool ever reports it expired, double-click "
-              "CONNECT_DADO_GOOGLE.bat again.")
+        # Only claim "long-lived" about a token we JUST MINTED. The claim is
+        # about the OAuth app's publishing status, not about this credential, so
+        # printing it on `check` or on a reuse path asserted a property of a
+        # token the code had never seen issued - the same class of false
+        # assurance the reconnect work existed to remove, and it had replaced the
+        # previously correct 7-day reminder.
+        minted = _minted_date()
+        if minted is None:
+            print("This sign-in's issue date was never recorded, so its lifetime "
+                  "cannot be stated here. If any tool reports the sign-in expired, "
+                  "run RECONNECT_DADO_GOOGLE.bat once.")
+        elif minted < PRODUCTION_SWITCH_DATE:
+            print(f"WARNING: this sign-in{_token_age_note()} predates the move to "
+                  f'"In production" on {PRODUCTION_SWITCH_DATE}, so it STILL '
+                  f"expires 7 days after it was issued. Run "
+                  f"RECONNECT_DADO_GOOGLE.bat once to replace it.")
+        else:
+            print(f"Sign-in{_token_age_note()} should be long-lived - it was issued "
+                  f"after the app moved to \"In production\".")
     return ok
 
 

@@ -61,6 +61,19 @@ class GoogleAuthFlowTests(unittest.TestCase):
                     "overwrites the working token and kills every non-interactive caller.",
                 )
 
+    def test_a_signin_without_a_refresh_token_is_refused_not_saved(self) -> None:
+        """Never overwrite a working token with one that dies in an hour."""
+        source = (HERE / "google_auth.py").read_text(encoding="utf-8")
+        self.assertIn("if not creds.refresh_token:", source)
+        # The refusal must come BEFORE the save, or the damage is already done.
+        self.assertLess(source.index("if not creds.refresh_token:"),
+                        source.index("_save(creds)\n    _record_mint()"))
+
+    def test_mint_date_is_recorded_only_where_a_grant_is_issued(self) -> None:
+        source = (HERE / "google_auth.py").read_text(encoding="utf-8")
+        self.assertEqual(source.count("_record_mint()"), 2,  # the def plus one call
+                         "the issue date must be stamped at exactly one call site")
+
     def test_no_send_scope_anywhere_in_either_module(self) -> None:
         """Golden Rule 1: drafts only. There is no send path in this tree."""
         for module in MODULES:

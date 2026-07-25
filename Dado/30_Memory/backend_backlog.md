@@ -474,7 +474,11 @@ FIX — add `access_type="offline", prompt="consent"` to the `run_local_server`
 call in `google_auth.py.get_creds`, matching the sibling file. **Do this before
 anyone double-clicks reconnect.**
 
-### B-26 OPEN — `reconnect` is unreachable from the buttons Rachad actually uses
+### B-26 FIXED (this commit) — `reconnect` is unreachable from the buttons Rachad actually uses
+
+Fixed 2026-07-25. Buttons landed in a2ef5c7 (another session): RECONNECT_DADO_GOOGLE.bat and RECONNECT_DADO_GOOGLE_READ_SERVICES.bat. The second half is done here — the unforced `connect` reuse path now prints "Reused the sign-in already stored on this PC... No browser opened, so NOTHING was replaced" plus a pointer to the reconnect button, so a silent early return can no longer read as a successful re-sign-in.
+
+Original report follows.
 `google_extended_auth.py:251`. All three existing buttons still run the unforced
 verbs, and no `RECONNECT_*.bat` exists at the repo root. CLAUDE.md says buttons
 over commands, so the operator repeats the same double-click, gets the same
@@ -484,7 +488,11 @@ FIX — add `RECONNECT_DADO_GOOGLE.bat` and
 "Reused the stored sign-in; no browser opened. To mint a NEW token run
 RECONNECT_...bat".
 
-### B-27 OPEN — "Sign-in should now be long-lived" is printed for pre-switch tokens
+### B-27 FIXED (this commit) — "Sign-in should now be long-lived" is printed for pre-switch tokens
+
+Fixed 2026-07-25. The blanket "should now be long-lived" line is gone. Lifetime is now reported from a recorded ISSUE date (`token.json.minted`), written at the single site where a browser consent actually issues a refund token. NOTE the original suggestion — stamp the token file's mtime — would have LIED: `_save()` rewrites token.json on every silent refresh, so an old grant looks freshly minted. Where no issue date was recorded the tool says exactly that rather than guessing, which is what the live token reports today. Also added: a sign-in that comes back with no refresh token is now REFUSED instead of overwriting the working one.
+
+Original report follows.
 `google_auth.py:228`. Printed whenever `ok` is True, on all three verbs,
 including `check` and the `connect` reuse path. The claim is about the OAuth
 app's publishing status, not about this credential, so it asserts a property of a
