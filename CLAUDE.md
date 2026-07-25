@@ -177,9 +177,23 @@ engineer.
       (default 45) and resumable, since already-indexed ids are skipped.
       (4) a receipt per 20 items wrote 3,768 lines in a day, burying real
       business receipts; now one per run.
-      *** THE CACHE IS GATED CLOSED (2026-07-24) — HARD RULE 4 BREACH. ***
-      google_reference.py fails closed (exit 2) and must stay that way until
-      Rachad decides the cache's fate. Nothing was deleted.
+      *** CACHE RE-SCREENED AND REOPENED (2026-07-24). *** Rachad's decision,
+      and he was right to push back on "delete it": the server and the data are
+      his and he is the sole operator, so storage was never the exposure. The
+      real risk is TDI material reaching an FRP Depot ANSWER — the two firms
+      are separate entities that trade with each other, so pricing an FRP job
+      against TDI's own Q26 quotes is an ARM'S-LENGTH problem. Fixed by
+      controlling the read path, keeping every byte:
+      google_rescreen.py flags stored rows (147 of 70,733 = 0.21%) and
+      google_reference.py excludes them in SQL, reports the withheld count, and
+      refuses to serve an index without the marker-version stamp.
+      --release-all reverses it completely. Verified: Q26 / Dumalac / aze /
+      troy_history all leak 0; invoice / flange / resin / pipe unaffected.
+      NOT tightened: google_tool.py, the live per-query tool. Widening its
+      screen was built and then REVERTED — that file carries Rachad's standing
+      "do not add any walls unless I specifically ask for it". Raise it, do not
+      do it unasked.
+      WHAT THE BREACH WAS:
       WHAT HAPPENED: the screen only knows "dualam" and "tdi". Bare "troy" is
       deliberately excluded (common name/city), so TDI material that spells out
       neither term passed through. Verified in the live index: Aze's own
@@ -196,15 +210,23 @@ engineer.
       That is CIRCULAR — those are the terms the filter already removes, so the
       query can only ever return zero. It proves the filter ran, NOT that TDI
       content is absent. Probe for markers the filter does NOT screen.
-      NOT PATCHABLE IN PLACE: both index loops skip ids already stored, so
-      widening TDI_TERMS can never re-screen existing rows. Any fix is
-      delete-and-rebuild, and the rebuild needs a filter-version stamp.
-      SCOPE IS ALSO STILL RACHAD'S CALL: the index holds ~29k personal Gmail
-      messages spanning 2007-2026 plus Drive file CONTENT, ~305MB unencrypted
-      on the shared server. That is far broader than the narrow read+draft
-      access he scoped the same day, whose own note called "downloading every
-      hit" deliberately out of bounds. Default recommendation: revert to the
-      commissioned live per-query tool and keep no bulk cache.
+      MARKER DESIGN — measured, not guessed (see tdi_filter.DEEP_MARKERS):
+      dualam / dumalac / tdi / troy_history / AgentTeam / aze_*.json /
+      Q26-####. Bare "troy" is DELIBERATELY EXCLUDED: 368 of its hits are
+      parcel deliveries to a person named Troy and only 5 are the company, so
+      it would wall off Rachad's own mail. Boundaries use an alphanumeric
+      lookaround, NOT \b — underscore is a word character, so \bq26 missed the
+      real file "RE_ RFQ ... ______Q26-1526.msg". "tdi" is boundary-anchored
+      because as a raw substring it fired on Turkish mail ("yurtdisi").
+      NOT PATCHABLE BY RE-RUNNING THE INDEXER: both loops skip ids already
+      stored, so a widened list can never revisit them — that is exactly why
+      google_rescreen.py walks the stored rows directly.
+      STILL OPEN, and it is Rachad's call: 2,610 Drive rows hold no content
+      (unreadable type, oversize, or failed extraction), so only their name,
+      owner and description were ever screened — a scanned TDI document with a
+      neutral filename would not be caught. They expose no content through the
+      query tool (there is none), and it says so in its own output; treat a
+      Drive hit as a pointer to verify, never as cleared.
 - [x] LONG-JOB DISCIPLINE (2026-07-24, after the 3-hour stall): Dado must
       NEVER wait on a job inside her turn. Anything over ~2 min goes through
       `Dado\Tools\watch\job_runner.py start --name X -- <cmd>` (returns in

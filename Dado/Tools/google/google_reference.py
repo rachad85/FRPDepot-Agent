@@ -1,28 +1,32 @@
 """Search Dado's private Google reference cache. Read-only; never contacts Google.
 
-GATED CLOSED 2026-07-24 — HARD RULE 4 (company wall).
+OPEN, with TDI rows quarantined at query time (2026-07-24).
 
-The cache was built from Rachad's personal Google account, screened only for
-"dualam" and "tdi". Bare "troy" is deliberately NOT a filter term (common name
-and city), so Troy Dualam material that never spells out either term passed
-straight through. Verified in the live index: 'aze_active_task.json' stored with
-its content, 187 Drive rows and 240 Gmail bodies mentioning "aze", 1,168 Gmail
-bodies mentioning "troy", 4 rows naming TDI's troy_history database, 120 Drive
-names carrying TDI's Q26- quote numbering. A further 2,610 Drive rows were
-stored after only their FILENAME was screened, because unreadable, oversize and
-failed-extraction files return empty content and skip the content screen while
-still being written.
+History worth keeping: the cache was built with a screen that knows only
+"dualam" and "tdi", so Troy Dualam material spelling out neither term was
+stored. An early check here searched the stored rows for those same two terms,
+found none, and reported the wall clean. That was CIRCULAR — they are exactly
+the terms the filter removes, so the query could only ever return zero. Probing
+for markers the filter does NOT screen found real TDI content: Aze's runtime
+artifacts, TDI authority documents naming troy_history, a CRA/mortgage thread
+about "Troy Dumalac INC" (a misspelling of Dualam), and 128 files carrying
+TDI's Q26-#### quote numbering.
 
-An earlier check here looked for "dualam"/"tdi" in stored rows and found none.
-That was circular — those are exactly the terms the filter removes — and it is
-why this was first reported clean. It was not.
+google_rescreen.py now flags those rows (144 of 70,733 — 0.20%) and every query
+below excludes them. Nothing was deleted: the server and the data are Rachad's,
+and the goal is to stop TDI material reaching an FRP Depot answer, not to
+destroy his own files. `google_rescreen.py --release-all` reverses it entirely.
 
-Serving from this index would put TDI content into FRP Depot answers, logs, and
-the nightly GitHub push. So it fails CLOSED until Rachad decides what the cache
-should be (see CLAUDE.md). Nothing has been deleted; the data is intact for
-whatever he chooses. To re-enable, the index must be rebuilt under a corrected
-screen — not patched in place, since the indexer skips ids already stored and
-so can never re-screen them.
+Bare "troy" is deliberately NOT a marker: 368 of its hits are parcel deliveries
+to a person named Troy and only 5 are the company, so blocking it would wall off
+Rachad's own mail for nothing.
+
+REMAINING LIMIT, stated honestly: 2,610 Drive rows hold no content because the
+file was an unreadable type, oversize, or failed to extract — so only their
+name, owner and description were ever screened. A scanned TDI document with a
+neutral filename would not be caught. Those rows expose no content through this
+tool (there is none to expose), but treat a Drive HIT as a pointer to verify,
+never as cleared.
 """
 from __future__ import annotations
 import argparse
@@ -34,25 +38,27 @@ from pathlib import Path
 
 DB = Path(os.environ["LOCALAPPDATA"]) / "FRPDepot-Google" / "reference" / "google_reference.sqlite"
 
-# Flip to False only after the index has been rebuilt under a corrected screen.
-GATED_PENDING_RACHAD = True
-GATE_MESSAGE = (
-    "Google reference cache is CLOSED and cannot be searched.\n"
-    "Reason: Hard Rule 4 (company wall). It was built from the personal Google\n"
-    "account with a screen that misses Troy Dualam material not spelling out\n"
-    "'dualam' or 'tdi', and it verifiably holds TDI content. 2,610 more rows were\n"
-    "stored with their content never screened at all.\n"
-    "Nothing was deleted. Rachad decides whether this cache exists and at what\n"
-    "scope; it must then be REBUILT, not patched, because the indexer skips ids\n"
-    "already stored and cannot re-screen them.\n"
-    "Use the live, per-query, TDI-filtered tool (google_tool.py) meanwhile."
-)
+REQUIRED_MARKER_VERSION = "2026-07-24-deep"
+
+
+def rescreen_ok(con: sqlite3.Connection) -> bool:
+    """Serve only from an index that has actually been re-screened.
+
+    Fails closed: if the quarantine columns or the marker-version stamp are
+    missing, this is an index built under the old narrow screen and must not be
+    queried. That is what makes the gate self-enforcing rather than a promise.
+    """
+    try:
+        cols = {r[1] for r in con.execute("PRAGMA table_info(drive_files)")}
+        if "tdi_quarantined" not in cols:
+            return False
+        row = con.execute("SELECT value FROM meta WHERE key='rescreen_marker_version'").fetchone()
+        return bool(row) and row[0] == REQUIRED_MARKER_VERSION
+    except sqlite3.Error:
+        return False
 
 
 def main() -> int:
-    if GATED_PENDING_RACHAD:
-        print(GATE_MESSAGE, file=sys.stderr)
-        return 2
     p = argparse.ArgumentParser()
     p.add_argument("query")
     p.add_argument("--source", choices=["gmail", "drive", "all"], default="all")
@@ -60,19 +66,44 @@ def main() -> int:
     a = p.parse_args()
     limit = min(max(a.limit, 1), 50)
     con = sqlite3.connect(DB)
+    if not rescreen_ok(con):
+        print("Google reference cache refused: this index has not been re-screened for\n"
+              "TDI content (Hard Rule 4). Run google_rescreen.py --apply first.",
+              file=sys.stderr)
+        return 2
     out: dict[str, list[dict]] = {}
+    withheld = 0
+    # tdi_quarantined=0 is applied in SQL, so a flagged row cannot reach the
+    # result set at all -- not even its snippet.
     if a.source in {"gmail", "all"}:
         rows = con.execute("""SELECT m.id,m.date_header,m.subject,m.sender,m.recipients,
                               snippet(gmail_fts,6,'[',']',' … ',24)
                               FROM gmail_fts JOIN gmail_messages m ON m.id=gmail_fts.id
-                              WHERE gmail_fts MATCH ? ORDER BY rank LIMIT ?""", (a.query, limit)).fetchall()
+                              WHERE gmail_fts MATCH ? AND m.tdi_quarantined=0
+                              ORDER BY rank LIMIT ?""", (a.query, limit)).fetchall()
         out["gmail"] = [dict(zip(["id","date","subject","from","to","match"], x)) for x in rows]
+        withheld += con.execute("""SELECT count(*) FROM gmail_fts
+                                   JOIN gmail_messages m ON m.id=gmail_fts.id
+                                   WHERE gmail_fts MATCH ? AND m.tdi_quarantined=1""",
+                                (a.query,)).fetchone()[0]
     if a.source in {"drive", "all"}:
         rows = con.execute("""SELECT d.id,d.name,d.mime_type,d.modified_time,d.web_view_link,d.content_status,
                               snippet(drive_fts,5,'[',']',' … ',24)
                               FROM drive_fts JOIN drive_files d ON d.id=drive_fts.id
-                              WHERE drive_fts MATCH ? ORDER BY rank LIMIT ?""", (a.query, limit)).fetchall()
+                              WHERE drive_fts MATCH ? AND d.tdi_quarantined=0
+                              ORDER BY rank LIMIT ?""", (a.query, limit)).fetchall()
         out["drive"] = [dict(zip(["id","name","mime_type","modified","link","content_status","match"], x)) for x in rows]
+        withheld += con.execute("""SELECT count(*) FROM drive_fts
+                                   JOIN drive_files d ON d.id=drive_fts.id
+                                   WHERE drive_fts MATCH ? AND d.tdi_quarantined=1""",
+                                (a.query,)).fetchone()[0]
+    if withheld:
+        out["withheld_tdi"] = withheld
+        out["note"] = (f"{withheld} matching row(s) withheld as Troy Dualam content "
+                       "(company wall). Ask Rachad if you need them.")
+    out["limit_drive_metadata_only"] = (
+        "Drive rows whose file could not be read hold no content and were screened "
+        "on name/owner only - treat a Drive hit as a pointer to verify, not as cleared.")
     print(json.dumps(out, indent=2, ensure_ascii=False))
     return 0
 

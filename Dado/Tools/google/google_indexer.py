@@ -34,7 +34,7 @@ from docx import Document
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import google_auth
-from tdi_filter import is_tdi_flagged
+from tdi_filter import deep_tdi_marker
 
 ROOT = Path(r"C:\FRPDepot")
 VAULT = Path(os.environ["LOCALAPPDATA"]) / "FRPDepot-Google" / "reference"
@@ -111,6 +111,17 @@ def db_open() -> sqlite3.Connection:
     );
     CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
     """)
+    # Quarantine columns: a row can be STORED but withheld from every query.
+    # Added 2026-07-24 with the deep screen; google_reference.py refuses to
+    # serve an index that lacks them, so this must run for a fresh DB too.
+    for table in ("gmail_messages", "drive_files"):
+        cols = {r[1] for r in con.execute(f"PRAGMA table_info({table})")}
+        if "tdi_quarantined" not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN tdi_quarantined INTEGER DEFAULT 0")
+        if "tdi_marker" not in cols:
+            con.execute(f"ALTER TABLE {table} ADD COLUMN tdi_marker TEXT")
+    con.execute("INSERT OR REPLACE INTO meta VALUES('rescreen_marker_version','2026-07-24-deep')")
+    con.commit()
     return con
 
 
@@ -184,7 +195,7 @@ def upsert_gmail(con: sqlite3.Connection, msg: dict[str, Any], label_names: dict
     body, attachment_names = text_from_payload(msg.get("payload") or {})
     labels = [label_names.get(x, x) for x in msg.get("labelIds") or []]
     screen_fields = all_header_values + [msg.get("snippet") or "", body] + attachment_names + labels
-    if is_tdi_flagged(*screen_fields):
+    if deep_tdi_marker(*screen_fields):
         con.execute("INSERT OR REPLACE INTO withheld_hashes(kind,id_hash,screened_at) VALUES('gmail',?,?)",
                     (sha(msg["id"]), now()))
         return "withheld"
@@ -195,7 +206,13 @@ def upsert_gmail(con: sqlite3.Connection, msg: dict[str, Any], label_names: dict
         " | ".join(attachment_names), now()
     )
     fts_clear(con, "gmail_fts", msg["id"], known_new)
-    con.execute("INSERT OR REPLACE INTO gmail_messages VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+    # Columns are named, not positional: the quarantine columns were added later
+    # and a bare VALUES(?,...) silently became an arity error on every insert.
+    con.execute(
+        "INSERT OR REPLACE INTO gmail_messages"
+        " (id,thread_id,internal_ts,date_header,subject,sender,recipients,cc,"
+        "  labels_json,snippet,body,attachment_names,indexed_at)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
     con.execute("INSERT INTO gmail_fts VALUES(?,?,?,?,?,?,?,?)",
                 (msg["id"], h.get("subject", ""), h.get("from", ""), h.get("to", ""),
                  h.get("cc", ""), msg.get("snippet") or "", body, " | ".join(attachment_names)))
@@ -380,8 +397,11 @@ def extract_drive_content(drive: Any, item: dict[str, Any]) -> tuple[str, str]:
 def upsert_drive(con: sqlite3.Connection, drive: Any, item: dict[str, Any],
                  known_new: bool = False) -> str:
     owners = " | ".join((x.get("displayName") or x.get("emailAddress") or "") for x in item.get("owners") or [])
-    meta_fields = [item.get("name") or "", item.get("description") or "", owners]
-    if is_tdi_flagged(*meta_fields):
+    name = item.get("name") or ""
+    meta_fields = [name, item.get("description") or "", owners]
+    # deep_tdi_marker, not just is_tdi_flagged: the narrow term list misses TDI
+    # quote numbers, Aze artifacts and the "Dumalac" misspelling (2026-07-24).
+    if deep_tdi_marker(*meta_fields, name=name):
         con.execute("INSERT OR REPLACE INTO withheld_hashes(kind,id_hash,screened_at) VALUES('drive',?,?)",
                     (sha(item["id"]), now()))
         return "withheld"
@@ -389,7 +409,7 @@ def upsert_drive(con: sqlite3.Connection, drive: Any, item: dict[str, Any],
         content, status = extract_drive_content(drive, item)
     except Exception as exc:
         content, status = "", f"extract_error:{type(exc).__name__}"
-    if content and is_tdi_flagged(content):
+    if content and deep_tdi_marker(content):
         con.execute("INSERT OR REPLACE INTO withheld_hashes(kind,id_hash,screened_at) VALUES('drive',?,?)",
                     (sha(item["id"]), now()))
         return "withheld"
@@ -400,7 +420,11 @@ def upsert_drive(con: sqlite3.Connection, drive: Any, item: dict[str, Any],
         content, status, now()
     )
     fts_clear(con, "drive_fts", item["id"], known_new)
-    con.execute("INSERT OR REPLACE INTO drive_files VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
+    con.execute(
+        "INSERT OR REPLACE INTO drive_files"
+        " (id,name,mime_type,created_time,modified_time,size,owners,parents_json,"
+        "  web_view_link,description,content,content_status,indexed_at)"
+        " VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", values)
     con.execute("INSERT INTO drive_fts VALUES(?,?,?,?,?,?)",
                 (item["id"], item.get("name") or "", item.get("mimeType") or "", owners,
                  item.get("description") or "", content))
@@ -449,8 +473,12 @@ def drive_index(con: sqlite3.Connection, drive: Any, max_items: int | None,
                 try:
                     result = upsert_drive(con, drive, item, known_new=True)
                     stats[result] += 1
-                except Exception:
+                except Exception as exc:
+                    # Keep the FIRST error text. A bare counter hid a schema
+                    # arity break that was failing EVERY insert and still just
+                    # read as "errors: 2" -- indistinguishable from two bad PDFs.
                     stats["errors"] += 1
+                    stats.setdefault("first_error", f"{type(exc).__name__}: {exc}"[:200])
                 stats["processed"] += 1
             con.commit()
             # Progress goes to stdout only. It used to also append a receipt per

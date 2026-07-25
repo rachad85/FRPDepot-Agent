@@ -113,6 +113,14 @@ def _message_is_tdi(msg: dict) -> bool:
     and was handed to Dado. Screen everything the caller could see, and
     screen it on full content - not on the handful of fields we happen to
     display.
+
+    Deliberately still the NARROW is_tdi_flagged, not the wider
+    deep_tdi_marker used by the reference cache. Probing the cache on
+    2026-07-24 found TDI material the narrow terms miss (Q26-#### quote
+    numbers, Aze artifacts, the "Dumalac" misspelling), and widening this
+    screen too was considered and REVERTED: the header of this file records
+    Rachad's standing instruction not to add screening to either path
+    unasked. Raise it with him; do not tighten it here on your own.
     """
     headers = msg.get("payload", {}).get("headers", [])
     header_values = [h.get("value", "") for h in headers]
