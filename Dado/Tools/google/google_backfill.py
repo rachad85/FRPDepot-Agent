@@ -23,12 +23,14 @@ Long runs go through job_runner (SOUL: never wait on a job inside your turn):
 from __future__ import annotations
 
 import argparse
+import contextlib
 import io
 import json
 import os
 import re
 import sqlite3
 import sys
+import tempfile
 import time
 import zipfile
 from datetime import datetime, timezone
@@ -120,23 +122,38 @@ def text_from_eml(raw: bytes) -> str:
 
 def text_from_msg(raw: bytes) -> str:
     import extract_msg
-    tmp = Path(os.environ.get("TEMP", ".")) / f"_dado_backfill_{os.getpid()}.msg"
+    # A UNIQUE temp name per item. The old name was per-PID, so every .msg in a
+    # run reused one path: once a file was left undeletable (below), the next
+    # write_bytes() onto that still-open handle raised PermissionError and every
+    # remaining .msg in the run failed with it - 122 files queued behind one.
+    fd, tmp_name = tempfile.mkstemp(prefix="_dado_backfill_", suffix=".msg")
+    os.close(fd)
+    tmp = Path(tmp_name)
     try:
         tmp.write_bytes(raw)
-        m = extract_msg.Message(str(tmp))
-        parts = [f"Subject: {m.subject or ''}", f"From: {m.sender or ''}",
-                 f"To: {m.to or ''}", f"Cc: {m.cc or ''}", f"Date: {m.date or ''}"]
-        names = [a.longFilename or a.shortFilename or "" for a in (m.attachments or [])]
-        if any(names):
-            parts.append("Attachments: " + " | ".join(n for n in names if n))
-        parts += ["", m.body or ""]
-        m.close()
+        # closing() so the handle is released even when an attribute access below
+        # raises - a malformed OLE stream, a missing property, a bad unicode body.
+        # m.close() used to sit on the success path only, so on any parse error
+        # the handle stayed open, tmp.unlink() then failed (Windows will not
+        # delete a file with an open handle), `except OSError: pass` swallowed
+        # that, and the raw bytes of a Drive file were left in %TEMP% for good.
+        with contextlib.closing(extract_msg.Message(str(tmp))) as m:
+            parts = [f"Subject: {m.subject or ''}", f"From: {m.sender or ''}",
+                     f"To: {m.to or ''}", f"Cc: {m.cc or ''}", f"Date: {m.date or ''}"]
+            names = [a.longFilename or a.shortFilename or "" for a in (m.attachments or [])]
+            if any(names):
+                parts.append("Attachments: " + " | ".join(n for n in names if n))
+            parts += ["", m.body or ""]
         return "\n".join(parts)
     finally:
         try:
             tmp.unlink()
-        except OSError:
-            pass
+        except OSError as exc:
+            # A temp file that will not delete is exactly the case worth hearing
+            # about: it means a handle is still open and a copy of someone's
+            # Drive file is sitting in %TEMP%. Never swallow it silently again.
+            print(json.dumps({"phase": "warn", "temp_unlink_failed": str(tmp),
+                              "error": f"{type(exc).__name__}: {exc}"}), flush=True)
 
 
 def text_from_scanned_pdf(raw: bytes) -> str:
