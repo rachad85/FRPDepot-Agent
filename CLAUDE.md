@@ -227,6 +227,28 @@ engineer.
       neutral filename would not be caught. They expose no content through the
       query tool (there is none), and it says so in its own output; treat a
       Drive hit as a pointer to verify, never as cleared.
+- [x] FOLLOW-UP TRACKER LIVE (2026-07-24, Rachad's choices): Dado's watch used
+      to be ONE-DIRECTIONAL — [awaits YOU] only, with a thread he spoke last in
+      treated as "handled, never surface", so a quote or RFQ HE sent could go
+      silent forever. Measured at build time: 15 overdue, incl. "Quote
+      QT-000023 awaiting your approval" at 42 working days and CAD 4,101.30
+      outstanding at 9. Now: outlook_check.py --waiting-on-them (READ-ONLY;
+      classifies rfq_quote/payment/general, counts WORKING days, thresholds
+      5/7/3, and never re-offers a thread that already has a chase draft) feeds
+      dado-followup-digest "0 8 * * 1-5" (morning digest, prepares a reply-all
+      chase DRAFT per item — DRAFTS ONLY unchanged) plus inbox-watch charter
+      rule 3b, which raises ONLY overdue+urgent (money/RFQ) items the same
+      sweep. Everything else waits for the digest so it never becomes a stream.
+- [x] DRIVE BACKFILL / OCR (2026-07-24): the 2,605 rows stored with content
+      never screened are now read — images via rapidocr_onnxruntime (bundled in
+      vendor; ONNX, no installer, which matters under the SRP), .msg via
+      extract-msg, .eml via stdlib, scanned PDFs via PyMuPDF render + OCR,
+      legacy .xls via xlrd, zips by member name. Tool:
+      Dado\Tools\google\google_backfill.py, run through job_runner. Everything
+      extracted is screened with deep_tdi_marker BEFORE storage, so a row only
+      moves from unscreened to read-and-clear or quarantined. NOTE vendor is
+      APPENDED to sys.path, never inserted first — it carries its own
+      cryptography copy and the venv pins 46.0.7 for hermes.
 - [x] LONG-JOB DISCIPLINE (2026-07-24, after the 3-hour stall): Dado must
       NEVER wait on a job inside her turn. Anything over ~2 min goes through
       `Dado\Tools\watch\job_runner.py start --name X -- <cmd>` (returns in
