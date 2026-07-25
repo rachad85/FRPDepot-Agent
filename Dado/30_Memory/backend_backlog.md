@@ -112,14 +112,22 @@ FIX — `try/except Exception` in `_try_send` returning `(-1, repr(exc))`, and
 wrap the `send_clean` body so anything unexpected still falls through to the
 undelivered queue.
 
-### B-04 OPEN — Stale-heartbeat warning permanently mutes the real completion
+### B-04 FIXED (this commit) — Stale-heartbeat warning permanently mutes the real completion
+
+Fixed 2026-07-25. `stall_reported` is now a separate flag from `reported`, so a job that went quiet, was flagged stuck, then finished cleanly is still announced as finished.
+
+Original report follows.
 `job_runner.py:307`. The stall notice sets `reported=True`, so line 278's
 `continue` swallows the terminal done/failed announcement. A 45-minute OCR job
 that goes quiet then finishes cleanly is reported as possibly-stuck and never
 reported as finished.
 FIX — separate `stall_reported` from `reported`.
 
-### B-05 OPEN — `cmd_watch` and the supervisor race; a finished job is announced "died"
+### B-05 FIXED (this commit) — `cmd_watch` and the supervisor race; a finished job is announced "died"
+
+Fixed 2026-07-25. `cmd_watch` re-reads the job file after `pid_alive()` returns and defers to a `done`/`failed` status written during that window; it never writes `status` from a stale dict. `save_flags()` does a read-modify-write of bookkeeping keys only, and `save()` uses a per-process temp name so the supervisor and the watch cron cannot collide on `<job_id>.json.tmp`.
+
+Original report follows.
 `job_runner.py:293`. `cmd_watch` loads the job, then shells to `tasklist`
 (20s). If the supervisor writes `status=done, exit_code=0` in that window,
 `cmd_watch` sees the pid gone and saves its **stale** dict as `status=died,
@@ -128,14 +136,22 @@ concurrent open raises an uncaught `PermissionError` on Windows.
 FIX — re-read immediately before mutating (compare-and-set), unique temp name
 (`.{pid}.tmp`), or let only the supervisor own `status`.
 
-### B-06 OPEN — `cmd_watch` marks every job reported but prints only 5
+### B-06 FIXED (this commit) — `cmd_watch` marks every job reported but prints only 5
+
+Fixed 2026-07-25. Nothing is marked `reported` until it survives the print cap: the remainder is HELD and announced on the next tick, with a count line saying so. Broken-file notices moved to LAST so unreadable files cannot starve real completions.
+
+Original report follows.
 `job_runner.py:311`. Jobs 6+ in one tick are marked reported on disk and their
 announcement is discarded permanently. `broken` messages are appended first and
 not persisted, so 5 unparseable files re-fill the cap every tick and starve all
 real completions.
 FIX — only set `reported` for jobs actually printed; put broken notices last.
 
-### B-07 OPEN — `stall_tripwire` burns the alert budget on problems it never prints
+### B-07 FIXED (this commit) — `stall_tripwire` burns the alert budget on problems it never prints
+
+Fixed 2026-07-25. The alert budget is spent only on problems actually printed. Unprinted stalls stay tracked at zero cost, so a 4th concurrent stalled session can no longer exhaust its own budget in silence.
+
+Original report follows.
 `stall_tripwire.py:179`. `record["alerts"] += 1` runs for every stalled session,
 but only `problems[:3]` print. The 4th session climbs to `MAX_ALERTS_PER_TURN`
 and goes permanently quiet **having never once reached Rachad**.
@@ -148,7 +164,11 @@ message was dropped; never re-emitted.
 FIX — route through `send_clean`/`queue_undelivered`; persist only after a
 confirmed send.
 
-### B-09 OPEN — `scrub_noise` deletes legitimate business lines
+### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
+
+Fixed 2026-07-25. `NOISE_LINE` is anchored to line start, and `job id` / `cleaned up` were removed from it entirely — both are ordinary operations English. The ticker branch now only peels allowlisted frame words, so "Pending... payment from SCT" keeps its first word.
+
+Original report follows.
 `dado_inbox_reasoner.py:192`. `NOISE_LINE` drops the WHOLE line on `\bjob[_ ]?id\b`
 or `cleaned[_ ]?up`, so "Their job ID 88-A needs the FRP grating quote priced by
 Friday" vanishes; if it was the only substantive line the alert is suppressed by
@@ -158,7 +178,11 @@ SCT", inverting the first word Rachad reads.
 FIX — anchor the machinery patterns to line-start / whole-line; drop `job id`
 and `cleaned up`.
 
-### B-10 OPEN — A turn older than the 30k-line tail is invisible to the tripwire
+### B-10 FIXED (this commit) — A turn older than the 30k-line tail is invisible to the tripwire
+
+Fixed 2026-07-25. `read_tail` seeks backwards by bytes (`TAIL_BYTES`, 8 MB) instead of loading the whole file, and when no turn-start line is in view the rotated siblings are prepended — so a rotation mid-turn can no longer hide an open stall.
+
+Original report follows.
 `stall_tripwire.py:77`. `read_tail` keeps 30,000 lines; a turn whose start line
 rolls out (or a log rotation mid-turn) has no entry, and line 174 deletes its
 record. The 3-hour stall this was written for becomes undetectable exactly when
@@ -283,7 +307,11 @@ The wrapper never compares the digest's item count against `overdue_count`.
 FIX — cap work per run (worst/urgent first) and have the WRAPPER append a
 deterministic "15 overdue in total" line so a truncated answer cannot understate.
 
-### B-18 OPEN — The new 900s collection is a hard prerequisite for the whole sweep
+### B-18 FIXED (this commit) — The new 900s collection is a hard prerequisite for the whole sweep
+
+Fixed 2026-07-25. The waiting-on-them collection is best-effort: on failure the sweep continues on its other three sources and writes an `unavailable` marker telling the model not to infer that nothing is overdue. A failure in a core source still raises.
+
+Original report follows.
 `dado_inbox_reasoner.py:279`. `collect("waiting_on_them", ..., timeout=900)` was
 added to `prefetch_triage`, which raises on any failure — so the slowest, newest
 call is now a single point of failure for the pre-existing `[awaits YOU]`

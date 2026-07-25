@@ -37,7 +37,9 @@ POLL_LOOP_REPEATS = 3       # N near-timeout tool calls in one turn = babysittin
 POLL_NEAR_TIMEOUT_S = 300   # terminal.timeout is 600; anything over 300s is a block
 REALERT_MINUTES = 60        # while still stuck, remind at most hourly
 MAX_ALERTS_PER_TURN = 3     # never spam: three notices then stay quiet
+MAX_PROBLEMS_PER_TICK = 3   # printed per run; the rest stay tracked, unspent
 TAIL_LINES = 30_000
+TAIL_BYTES = 8 * 1024 * 1024  # read backwards this far; ~a week of agent.log
 
 TS = r"(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}),\d+"
 TURN_START = re.compile(TS + r".*agent\.turn_context: conversation turn: session=(\S+)")
@@ -74,11 +76,40 @@ def save_state(state: dict) -> None:
 
 
 def read_tail(path: Path) -> list[str]:
+    """The tail of the log, read backwards by bytes rather than whole-file.
+
+    readlines() loaded the entire agent.log on every 15-minute tick and kept the
+    last TAIL_LINES. Two problems: it gets slower as the log grows (already
+    1.1 MB after two days), and a turn whose START line has scrolled out of the
+    window becomes invisible - open_turns can only see a turn it has a start
+    line for, so the long stall this script exists to catch disappears exactly
+    when the log is busiest. Reading by bytes lets the window be generous
+    without the cost, and TAIL_BYTES is sized well past a day of traffic.
+    """
     try:
-        with path.open("r", encoding="utf-8", errors="replace") as fh:
-            return fh.readlines()[-TAIL_LINES:]
+        size = path.stat().st_size
+        with path.open("rb") as fh:
+            if size > TAIL_BYTES:
+                fh.seek(size - TAIL_BYTES)
+                fh.readline()  # drop the partial first line
+            raw = fh.read()
     except OSError:
         return []
+    lines = raw.decode("utf-8", errors="replace").splitlines(keepends=True)
+    return lines[-TAIL_LINES:]
+
+
+def rotated_siblings(path: Path) -> list[Path]:
+    """agent.log.1, agent.log.2026-07-24 and friends, newest first.
+
+    A rotation while a turn is open would otherwise orphan that turn's start
+    line and hide the stall completely.
+    """
+    try:
+        found = [p for p in path.parent.glob(path.name + ".*") if p.is_file()]
+    except OSError:
+        return []
+    return sorted(found, key=lambda p: p.stat().st_mtime, reverse=True)[:2]
 
 
 def open_turns(lines: list[str]) -> dict[str, dict]:
@@ -125,12 +156,20 @@ def open_turns(lines: list[str]) -> dict[str, dict]:
 
 
 def main() -> int:
-    lines = read_tail(log_path())
+    path = log_path()
+    lines = read_tail(path)
     if not lines:
         return 0
+    # If the newest turn start is not in the window, a rotation may have carried
+    # it into a sibling file. Prepend those so an open turn cannot be orphaned.
+    if not any(TURN_START.search(line) for line in lines):
+        for sibling in rotated_siblings(path):
+            lines = read_tail(sibling) + lines
+            if any(TURN_START.search(line) for line in lines):
+                break
     state = load_state()
     now = dt.datetime.now()
-    problems: list[str] = []
+    problems: list[tuple[str, str, dict]] = []
     seen: set[str] = set()
 
     for session, turn in open_turns(lines).items():
@@ -161,22 +200,35 @@ def main() -> int:
         else:
             detail = "The turn is still active but has produced no reply."
 
-        problems.append(
+        # The counter is NOT touched here. It used to be incremented for every
+        # stalled session found while only problems[:3] were printed, so a 4th
+        # concurrent session burned 1, 2, 3 alerts across three passes, hit
+        # MAX_ALERTS_PER_TURN and went permanently quiet having never once
+        # reached Rachad. The budget is spent below, only on what is said.
+        problems.append((
             f"Dado has been on one {turn['platform']} reply for {age_min:.0f} min "
             f"({turn['api_calls']} internal steps) and has sent you nothing. {detail} "
-            "Ask her what she is doing, or tell the backend to look."
-        )
-        record["alerts"] += 1
-        record["last_alert"] = now.isoformat(timespec="seconds")
-        state[key] = record
+            "Ask her what she is doing, or tell the backend to look.",
+            key, record,
+        ))
 
     # Forget turns that have finished, so the state file cannot grow forever.
     for key in [k for k in state if k not in seen]:
         del state[key]
+
+    shown = problems[:MAX_PROBLEMS_PER_TICK]
+    held = len(problems) - len(shown)
+    for _, key, record in shown:
+        record["alerts"] += 1
+        record["last_alert"] = now.isoformat(timespec="seconds")
+        state[key] = record
     save_state(state)
 
-    if problems:
-        print("\n".join(problems[:3]))
+    if shown:
+        lines = [text for text, _, _ in shown]
+        if held > 0:
+            lines.append(f"({held} more stalled turn(s) not listed; still being tracked.)")
+        print("\n".join(lines))
     return 0
 
 

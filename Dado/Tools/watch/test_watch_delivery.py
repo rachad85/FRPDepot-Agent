@@ -16,6 +16,7 @@ said or queued. A test that only checks the happy path cannot see either.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 import subprocess
 import sys
@@ -121,6 +122,72 @@ class BrainFailureIsNotSilence(unittest.TestCase):
         ):
             reasoner.run_once()
         self.assertEqual(sent, [], "a quiet morning must still be quiet")
+
+
+class ScrubKeepsBusinessContent(unittest.TestCase):
+    """B-09: the scrub is a backstop, not a censor."""
+
+    def test_a_line_mentioning_a_job_id_survives(self):
+        text = "Their job ID 88-A needs the FRP grating quote priced by Friday."
+        self.assertEqual(reasoner.scrub_noise(text).strip(), text)
+
+    def test_a_line_mentioning_cleaned_up_survives(self):
+        text = "Forte cleaned up the site and wants the revised manway price."
+        self.assertEqual(reasoner.scrub_noise(text).strip(), text)
+
+    def test_pending_is_not_peeled_as_a_ticker(self):
+        text = "Pending... payment from SCT Composites, CAD 4,101.30."
+        self.assertTrue(reasoner.scrub_noise(text).strip().startswith("Pending"),
+                        "peeling the first word inverts what Rachad reads")
+
+    def test_real_machinery_lines_are_still_dropped(self):
+        text = "suite green\nBrian needs pricing today.\nad-hoc verification done"
+        self.assertEqual(reasoner.scrub_noise(text).strip(), "Brian needs pricing today.")
+
+    def test_real_tickers_are_still_peeled(self):
+        self.assertEqual(
+            reasoner.scrub_noise("processing... Brian needs pricing.").strip(),
+            "Brian needs pricing.")
+
+
+class FollowupCollectionIsBestEffort(unittest.TestCase):
+    """B-18: the newest, slowest source must not take down the whole sweep."""
+
+    def test_a_failed_followup_collection_leaves_the_sweep_running(self):
+        written = {}
+
+        def fake_collect(name, args, timeout=300):
+            if name == "waiting_on_them":
+                raise RuntimeError("collection failed rc=1: Graph timed out")
+            return f"{name}-data"
+
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.object(reasoner, "collect", side_effect=fake_collect),
+                patch.object(reasoner, "SWEEP_DIR", Path(folder)),
+                patch.object(reasoner, "log", side_effect=lambda m: written.setdefault("log", m)),
+            ):
+                reasoner.prefetch_triage()  # must NOT raise
+            payload = json.loads((Path(folder) / "waiting_on_them.json").read_text(encoding="utf-8"))
+        self.assertTrue(payload["unavailable"])
+        self.assertIn("Do NOT infer", payload["note"])
+        # The other three sources were still written.
+        self.assertTrue(written)
+
+    def test_a_failure_in_a_core_source_still_raises(self):
+        def fake_collect(name, args, timeout=300):
+            if name == "inbox":
+                raise RuntimeError("inbox collection failed")
+            return f"{name}-data"
+
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                patch.object(reasoner, "collect", side_effect=fake_collect),
+                patch.object(reasoner, "SWEEP_DIR", Path(folder)),
+                patch.object(reasoner, "log"),
+            ):
+                with self.assertRaises(RuntimeError):
+                    reasoner.prefetch_triage()
 
 
 class DigestFailureNamesTheBacklog(unittest.TestCase):

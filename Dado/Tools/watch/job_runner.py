@@ -36,6 +36,7 @@ import uuid
 JOBS_DIR = Path(r"C:\FRPDepot\Dado\40_Logs\jobs")
 RECEIPTS = Path(r"C:\FRPDepot\Dado\40_Logs\receipts.jsonl")
 STALE_HEARTBEAT_MINUTES = 30    # job alive but its log has not moved
+MAX_WATCH_MESSAGES = 5          # per tick; the remainder is HELD, never dropped
 OUTPUT_TAIL_CHARS = 400
 
 # Windows detached-launch flags: the child must survive its parent, and must not
@@ -75,9 +76,32 @@ def load(job_id: str) -> dict:
 def save(job: dict) -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     path = job_path(job["id"])
-    tmp = path.with_suffix(".json.tmp")
+    # Unique per process: the temp name used to be derived from the job id alone,
+    # so the supervisor and the watch cron could open the identical
+    # <job_id>.json.tmp at once and raise PermissionError on Windows - uncaught,
+    # inside cmd_watch's loop, after earlier jobs had already been marked
+    # reported.
+    tmp = path.with_suffix(f".json.{os.getpid()}.tmp")
     tmp.write_text(json.dumps(job, indent=1), encoding="utf-8")
     tmp.replace(path)
+
+
+def save_flags(job_id: str, **flags) -> None:
+    """Re-read, set only these keys, write back.
+
+    cmd_watch used to mutate a job dict it had loaded up to 20 seconds earlier -
+    the `tasklist` call in pid_alive() is that slow - and save the whole stale
+    object. If the supervisor recorded status=done, exit_code=0 inside that
+    window, watch would overwrite it with status=died, exit_code=None and
+    announce a successful 45-minute job as dead. Only the supervisor owns
+    `status`; watch now touches nothing but its own bookkeeping flags.
+    """
+    try:
+        job = load(job_id)
+    except (OSError, json.JSONDecodeError, ValueError):
+        return
+    job.update(flags)
+    save(job)
 
 
 def all_jobs() -> tuple[list[dict], list[str]]:
@@ -266,49 +290,79 @@ def cmd_status(args: argparse.Namespace) -> int:
 
 def cmd_watch(_: argparse.Namespace) -> int:
     """Cron mode. Announce each finished/dead job ONCE. Silent otherwise."""
-    messages: list[str] = []
+    # (message, job_id, flags-to-set-once-it-is-actually-printed). Nothing is
+    # marked reported until it survives the print cap below - jobs 6+ in one tick
+    # used to be flagged on disk and then discarded, losing the announcement for
+    # good.
+    pending: list[tuple[str, str | None, dict]] = []
     jobs, broken = all_jobs()
-    for name in broken:
-        messages.append(
-            f"A background job record could not be read ({name}). Whatever job it "
-            "tracked will never report its result — the backend should look."
-        )
     for job in jobs:
-        if job.get("reported"):
-            continue
         status = job.get("status")
 
-        if status in {"done", "failed"}:
+        if status in {"done", "failed"} and not job.get("reported"):
             verdict = "finished" if status == "done" else f"FAILED (exit {job['exit_code']})"
             summary = summarize_output(job["id"])
             detail = f" {summary}" if summary else ""
-            messages.append(f"Background job '{job['name']}' {verdict}.{detail}")
-            job["reported"] = True
-            save(job)
+            pending.append((f"Background job '{job['name']}' {verdict}.{detail}",
+                            job["id"], {"reported": True}))
             continue
 
         if status in {"running", "starting"}:
             # A supervisor that died without recording an outcome would otherwise
             # leave the job "running" forever and never be announced.
             if job.get("pid") and not pid_alive(job["pid"]):
-                messages.append(
-                    f"Background job '{job['name']}' died without finishing "
-                    f"(process gone, no exit code recorded). It may need restarting."
-                )
-                job.update(status="died", reported=True)
-                save(job)
+                # Re-read before believing it: the supervisor may have finished
+                # during the ~20s pid_alive() spent shelling out to tasklist.
+                try:
+                    fresh = load(job["id"])
+                except (OSError, json.JSONDecodeError, ValueError):
+                    fresh = job
+                if fresh.get("status") in {"done", "failed"}:
+                    if not fresh.get("reported"):
+                        verdict = ("finished" if fresh["status"] == "done"
+                                   else f"FAILED (exit {fresh['exit_code']})")
+                        summary = summarize_output(job["id"])
+                        detail = f" {summary}" if summary else ""
+                        pending.append((f"Background job '{job['name']}' {verdict}.{detail}",
+                                        job["id"], {"reported": True}))
+                    continue
+                if not job.get("reported"):
+                    pending.append((
+                        f"Background job '{job['name']}' died without finishing "
+                        f"(process gone, no exit code recorded). It may need restarting.",
+                        job["id"], {"status": "died", "reported": True}))
                 continue
             age = heartbeat_age_minutes(job["id"])
-            if age is not None and age >= STALE_HEARTBEAT_MINUTES:
-                messages.append(
+            if (age is not None and age >= STALE_HEARTBEAT_MINUTES
+                    and not job.get("stall_reported")):
+                # A SEPARATE flag from `reported`. Sharing one meant the stall
+                # warning consumed the completion notice: a long OCR job that
+                # went quiet, was flagged stuck, then finished cleanly was never
+                # reported as finished at all.
+                pending.append((
                     f"Background job '{job['name']}' has produced no output for "
-                    f"{age:.0f} min. It may be stuck."
-                )
-                job["reported"] = True   # say this once, not every tick
-                save(job)
+                    f"{age:.0f} min. It may be stuck.",
+                    job["id"], {"stall_reported": True}))
 
-    if messages:
-        print("\n".join(messages[:5]))
+    # Broken-file notices go LAST. Appended first, five unparseable files refilled
+    # the cap on every tick and permanently starved real job results.
+    broken_msgs = [
+        (f"A background job record could not be read ({name}). Whatever job it "
+         "tracked will never report its result — the backend should look.", None, {})
+        for name in broken
+    ]
+    pending.extend(broken_msgs)
+
+    shown = pending[:MAX_WATCH_MESSAGES]
+    held = len(pending) - len(shown)
+    if shown:
+        lines = [text for text, _, _ in shown]
+        if held > 0:
+            lines.append(f"({held} more job update(s) held for the next tick.)")
+        print("\n".join(lines))
+        for _, job_id, flags in shown:
+            if job_id and flags:
+                save_flags(job_id, **flags)
     return 0
 
 

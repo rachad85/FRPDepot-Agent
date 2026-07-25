@@ -6,8 +6,14 @@ therefore about STAYING SILENT.
 """
 from __future__ import annotations
 
+from contextlib import redirect_stdout
 import datetime as dt
+import io
+import json
+from pathlib import Path
+import tempfile
 import unittest
+from unittest.mock import patch
 
 import stall_tripwire as tw
 
@@ -35,6 +41,95 @@ def tool(stamp: str, session: str, seconds: float, name: str = "process") -> str
 
 def api(stamp: str, session: str, n: int) -> str:
     return line(stamp, session, f"agent.conversation_loop: API call #{n}: model=gpt-5.6-sol")
+
+
+class AlertBudgetTests(unittest.TestCase):
+    """B-07: the per-turn alert budget must only be spent on what is PRINTED.
+
+    record["alerts"] += 1 used to run for every stalled session found while only
+    problems[:3] were printed. With four or more concurrent sessions -- a
+    Telegram turn plus several cron-spawned ones interleaved in the same log --
+    the 4th session's counter climbed 1, 2, 3 across three passes, hit
+    MAX_ALERTS_PER_TURN and went permanently quiet having never once reached
+    Rachad. The genuinely stuck turn silently exhausted its own budget.
+    """
+
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._folder.cleanup)
+        self.state = Path(self._folder.name) / "state.json"
+        self.log = Path(self._folder.name) / "agent.log"
+        for attr, value in (("STATE_PATH", self.state),):
+            patcher = patch.object(tw, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        patcher = patch.object(tw, "log_path", lambda: self.log)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def _stalled_log(self, sessions: int) -> None:
+        old = (dt.datetime.now() - dt.timedelta(minutes=90)).strftime("%Y-%m-%d %H:%M:%S")
+        self.log.write_text(
+            "".join(turn_start(old, f"s{i}") for i in range(sessions)), encoding="utf-8"
+        )
+
+    def _run(self) -> str:
+        out = io.StringIO()
+        with redirect_stdout(out):
+            tw.main()
+        return out.getvalue()
+
+    def test_unprinted_stalls_do_not_burn_their_budget(self):
+        self._stalled_log(5)
+        first = self._run()
+        self.assertIn("more stalled turn(s) not listed", first)
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        spent = [k for k, v in state.items() if v["alerts"] > 0]
+        self.assertEqual(len(spent), tw.MAX_PROBLEMS_PER_TICK,
+                         "only the printed problems may spend an alert")
+
+    def test_a_held_stall_still_reaches_rachad_eventually(self):
+        self._stalled_log(5)
+        seen = ""
+        for _ in range(4):
+            seen += self._run()
+        state = json.loads(self.state.read_text(encoding="utf-8"))
+        self.assertTrue(all(v["alerts"] > 0 for v in state.values()),
+                        "every stalled turn must be announced at least once")
+
+
+class TailWindowTests(unittest.TestCase):
+    """B-10: a turn whose start line scrolled out used to become invisible."""
+
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._folder.cleanup)
+        self.log = Path(self._folder.name) / "agent.log"
+
+    def test_read_tail_returns_the_end_of_a_large_file(self):
+        filler = "".join(f"{i} filler line\n" for i in range(50_000))
+        self.log.write_text(filler + "LAST LINE\n", encoding="utf-8")
+        tail = tw.read_tail(self.log)
+        self.assertTrue(tail[-1].startswith("LAST LINE"))
+        self.assertLessEqual(len(tail), tw.TAIL_LINES)
+
+    def test_a_rotated_sibling_is_consulted_when_no_turn_start_is_in_view(self):
+        old = (dt.datetime.now() - dt.timedelta(minutes=90)).strftime("%Y-%m-%d %H:%M:%S")
+        rotated = self.log.with_name("agent.log.1")
+        rotated.write_text(turn_start(old, "s1"), encoding="utf-8")
+        self.log.write_text(api(old, "s1", 3), encoding="utf-8")  # no start line here
+        state = Path(self._folder.name) / "state.json"
+        with (patch.object(tw, "STATE_PATH", state),
+              patch.object(tw, "log_path", lambda: self.log)):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                tw.main()
+        self.assertIn("has sent you nothing", out.getvalue(),
+                      "a rotation must not hide an open turn")
+
+    def test_no_siblings_is_not_an_error(self):
+        self.log.write_text("nothing interesting\n", encoding="utf-8")
+        self.assertEqual(tw.rotated_siblings(self.log), [])
 
 
 class OpenTurnTests(unittest.TestCase):

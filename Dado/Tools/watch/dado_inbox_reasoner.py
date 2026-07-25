@@ -12,6 +12,7 @@ Source of truth: C:\\FRPDepot\\Dado\\Tools\\watch\\dado_inbox_reasoner.py — th
 profile scripts copy is what the cron runs; keep them identical.
 """
 import datetime as dt
+import json
 import os
 import re
 import shutil
@@ -189,10 +190,19 @@ def is_silent(text):
 # producing these; this is only a backstop. We STRIP matching lines rather than
 # discard the whole message, so a real alert that merely mentions one of these
 # tokens (e.g. a file path) is never silently lost. (Aze's battle-tested set.)
+#
+# ANCHORED to the start of the line (2026-07-25). These patterns used to match
+# ANYWHERE, and the match discarded the WHOLE line - so "Their job ID 88-A needs
+# the FRP grating quote priced by Friday" vanished entirely, and if it was the
+# only substantive line the message then fell under the len(clean) < 8 guard and
+# the alert was suppressed with nothing but a log entry. `job id` and `cleaned
+# up` were dropped from the set outright: both are ordinary operations English
+# and far too common to be safe as machinery markers.
 NOISE_LINE = re.compile(
+    r"^\s*(?:[-*•]\s*)?"
     r"(ad-?hoc verification|suite green|verifier|hermes-verify|tmp_inbox_check|"
-    r"cleanup (confirmed|done)|cleaned[_ ]?up|silent[_ ]?eligible|"
-    r"\bjob[_ ]?id\b|cronjob response|tempfile under|scratch file)",
+    r"cleanup (confirmed|done)|silent[_ ]?eligible|"
+    r"cronjob response|tempfile under|scratch file)",
     re.I,
 )
 
@@ -213,7 +223,11 @@ FRAME_TOKEN = re.compile(
     r"|\(\s*[^A-Za-z0-9\s)]{1,4}[_ ]?[^A-Za-z0-9\s)]{0,4}\s*\)"   # kaomoji face (non-letters only)
     r"|¯\\?_?\(ツ\)_?/?¯"                                         # shrug
     r"|[⠀-⣿◀-◿●○·]+"                          # braille / box / dot spinner glyphs
-    r"|(?:tool\s+)?[a-z]+ing\s*\.{2,}"                            # a "<verb>ing..." ticker
+    # A ticker, but ONLY from the allowlist. This used to be any [a-z]+ing
+    # followed by dots, which peeled the first real word off a business line:
+    # "Pending... payment from SCT Composites" became "payment from SCT
+    # Composites", inverting the meaning of the first word Rachad reads.
+    r"|(?:tool\s+)?(?:" + _FRAME_WORDS + r")\s*\.{2,}"
     r")\s*[:.…]*\s*",
     re.I,
 )
@@ -276,7 +290,24 @@ def prefetch_triage():
     sent = collect("sent", ["--sent", "15"])
     # What HE is waiting on. Only the money/new-work ones are actionable in this
     # sweep (charter rule 3b); the rest are the morning digest's.
-    waiting_on_them = collect("waiting_on_them", ["--waiting-on-them", "60"], timeout=900)
+    #
+    # BEST-EFFORT, deliberately. This is the slowest call here - one Graph
+    # conversation fetch per unique sent thread, each with its own 429 retries -
+    # and the newest. Raising from it took down the whole sweep: the inbox,
+    # awaiting and sent data already collected were thrown away and no mail was
+    # reasoned over for two hours, so the newest feature became a single point
+    # of failure for the pre-existing [awaits YOU] monitoring.
+    try:
+        waiting_on_them = collect("waiting_on_them", ["--waiting-on-them", "60"], timeout=900)
+    except Exception as exc:
+        log(f"waiting-on-them collection failed, continuing without it: "
+            f"{type(exc).__name__}: {exc}")
+        waiting_on_them = json.dumps({
+            "unavailable": True,
+            "why": f"{type(exc).__name__}: {str(exc)[:200]}",
+            "note": "Follow-up data could not be collected this run. Do NOT infer "
+                    "that nothing is overdue - say it was unavailable if it matters.",
+        }, indent=2)
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
     (SWEEP_DIR / "waiting_on_them.json").write_text(waiting_on_them + "\n", encoding="utf-8")
     (SWEEP_DIR / "awaiting.json").write_text(awaiting + "\n", encoding="utf-8")
