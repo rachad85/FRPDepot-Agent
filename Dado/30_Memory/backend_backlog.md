@@ -682,8 +682,36 @@ deferring to a disable flag so STOP_DADO.bat still means stop. Verified by
 killing the live gateway (pid 16096) with no flag set and watching the watchdog
 bring it back as pid 19244, with both events logged.
 
-STILL OPEN: nothing alerts Rachad that the gateway is down. The watchdog fixes it
-silently, which is right, but if it ever cannot fix it the only trace is a line
-in gateway_watchdog.log. Worth wiring "STILL DOWN after 36s" into the Telegram
-path — except that path is exactly what is broken in that scenario, so it needs
-a different channel. Rachad's call.
+### W-02 FIXED (this commit) — nothing told Rachad when the gateway could not recover
+
+He asked for it directly: "Alert me another way if the gateway can't recover."
+
+The constraint is that every normal path to him runs through hermes — `send_clean`,
+the cron `deliver: telegram`, Dado herself — and in this scenario hermes is
+exactly what is suspect. An alerter sharing a failure mode with the thing it
+reports on is not an alerter.
+
+`Dado\Tools\watch\dado_urgent_alert.py` posts straight to the Telegram Bot API
+over HTTPS using nothing but the standard library: no hermes, no gateway, no venv
+packages, no Dado tooling. The bot token comes from the profile .env and is never
+printed or logged — errors report `HTTP <code>` only, never the URL, which
+carries the token.
+
+Layers, in order: direct Telegram API → a `DADO_NEEDS_ATTENTION.txt` file on the
+Desktop if even that fails (crude on purpose; a local file is the one thing that
+still works when the network is the problem) → a line in `urgent_alert.log`.
+
+One alert per reason per hour. The watchdog runs every 5 minutes, so without a
+cooldown a weekend outage would be 200+ identical messages, which is its own way
+of being ignored. Recovery clears the marker and the cooldown, scoped to the
+reason so it cannot reset an unrelated future alert.
+
+NOT a general-purpose sender, and deliberately so: there is no mail send path
+anywhere in this tree (Golden Rule 1) and this does not create one. It posts
+operational alerts about Dado's own health to Rachad's own chat.
+
+REMAINING GAP, honestly: it shares Telegram-the-service and the network with the
+normal path. If Telegram itself is unreachable, only the Desktop file remains. A
+genuinely independent channel would mean a different service, or routing via
+Aze's gateway (a separate process on 8642 that survived this outage) — the latter
+crosses the company line and is Rachad's call, not mine.

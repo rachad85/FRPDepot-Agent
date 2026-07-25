@@ -24,6 +24,8 @@ $Root        = 'C:\FRPDepot'
 $DisableFlag = Join-Path $Root 'Dado\40_Logs\gateway_disabled.flag'
 $LogFile     = Join-Path $Root 'Dado\40_Logs\gateway_watchdog.log'
 $Hermes      = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\hermes.exe'
+$VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
+$Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
 
 function Write-Log([string]$Message) {
     try {
@@ -73,8 +75,24 @@ for ($i = 0; $i -lt 12; $i++) {
     if (Test-GatewayUp) {
         $pid8647 = (Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue).OwningProcess
         Write-Log "gateway is up (pid $pid8647)"
+        # Recovered - retire any outstanding alert so the next real outage is
+        # not swallowed by the cooldown, and clear the desktop marker.
+        try { & $VenvPython $Alerter --clear --reason gateway_down | Out-Null } catch { }
         exit 0
     }
 }
-Write-Log "STILL DOWN after 36s - backend attention needed"
+
+# Could not recover. This is the case Rachad asked to be told about, and it is
+# the one case where the normal Telegram path cannot be trusted: send_clean, the
+# cron `deliver: telegram` and Dado herself all run through hermes, which is
+# exactly what is suspect here. dado_urgent_alert.py talks straight to the
+# Telegram Bot API with the standard library - no hermes, no gateway - and drops
+# a file on the Desktop if even that fails.
+Write-Log "STILL DOWN after 36s - raising an out-of-band alert"
+$msg = "DADO IS DOWN. Her gateway (port 8647) is not running and the keep-alive could not restart it after 36s, so Telegram replies from her will not work. Nothing else is affected - the crons are still running. To fix: double-click START_DADO.bat in C:\FRPDepot. Sent out-of-band because the normal path goes through the part that is broken."
+try {
+    & $VenvPython $Alerter --reason gateway_down --message $msg 2>&1 | ForEach-Object { Write-Log "alerter: $_" }
+} catch {
+    Write-Log "ALERTER FAILED: $($_.Exception.Message)"
+}
 exit 1
