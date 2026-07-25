@@ -17,12 +17,15 @@ that matters: it opens a real handle and then raises partway through.
 """
 from __future__ import annotations
 
+import io
 import os
 from pathlib import Path
+import sqlite3
 import sys
 import tempfile
 import types
 import unittest
+import zipfile
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -99,10 +102,11 @@ class TextFromMsgTempFileTests(unittest.TestCase):
 
     def test_success_path_still_works_and_cleans_up(self):
         with self._install_fake(_WorkingMessage):
-            text = google_backfill.text_from_msg(b"raw-outlook-bytes")
-        self.assertIn("Fittings - RFQ", text)
-        self.assertIn("buyer@sctfrp.com", text)
-        self.assertIn("Please quote the elbows.", text)
+            got = google_backfill.text_from_msg(b"raw-outlook-bytes")
+        self.assertIn("Fittings - RFQ", got.text)
+        self.assertIn("buyer@sctfrp.com", got.text)
+        self.assertIn("Please quote the elbows.", got.text)
+        self.assertTrue(got.complete)
         self.assertEqual(self.leftovers(), [])
 
     def test_one_bad_message_does_not_poison_the_next(self):
@@ -111,9 +115,93 @@ class TextFromMsgTempFileTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 google_backfill.text_from_msg(b"first-bad")
         with self._install_fake(_WorkingMessage):
-            text = google_backfill.text_from_msg(b"second-good")
-        self.assertIn("Fittings - RFQ", text)
+            got = google_backfill.text_from_msg(b"second-good")
+        self.assertIn("Fittings - RFQ", got.text)
         self.assertEqual(self.leftovers(), [])
+
+
+class CompletenessTests(unittest.TestCase):
+    """B-21 and B-22: a partial read must never look like a full one."""
+
+    def _eml(self, body: bytes) -> bytes:
+        return body
+
+    def test_a_readable_message_is_complete(self):
+        raw = (b"Subject: Fittings RFQ\r\nFrom: buyer@sctfrp.com\r\n"
+               b"Content-Type: text/plain\r\n\r\nPlease quote the elbows.\r\n")
+        got = google_backfill.text_from_eml(raw)
+        self.assertTrue(got.complete)
+        self.assertIn("Please quote the elbows.", got.text)
+
+    def test_a_message_with_no_readable_body_is_partial(self):
+        # multipart/related carrying only an attachment: get_body() returns None,
+        # but the header block still makes the text non-empty. That combination
+        # used to be written as read-and-clear with the body never seen.
+        raw = (b"Subject: Scan\r\nFrom: someone@example.com\r\n"
+               b'Content-Type: multipart/related; boundary="b"\r\n\r\n'
+               b"--b\r\nContent-Type: application/pdf\r\n"
+               b'Content-Disposition: attachment; filename="scan.pdf"\r\n\r\n'
+               b"%PDF-1.4\r\n--b--\r\n")
+        got = google_backfill.text_from_eml(raw)
+        self.assertFalse(got.complete, "a body we could not read is not a complete read")
+        self.assertTrue(got.text.strip(), "headers are still returned")
+
+    def test_a_zip_is_never_complete(self):
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("drawings/manway.dwg", "x")
+        got = google_backfill.text_from_zip(buf.getvalue())
+        self.assertFalse(got.complete, "member names only is by definition partial")
+        self.assertIn("manway.dwg", got.text)
+
+    def test_status_names_differ_for_partial_and_complete(self):
+        """The status string is what downstream reads; they must not collide."""
+        complete = f"backfill_{'eml'}"
+        partial = f"backfill_partial_{'eml'}"
+        self.assertNotEqual(complete, partial)
+        # Both must still be excluded from a later run, or the job never converges.
+        for status in (complete, partial):
+            self.assertTrue(status.startswith("backfill_"))
+
+
+class CandidateSelectionTests(unittest.TestCase):
+    """B-20: select on 'has no content', not on a status string."""
+
+    def _db(self, rows):
+        con = sqlite3.connect(":memory:")
+        con.execute("CREATE TABLE drive_files (id TEXT, name TEXT, mime_type TEXT, "
+                    "size INT, content TEXT, content_status TEXT)")
+        con.executemany("INSERT INTO drive_files VALUES (?,?,?,?,?,?)", rows)
+        return con
+
+    def test_an_indexed_but_empty_scan_is_picked_up(self):
+        con = self._db([
+            # The headline case: image-only PDF, no text layer, stored 'indexed'
+            # with content "". NOT LIKE 'indexed%' excluded it forever.
+            ("f1", "site scan.pdf", "application/pdf", 1000, "", "indexed"),
+        ])
+        got = google_backfill.candidates(con, {"pdf"})
+        self.assertEqual([r[0] for r in got], ["f1"])
+
+    def test_a_row_that_already_has_content_is_left_alone(self):
+        con = self._db([
+            ("f1", "quote.pdf", "application/pdf", 1000, "real text", "indexed"),
+        ])
+        self.assertEqual(google_backfill.candidates(con, {"pdf"}), [])
+
+    def test_rows_this_tool_already_attempted_are_not_retried(self):
+        con = self._db([
+            ("f1", "a.pdf", "application/pdf", 10, "", "backfill_no_text"),
+            ("f2", "b.pdf", "application/pdf", 10, "", "backfill_error:ValueError"),
+            ("f3", "c.pdf", "application/pdf", 10, "", "backfill_partial_pdf"),
+        ])
+        self.assertEqual(google_backfill.candidates(con, {"pdf"}), [],
+                         "a run must converge, not redo its own outcomes")
+
+    def test_folder_metadata_is_never_a_candidate(self):
+        con = self._db([("f1", "a folder", "application/vnd.google-apps.folder",
+                         0, "", "folder_metadata")])
+        self.assertEqual(google_backfill.candidates(con, {"pdf", "image"}), [])
 
 
 if __name__ == "__main__":

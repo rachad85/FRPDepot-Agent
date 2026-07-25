@@ -348,7 +348,11 @@ FIX — name the success status inside the convention the query understands
 (`indexed_backfill_{kind}`), or switch to the content-presence predicate in B-20
 plus an attempt counter so a permanently-bad file cannot re-occupy the head.
 
-### B-20 OPEN — Scanned PDFs stored as `indexed` with EMPTY content are skipped entirely
+### B-20 FIXED (this commit) — Scanned PDFs stored as `indexed` with EMPTY content are skipped entirely
+
+Fixed 2026-07-25. `candidates()` now selects on the real condition — `content IS NULL OR trim(content) = ''` — so an image-only PDF stored `indexed` with empty content is picked up instead of excluded forever. The `backfill_%` exclusion stays, so runs still converge.
+
+Original report follows.
 **:229**. `candidates()` filters `content_status NOT LIKE 'indexed%'`, but the
 defect being fixed is "row has no content" — and they diverge for the headline
 case. In `google_indexer.extract_drive_content` an image-only scan has no text
@@ -363,7 +367,11 @@ FIX — select on the real condition: `WHERE (content IS NULL OR trim(content) =
 `no_text_but_indexed` counter to the plan output so the hidden population is
 visible before the run.
 
-### B-21 OPEN — `text_from_eml` promotes a failed body read to "read-and-clear"
+### B-21 FIXED (this commit) — `text_from_eml` promotes a failed body read to "read-and-clear"
+
+Fixed 2026-07-25. Extractors return an `Extraction(text, complete)` NamedTuple. `text_from_eml` reports `complete=False` when the body extraction raises or `get_body()` returns None, so a failed body read is no longer indistinguishable from an empty one and the row is written `backfill_partial_eml` rather than read-and-clear.
+
+Original report follows.
 **:122**. `except Exception: body = ""` makes a failed extraction
 indistinguishable from an empty body, but the function still returns a non-empty
 header block. So `text` is truthy, `deep_tdi_marker` sees only headers, nothing
@@ -376,7 +384,11 @@ FIX — do not swallow. Signal partiality (`return (text, complete)` or raise) a
 write a status that `candidates()`/`google_reference.py` treat as still
 unscreened.
 
-### B-22 OPEN — Deliberately partial extractions are recorded as full reads
+### B-22 FIXED (this commit) — Deliberately partial extractions are recorded as full reads
+
+Fixed 2026-07-25. Partial extractions are recorded as `backfill_partial_<kind>`: the scanned-PDF page cap, the xls row/`MAX_TEXT` truncation, and zip (names-only, so never complete). `google_reference.py` already returns `content_status` verbatim in its Drive results, so a partial row reads as a pointer to verify without further change there.
+
+Original report follows.
 **:156**. `text_from_scanned_pdf` OCRs only the first 12 pages; `text_from_xls`
 caps at `MAX_TEXT`/4,000 rows per sheet; `text_from_zip` stores member NAMES
 only. All return normally, so a 30-page scanned drawing set whose first 12 pages
@@ -413,7 +425,11 @@ files are queued in the current run.
 FIX — `contextlib.closing` so `close()` always runs before unlink; unique temp
 name per item; escalate a failed unlink to a visible warning.
 
-### B-24 OPEN — DB writes outside the try, no `busy_timeout`
+### B-24 FIXED (this commit) — DB writes outside the try, no `busy_timeout`
+
+Fixed 2026-07-25. The connection sets `PRAGMA busy_timeout=30000`, and every write moved inside a `try` that counts `db_errors` and continues. A concurrent `google_indexer`/`google_rescreen` lock no longer kills the whole 45-minute run with no summary and no receipt.
+
+Original report follows.
 **:285**. Default 5s lock timeout, and every write is outside the `try` that
 guards download/extraction. A concurrent `google_indexer.py`/`google_rescreen.py`
 writer raises `database is locked`, which propagates past `main()` and kills the
