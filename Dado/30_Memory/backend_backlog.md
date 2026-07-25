@@ -540,7 +540,13 @@ enumerate-then-fetch site rather than one inline `try`.
 
 ## P2 — log integrity
 
-### B-30 OPEN — `receipts.jsonl` has three timestamp formats plus one corrupt line
+### B-30 FIXED (this commit) — `receipts.jsonl` has three timestamp formats plus one corrupt line
+
+Fixed 2026-07-25. `job_runner` was the only naive writer in the tree; its receipts now use an aware UTC `receipt_stamp()`. Job records keep local wall-clock times in their own file, which is deliberate — a human reads those. `test_receipt_format.py` pins all nine writers.
+
+**The malformed line 90 was deliberately NOT rewritten.** It is a 2026-07-23 audit record, and editing history to make a log parse is worse than the parse failure. `conduct_collect.tail_jsonl` matches raw substrings and never parses JSON, so the bundle is unaffected; only ad-hoc JSON queries need to tolerate it. If Rachad wants it quarantined rather than left in place, that is a one-line change and his call.
+
+Original report follows.
 4,829 lines: 4,807 UTC, 8 local-offset, 13 naive (no timezone at all), 1
 unparseable. All 13 naive stamps come from `job_runner.py` (shipped 19:24) —
 `background_job_started`/`_finished`. Comparing a naive to an aware datetime

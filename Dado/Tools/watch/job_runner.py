@@ -52,11 +52,26 @@ def stamp() -> str:
     return now().isoformat(timespec="seconds")
 
 
+def receipt_stamp() -> str:
+    """UTC, timezone-AWARE - the one format receipts.jsonl uses.
+
+    This used to be stamp(), which is dt.datetime.now() with no tzinfo, and it
+    was the only naive writer in the tree: 13 of 4,829 receipt lines carried no
+    timezone at all while 4,807 were UTC-aware. Comparing a naive datetime to an
+    aware one raises TypeError in Python, so any receipt-freshness check either
+    crashes or silently skips those rows - it broke a freshness query during the
+    2026-07-25 sweep. Job records keep local wall-clock times in their own file;
+    only the shared audit log is normalised here.
+    """
+    return dt.datetime.now(dt.timezone.utc).isoformat()
+
+
 def receipt(action: str, evidence: str) -> None:
     try:
         RECEIPTS.parent.mkdir(parents=True, exist_ok=True)
         with RECEIPTS.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"ts": stamp(), "action": action, "evidence": evidence}) + "\n")
+            fh.write(json.dumps({"ts": receipt_stamp(), "action": action,
+                                 "evidence": evidence}) + "\n")
     except OSError:
         pass
 
