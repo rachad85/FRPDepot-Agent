@@ -12,24 +12,28 @@ import os
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import google_auth
+import google_extended_auth
 
 OUT = Path(os.environ["LOCALAPPDATA"]) / "FRPDepot-Google" / "reference" / "google_service_access.json"
 TESTS = {
-    "Gmail": "https://gmail.googleapis.com/gmail/v1/users/me/profile",
-    "Drive": "https://www.googleapis.com/drive/v3/about?fields=user",
-    "Google Analytics Admin": "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=1",
-    "Google Calendar": "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1",
-    "Google Contacts/People": "https://people.googleapis.com/v1/people/me?personFields=names",
-    "Google Search Console": "https://www.googleapis.com/webmasters/v3/sites",
+    "Gmail": ("core", "https://gmail.googleapis.com/gmail/v1/users/me/profile"),
+    "Drive": ("core", "https://www.googleapis.com/drive/v3/about?fields=user"),
+    "Google Analytics Admin": ("extended", "https://analyticsadmin.googleapis.com/v1beta/accountSummaries?pageSize=1"),
+    "Google Calendar": ("extended", "https://www.googleapis.com/calendar/v3/users/me/calendarList?maxResults=1"),
+    "Google Contacts/People": ("extended", "https://people.googleapis.com/v1/people/me/connections?pageSize=1&personFields=names"),
+    "Google Search Console": ("extended", "https://www.googleapis.com/webmasters/v3/sites"),
 }
 
 
 def main() -> int:
-    token = google_auth.get_token(interactive=False)
+    tokens = {
+        "core": google_auth.get_token(interactive=False),
+        "extended": google_extended_auth.get_creds(interactive=False).token,
+    }
     results = {}
-    for name, url in TESTS.items():
+    for name, (token_group, url) in TESTS.items():
         req = urllib.request.Request(url)
-        req.add_header("Authorization", "Bearer " + token)
+        req.add_header("Authorization", "Bearer " + tokens[token_group])
         try:
             with urllib.request.urlopen(req, timeout=30) as response:
                 response.read(1)
@@ -49,6 +53,7 @@ def main() -> int:
     payload = {"checked_at": datetime.now(timezone.utc).isoformat(), "account_expected": "rachad85@gmail.com", "services": results}
     OUT.parent.mkdir(parents=True, exist_ok=True)
     OUT.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    google_extended_auth.receipt("google_service_access_audited", str(OUT))
     print(json.dumps(payload, indent=2))
     return 0
 
