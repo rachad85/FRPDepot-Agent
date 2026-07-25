@@ -482,6 +482,15 @@ class OutlookToolTests(unittest.TestCase):
             self.assertEqual(result["status"], "REPLY_ALL_DRAFT_CREATED_NOT_SENT")
             self.assertEqual(result["conversation_id"], "conv-chase")
 
+    def _chase_args(self, folder_path, source_id):
+        body_path = folder_path / "chase.txt"
+        body_path.write_text("Just checking in on this one.", encoding="utf-8")
+        return argparse.Namespace(
+            input=None, match=None, source_id=source_id,
+            body_file=str(body_path), body_html_file=None,
+            replace_standalone=False, superseded_id=None, superseded_subject=None,
+        )
+
     def test_reply_all_still_blocks_when_they_replied_after_the_source(self) -> None:
         """The real safety property: a NEWER EXTERNAL reply must still block."""
         inbound, our_reply = self._chase_thread()
@@ -495,23 +504,14 @@ class OutlookToolTests(unittest.TestCase):
                 return inbound
             self.fail(f"Unexpected Graph call: {method} {path}")
 
-        args = argparse.Namespace(
-            input=None, match=None, source_id="inbound-id",
-            body_file=None, body_html_file=None, replace_standalone=False,
-            superseded_id=None, superseded_subject=None,
-        )
-        args.body_text = None
-        with (
-            patch.object(tool, "refresh_access_token", return_value=("t", set())),
-            patch.object(tool, "graph_request", side_effect=fake_graph),
-        ):
-            with self.assertRaisesRegex(tool.OutlookError, "newer external reply"):
-                tool.command_reply_all(
-                    argparse.Namespace(input=None, match=None, source_id="inbound-id",
-                                       body_file=None, body_html_file=None,
-                                       replace_standalone=False, superseded_id=None,
-                                       superseded_subject=None, body_text="chase")
-                )
+        with tempfile.TemporaryDirectory() as folder:
+            args = self._chase_args(Path(folder), "inbound-id")
+            with (
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+            ):
+                with self.assertRaisesRegex(tool.OutlookError, "newer external reply"):
+                    tool.command_reply_all(args)
 
     def test_reply_all_refuses_an_automated_sender_as_the_chase_target(self) -> None:
         bounce = {
@@ -526,17 +526,14 @@ class OutlookToolTests(unittest.TestCase):
                 return bounce
             self.fail(f"Unexpected Graph call: {method} {path}")
 
-        with (
-            patch.object(tool, "refresh_access_token", return_value=("t", set())),
-            patch.object(tool, "graph_request", side_effect=fake_graph),
-        ):
-            with self.assertRaisesRegex(tool.OutlookError, "automated sender"):
-                tool.command_reply_all(
-                    argparse.Namespace(input=None, match=None, source_id="bounce-id",
-                                       body_file=None, body_html_file=None,
-                                       replace_standalone=False, superseded_id=None,
-                                       superseded_subject=None, body_text="chase")
-                )
+        with tempfile.TemporaryDirectory() as folder:
+            args = self._chase_args(Path(folder), "bounce-id")
+            with (
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+            ):
+                with self.assertRaisesRegex(tool.OutlookError, "automated sender"):
+                    tool.command_reply_all(args)
 
     def test_html_history_comparison_tolerates_graph_markup_normalization(self) -> None:
         original = '<div class="quoted"><p>Original&nbsp; history</p><br>Line two</div>'

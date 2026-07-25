@@ -16,7 +16,20 @@ Status key: `OPEN` — not started. `FIXED <commit>` — landed and verified.
 
 ## P0 — a shipped feature that cannot work at all
 
-### B-01 OPEN — Follow-up chase drafts are structurally impossible (100% failure)
+### B-01 FIXED 6265910 (code) + this commit (tests) — Follow-up chase drafts were structurally impossible
+
+Fixed 2026-07-24. `latest_live_external_non_draft()` now resolves the reply
+source to the newest **live external** non-draft message, so our own Sent copy
+no longer blocks the chase; automated senders (bounce/no-reply) are skipped and
+refused as chase targets. The same guard is applied at BOTH sites — the
+pre-flight check and the post-creation re-check at `:1014`, which would
+otherwise have failed *after* creating the draft and left an orphan. Five
+regression tests added, verified to fail against the pre-fix code and pass
+against the fix. NOTE the code landed inside commit 6265910 ("Fix the MSYS path
+bug…") because a concurrent session ran a catch-all `git commit`; the message
+does not describe this change.
+
+Original report follows.
 
 `Dado/Tools/outlook/outlook_tool.py` — `command_reply_all`
 
