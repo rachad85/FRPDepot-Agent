@@ -271,23 +271,10 @@ class TrackerResilienceTests(unittest.TestCase):
         self.assertFalse(truncated)
         self.assertEqual(len(messages), 2)
 
-    def test_a_forwarded_bank_notice_is_not_a_chase_target(self):
-        now = datetime.datetime.now(datetime.timezone.utc)
-        old = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        ours = (now - datetime.timedelta(days=21)).strftime("%Y-%m-%dT%H:%M:%SZ")
-        thread = [
-            {"id": "m1", "isDraft": False,  # the ROOT is automated
-             "from": {"emailAddress": {"address": "no-reply@plooto.com"}},
-             "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
-             "sentDateTime": old},
-            {"id": "m2", "isDraft": False,  # Rachad forwards it onward
-             "from": {"emailAddress": {"address": "info@frpdepots.com"}},
-             "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
-             "sentDateTime": ours},
-        ]
+    def _bank_notice_run(self, thread, subject):
+        ours = thread[-1]["sentDateTime"]
         sent_page = {"value": [{
-            "conversationId": "conv-bank",
-            "subject": "Fw: You received a deposit of 49,100.00 USD",
+            "conversationId": "conv-bank", "subject": subject,
             "bodyPreview": "You received a deposit", "sentDateTime": ours,
             "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
         }]}
@@ -299,9 +286,51 @@ class TrackerResilienceTests(unittest.TestCase):
             out = io.StringIO()
             with redirect_stdout(out):
                 check.show_waiting_on_them("token", 60)
-        result = json.loads(out.getvalue())
+        return json.loads(out.getvalue())
+
+    def test_a_thread_rooted_in_an_automated_sender_is_excluded(self):
+        """The narrow case the root check DOES cover: the notice is in-thread."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        old = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ours = (now - datetime.timedelta(days=21)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        thread = [
+            {"id": "m1", "isDraft": False,  # the ROOT is automated
+             "from": {"emailAddress": {"address": "no-reply@plooto.com"}},
+             "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+             "sentDateTime": old},
+            {"id": "m2", "isDraft": False,
+             "from": {"emailAddress": {"address": "info@frpdepots.com"}},
+             "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
+             "sentDateTime": ours},
+        ]
+        result = self._bank_notice_run(thread, "Re: deposit notice")
+        self.assertEqual(result["overdue_count"], 0)
+
+    @unittest.expectedFailure
+    def test_a_FORWARDED_bank_notice_is_still_wrongly_urgent(self):
+        """B-16, the part that is NOT fixed. Documented, not pretended away.
+
+        FORWARDING starts a NEW conversation whose root is RACHAD'S OWN message -
+        the bank's address is not in this thread at all - so the automated-root
+        check cannot see it. Confirmed against the live mailbox 2026-07-25: "Fw:
+        You received a deposit of 49,100.00 USD" is still payment + urgent at 27
+        working days.
+
+        Left as an expected failure on purpose. It fails loudly the day someone
+        fixes it, which is the prompt to delete this test and mark B-16 done.
+        """
+        now = datetime.datetime.now(datetime.timezone.utc)
+        ours = (now - datetime.timedelta(days=21)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        thread = [
+            {"id": "m1", "isDraft": False,  # the root IS Rachad - it is a forward
+             "from": {"emailAddress": {"address": "info@frpdepots.com"}},
+             "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
+             "sentDateTime": ours},
+        ]
+        result = self._bank_notice_run(
+            thread, "Fw: You received a deposit of 49,100.00 USD")
         self.assertEqual(result["overdue_count"], 0,
-                         "a forwarded no-reply bank notice must not become a chase")
+                         "a forwarded no-reply bank notice should not be an urgent chase")
 
 
 class CarryForwardTests(unittest.TestCase):

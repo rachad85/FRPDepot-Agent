@@ -281,9 +281,35 @@ threads. Headroom is thin (99 sent in 60 days; 300 reach back to 2026-01-06), an
 `days_back` is a free-form argument.
 FIX — page until the window is exhausted, or emit `truncated: true`/`oldest_seen`.
 
-### B-16 FIXED (this commit) — Category inferred from quoted history and forwarded bank notices
+### B-16 PARTIALLY FIXED — Category inferred from quoted history and forwarded bank notices
 
-Fixed 2026-07-25. A quote-numbered subject now outranks payment words, only Rachad's own text is classified (`strip_quoted` removes the quoted history), and a thread whose ROOT message came from an automated sender is excluded even when he forwarded it - so the forwarded bank notices stop becoming urgent chase targets.
+Fixed 2026-07-25, but only two of the three parts. DONE: a quote-numbered subject
+now outranks payment words (`classify_thread('Quote QT-000099 for FRP pipe',
+'Deposit invoice attached')` is `rfq_quote`, so it waits 5 working days not 7),
+and `strip_quoted()` removes the quoted history so only Rachad's own added text
+is classified.
+
+**NOT FIXED — the forwarded-bank-notice case, which was the headline example.**
+The exclusion I added tests whether the thread's ROOT message came from an
+automated sender. That cannot work for a forward: forwarding starts a NEW
+conversation whose root is RACHAD'S OWN message, so the bank's address is not in
+this thread at all. Verified against the live mailbox 2026-07-25 — "Fw: You
+received a deposit of 49,100.00 USD" is still `payment` + `urgent` + overdue at
+27 working days (conversation has 2 messages, external party
+`anh@troydualam.com`). The unit test I wrote passes because it models the bank as
+the root message, which is not the shape the real data has. My test was wrong,
+not the code.
+
+DELIBERATELY LEFT VISIBLE rather than guessed at. A heuristic that suppresses
+"forwarded notice" threads risks hiding real money, and the wrong direction to
+err at 2am on data I cannot ask about. Mislabelled-but-visible beats hidden.
+
+RACHAD'S CALL, and the real question is not technical: when you forward a
+deposit notice to someone and they never reply, do you want that on the
+follow-up list at all? If yes, it should probably not be `urgent`. If no, the
+cleanest signal is the `Fw:`/`FW:` subject prefix combined with no inbound
+external message in the thread — but that also describes a cold RFQ, which you
+DO want chased, so it needs your judgement rather than mine.
 
 Original report follows.
 `outlook_check.py:197`. `classify_thread` reads subject + `bodyPreview`, and
