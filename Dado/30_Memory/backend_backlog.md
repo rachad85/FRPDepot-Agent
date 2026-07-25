@@ -302,7 +302,17 @@ FIX — `PRAGMA busy_timeout=30000`; move per-row writes into the try with a
 
 ## P1 — Google reconnect (UNCOMMITTED working-tree change, 2026-07-24)
 
-### B-25 OPEN — ⚠ `reconnect` can DESTROY Google access
+### B-25 FIXED (this commit) — ⚠ `reconnect` could have DESTROYED Google access
+
+Fixed 2026-07-24: `google_auth.py.get_creds` now passes `access_type="offline",
+prompt="consent"`, matching `google_extended_auth.py`. New
+`Dado/Tools/google/test_google_auth.py` asserts both modules carry both kwargs
+(AST assertions — a mocked flow object would accept a missing kwarg silently, so
+only reading the call as written catches this), verified to fail against the
+pre-fix file and to pass for the sibling. B-26 below is still OPEN: the fix is
+correct but Rachad has no BUTTON that reaches it.
+
+Original report follows.
 `google_auth.py:158`. `flow.run_local_server()` passes only `port` and `message`.
 `google_auth_oauthlib` defaults `access_type="offline"` but does **not** default
 `prompt`. Google returns a refresh token only on first authorization or when

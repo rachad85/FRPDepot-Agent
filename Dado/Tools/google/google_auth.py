@@ -160,7 +160,19 @@ def get_creds(interactive=False, force=False):
         authorization_prompt_message="If no browser opened, paste this link "
                                      "into one:\n{url}\n",
         success_message="Signed in. You can close this browser tab and go "
-                        "back to the black window.")
+                        "back to the black window.",
+        # BOTH are load-bearing; google_auth_oauthlib defaults access_type to
+        # "offline" but sets no prompt at all. Without prompt="consent" Google
+        # AUTO-APPROVES a re-authorization of scopes Rachad already granted to
+        # dado-frpd and returns refresh_token=null - which _save() would then
+        # write over the working token. Sign-in "succeeds", and about an hour
+        # later every non-interactive caller (google_indexer, google_backfill,
+        # google_service_audit, every google_tool command) dies at once with no
+        # way back except a hand-deleted token file. That would make `reconnect`
+        # - the command built to CURE a stale token - the one most likely to
+        # destroy access. google_extended_auth.py has always passed both.
+        access_type="offline",
+        prompt="consent")
     _save(creds)
     granted = set(creds.scopes or [])
     missing = [s for s in SCOPES if s not in granted]
