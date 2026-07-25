@@ -55,8 +55,19 @@ engineer.
 ## Golden rules (mirror of Dado's SOUL — enforced in tools)
 1. DRAFTS ONLY — no send capability anywhere, ever.
 2. No keys/tokens/passwords in chat. Vaults + profile .env only.
-3. Zoho READ-ONLY until Rachad commissions a named write tool.
-4. Company wall: FRP Depot data never mixes with TDI data.
+3. Zoho: no company-wall filtering (Troy Dualam is a normal customer —
+   Rachad removed those filters 2026-07-24). Writes still go only through
+   the commissioned tools' stage-then-commit flow with Rachad's own
+   approval phrase — that is HIS guardrail, not a wall to strip; leave it
+   unless he says otherwise. See SOUL rule 3 for the exact flow.
+4. NEVER ADD WALLS RACHAD DID NOT ASK FOR (his standing instruction,
+   2026-07-24: "do not add any walls unless I specifically ask for it").
+   He owns both companies and decides what is separate. OPEN as of
+   2026-07-24: Drive (unfiltered), Zoho (no company-wall restriction),
+   and TDI marketing analytics (read-only). STILL WALLED only because he
+   has not opened them: C:\AgentTeam itself, and TDI mail (the Gmail TDI
+   screen stays on). Raise a guardrail concern ONCE, then build what he
+   asked for.
 5. Honest errors: what failed, on what, the fix.
 
 ## State (2026-07-22, day 1)
@@ -212,6 +223,43 @@ engineer.
       written only AFTER a turn ends, so an in-flight stall is invisible to it.
       Incident shape for reference: 17 consecutive 600s polls, 0 messages in 3h,
       turn died at max_iterations_reached(60/60).
+- [x] TDI ANALYTICS OPENED TO DADO, READ-ONLY (Rachad 2026-07-24) — a
+      deliberate, separately-taken decision, NOT a fix for the conversion
+      question. THE FACT THAT PROMPTED IT, keep it on record: Dado reported
+      she could not give FRP Depot conversion rates and blamed the company
+      wall. Wrong diagnosis. frpdepots.com has NO GA4 property at all; the
+      only two GA4 properties in Rachad's Google account are Troy Dualam's
+      (accounts/320963476 "Troy Dualam" -> properties/449339383;
+      accounts/333650696 "Troy Dualam Services" -> properties/463861653).
+      So no permission change could ever produce an FRP conversion number —
+      the data is not collected. FRP DOES own Search Console
+      (sc-domain:frpdepots.com, siteOwner), so search metrics work today;
+      only click->lead conversion is missing, and that needs a GA4 property
+      created + tagged on frpdepots.com (GA4 has NO retroactive data, so the
+      clock starts at creation). Shown that, Rachad chose to grant the TDI
+      analytics read anyway so Dado can work TDI marketing alongside Aze.
+      SCOPE AND LIMITS: marketing METRICS only, read-only, via
+      Dado\Tools\google\analytics_tool.py (list/report/compare; Admin-API
+      GETs + Data-API runReport only, no administration, no writes). TDI
+      files/mailbox/Drive/Zoho stay walled and tdi_filter.py stays ON for
+      Gmail/Drive — analytics_tool.py deliberately does NOT import it, and
+      that asymmetry is the point. CONTAINMENT: --save writes only to
+      %LOCALAPPDATA%\FRPDepot-Google\analytics_reports\ and the tool REFUSES
+      to write inside C:\FRPDepot, so TDI figures cannot enter FRP's git
+      history or the nightly conduct bundle. Hard Rule 4 amended in
+      DadoProfile\SOUL.md and synced to the live profile.
+      NOTE FOR WHOEVER COMMITS: this HARD RULES edit should be committed —
+      while uncommitted, a tripped conduct guard runs
+      `git checkout -- DadoProfile/SOUL.md` and would silently wipe it.
+- [ ] FRP Depot GA4 property: does not exist. Until Rachad creates one for
+      frpdepots.com and tags the site, conversion rate is unreportable by
+      ANY agent with ANY permissions. Search Console is live and shows the
+      real bottleneck is RANKING, not conversion: 28d to 2026-07-21 gave
+      7,036 impressions / 56 clicks / 0.80% CTR at average position 22.4
+      (page 3), impressions +46.5% and clicks +43.6% vs the prior 28d — so
+      CTR is flat, not collapsing. 99.2% of impressions come from
+      zero-click queries sitting at positions 10-47 ("frp pipe" 365 imp at
+      pos 12.8, "custom frp solutions", "frp pipe elbow").
 - [ ] Zoho: Rachad creates an API client in the Zoho API console
       (one-time OAuth, like the Intuit flow); then build read-only
       Books/Inventory report tools.

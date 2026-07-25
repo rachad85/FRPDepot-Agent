@@ -8,12 +8,17 @@ Run:  python google_tool.py connect                       one-time / weekly sign
       python google_tool.py drive-search --query "..."     [--limit 10]
       python google_tool.py drive-read --id <fileId>
 
-Every Gmail/Drive result passes through tdi_filter.is_tdi_flagged() before
-Dado sees it: this account also carries TDI banking/KYC threads (Aze uses it
-for Troy Dualam account-opening work). Flagged results are withheld, not
-silently dropped - search reports how many were held back; a direct --id
-read of a flagged item is refused outright. This is a keyword screen, not a
-guarantee - see tdi_filter.py.
+SCREENING, as it stands 2026-07-24:
+  GMAIL - screened through tdi_filter.is_tdi_flagged(). Flagged results are
+          withheld, not silently dropped: search reports how many were held
+          back, and a direct --id read of a flagged message is refused. This
+          is a keyword screen, not a guarantee - see tdi_filter.py.
+  DRIVE - NOT screened. Rachad removed the Drive filter on 2026-07-24:
+          "no walls/restrictions for Drive and zoho ... do not add any walls
+          unless I specifically ask for it". It is his own Drive, spanning
+          both his companies.
+Do not add screening to either path on your own initiative; Rachad asks for
+restrictions when he wants them.
 
 No send path exists anywhere in this file (Golden Rule 1). gmail-draft only
 ever calls users.drafts.create; there is no users.messages.send call in this
@@ -180,28 +185,18 @@ def command_drive_search(args: argparse.Namespace) -> None:
     listing = _call("GET", f"{DRIVE}/files?"
                      f"{urlencode({'q': q, 'pageSize': limit, 'fields': 'files(id,name,mimeType,parents,webViewLink)'})}",
                      token)
-    results, withheld = [], 0
-    for f in listing.get("files", []):
-        if is_tdi_flagged(f.get("name", "")):
-            withheld += 1
-            continue
-        results.append(f)
-    # HONEST LIMITATION: this screens FILE NAMES only. Drive gives no content
-    # preview in a listing, and downloading every hit to screen it would mean
-    # pulling arbitrarily large binaries on every search. So a generically
-    # named TDI document can still appear in this LIST (name + link only).
-    # Its CONTENT is screened at drive-read time, which refuses outright.
-    # Do not treat a search hit as cleared for reading.
-    print(json.dumps({"results": results, "withheld_tdi_flagged": withheld,
-                       "screening": "filenames only - content is screened at drive-read"}, indent=2))
+    # NO TDI SCREEN ON DRIVE. Rachad removed it 2026-07-24: "no walls/
+    # restrictions for Drive and zoho ... do not add any walls unless I
+    # specifically ask for it". Drive is his own account across both his
+    # companies. Do not reintroduce filtering here without him asking.
+    results = list(listing.get("files", []))
+    print(json.dumps({"results": results, "screening": "none - Drive is unfiltered by Rachad's instruction"},
+                      indent=2))
 
 
 def command_drive_read(args: argparse.Namespace) -> None:
     token = google_auth.get_token(interactive=False)
     meta = _call("GET", f"{DRIVE}/files/{args.id}?fields=id,name,mimeType", token)
-    if is_tdi_flagged(meta.get("name", "")):
-        raise GoogleError(f"BLOCKED: file {args.id} ({meta.get('name')!r}) is TDI-flagged. "
-                           "Ask Rachad to pull this through Aze instead.")
     if meta.get("mimeType", "").startswith("application/vnd.google-apps"):
         url = f"{DRIVE}/files/{args.id}/export?{urlencode({'mimeType': 'text/plain'})}"
     else:
@@ -214,12 +209,7 @@ def command_drive_read(args: argparse.Namespace) -> None:
     except HTTPError as e:
         raise GoogleError(f"GET {url} -> HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:500]}") from e
     text = content.decode("utf-8", "replace")
-    # Screen the CONTENT, not just the filename - a generically-named scan
-    # ("Scan_001.pdf") can still be a TDI KYC document. Same bug class as the
-    # Gmail one found 2026-07-24; the name check alone let content through.
-    if is_tdi_flagged(text):
-        raise GoogleError(f"BLOCKED: file {args.id} ({meta.get('name')!r}) has TDI-flagged CONTENT. "
-                           "Ask Rachad to pull this through Aze instead.")
+    # No content screen either - same instruction as drive-search above.
     print(json.dumps({"id": meta["id"], "name": meta["name"], "text": text[:20000],
                        "truncated": len(text) > 20000}, indent=2))
 

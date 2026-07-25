@@ -10,7 +10,9 @@ import zoho_tool
 
 ROOT = Path(r"C:\FRPDepot")
 OUT = ROOT / "Dado" / "20_Working" / "pricing_requests"
-FORBIDDEN = ("troy dualam", "troydualam.com")
+# Troy Dualam contacts/transactions used to be dropped here as a company-wall
+# rule. Rachad removed that 2026-07-24 ("no walls/restrictions for Drive and
+# zoho"). Do not re-add it unless he asks.
 TARGETS = [
     {"key": "nasahtec", "searches": ["Nasahtec", "nashtecllc.com", "brianb@nashtecllc.com"]},
     {"key": "kenz_jordan", "searches": ["KENZ JORDAN", "kenzjordan.com", "kz.16sales@kenzjordan.com"]},
@@ -19,8 +21,8 @@ TARGETS = [
 
 
 def forbidden(record) -> bool:
-    text = json.dumps(record, ensure_ascii=False).casefold()
-    return any(x in text for x in FORBIDDEN)
+    """Nothing is filtered out any more - kept so call sites stay unchanged."""
+    return False
 
 
 def get_pages(token, domain, path, org, extra=None):

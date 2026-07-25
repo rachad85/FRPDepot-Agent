@@ -5,3 +5,4 @@ Jobs/
 __pycache__/
 Dado/20_Working/
 Dado/Tools/vendor/
+Dado/Tools/google/google_client.json

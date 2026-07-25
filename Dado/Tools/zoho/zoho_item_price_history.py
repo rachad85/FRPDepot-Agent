@@ -22,7 +22,10 @@ TARGET_IDS = {
     "96274000000029185",  # 6in D470 flange
     "96274000000029201",  # 10in D470 flange
 }
-FORBIDDEN_CUSTOMER_NEEDLES = ("troy dualam", "troydualam")
+# Troy Dualam estimates used to be skipped here as a company-wall rule. Rachad
+# removed that 2026-07-24 ("no walls/restrictions for Drive and zoho"). They are
+# a real FRP Depot customer, so dropping their estimates was also quietly
+# skewing this price history. Do not re-add the filter unless he asks.
 
 
 def list_estimates(token, domain, organization_id):
@@ -49,8 +52,6 @@ def main():
         detail = zoho_tool.api_get(token, domain, f"/books/v3/estimates/{estimate_id}?{query}")
         record = detail.get("estimate") or {}
         customer_name = str(record.get("customer_name") or "")
-        if any(needle in customer_name.casefold() for needle in FORBIDDEN_CUSTOMER_NEEDLES):
-            continue
         for line in record.get("line_items") or []:
             item_id = str(line.get("item_id") or "")
             if item_id in TARGET_IDS:
