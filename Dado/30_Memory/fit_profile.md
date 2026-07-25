@@ -57,6 +57,34 @@ sheet — ask instead.
   Catalog Tool**. It may create approved items and update only approved existing
   item names/SKUs. It cannot delete items, change existing prices, adjust stock,
   change quantities, or write orders, invoices, transfers, or payments.
+- 2026-07-24: Rachad confirmed that Troy Dualam is a legitimate arm's-length
+  customer/vendor in FRP Depot's own Zoho. A Troy Dualam name/domain on an FRP
+  Depot Zoho contact or transaction is not by itself a company-wall breach and
+  must not be removed or excluded automatically. Dado may audit the FRP-side
+  record while continuing to avoid TDI's separate Zoho, files, mailbox, and
+  internal data.
+- 2026-07-24: Rachad designated Dado as his reference for his personal Google
+  account. Dado's TDI-filtered Gmail/Drive reference cache is local-only at
+  `%LOCALAPPDATA%/FRPDepot-Google/reference/google_reference.sqlite`, outside
+  the FRP Depot Git repository. Use it for historical reference but verify
+  current-state questions against live Google. Gmail read/drafts, Drive
+  read-only, Analytics read-only, Calendar read-only, Contacts read-only, and
+  Search Console read-only are connected and verified. The TDI company wall
+  remains binding for every Google result.
+- 2026-07-24: Rachad commissioned the named **FRP Depot WooCommerce Audit &
+  Approved Catalog Change Tool**. It may read products, variations, store
+  settings, system status, shipping, payment gateways, customers, and orders.
+  Customer/order reports must suppress personal details. Product and variation
+  create/update writes are allowed only through an unchanged hashed plan shown to
+  Rachad and committed after his exact approval phrase for that digest. No delete,
+  customer, order, payment, refund, coupon, webhook, plugin/theme, user, or
+  arbitrary-setting writes are commissioned.
+- 2026-07-24: Rachad closed FRP Depot's Airwallex accounts. The July 23, 2026
+  uncategorized deposits of CAD 78,146.27 and USD 21,642.71 into FRP Depot's
+  Desjardins accounts are internal closure transfers from those Airwallex
+  accounts, not revenue. Preserve the source-account history; match/categorize
+  them as bank transfers only after confirming the corresponding Airwallex
+  outgoing entries.
 - 2026-07-23 correction from Rachad: An RFQ sweep must cross-check the live
   Outlook thread against Zoho Books transaction/payment status and Zoho
   Inventory item, price, and stock data before calling it open. Formal RFQs are

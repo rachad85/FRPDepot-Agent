@@ -17,6 +17,7 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-23 Debit Return FRP DEPOTS - MID 426988 — Forte closed the ticket after no external reply; CAD 1,148.23 return and funding hold require immediate verification.
 - 2026-07-23 Important: Account Closure Notification — Airwallex access ends 2026-08-15; remaining balance withdrawal and records download require verification.
 - 2026-07-23 Interac Autodeposit registration replaced — info@frpdepots.com was moved from DCBank to Desjardins account ending 1140; authorization requires verification.
+- 2026-07-24 Payment from Structural Composite Technologies Ltd. was successfully completed — Plooto says CAD 4,101.30 for INV-000040 was sent July 16, conflicting with the July 22 collection email; bank receipt requires verification.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
