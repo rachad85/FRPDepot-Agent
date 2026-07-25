@@ -210,7 +210,11 @@ FIX — track chases we actually created (state file or match the draft we wrote
 expire after the 7 days the prompt already promises, and keep the thread in
 `overdue` with a `chased_on` field instead of deleting it from the list.
 
-### B-12 OPEN — The 60-day window silently drops the longest-overdue threads
+### B-12 FIXED (this commit) — The 60-day window silently drops the longest-overdue threads
+
+Fixed 2026-07-25. Threads are now carried forward in `30_Memory/followup_watch.json` until answered, so ageing past `days_back` cannot retire one unchased. QT-000023 no longer disappears on 2026-07-27. Carried threads are flagged `carried_forward` and counted; an answered thread drops off the watch by itself.
+
+Original report follows.
 `outlook_check.py:324`. Seeded only from Sent Items with `sentDateTime ge
 now-60d`, so the longer a thread is ignored the closer it gets to falling out
 entirely. **QT-000023** (last sent 2026-05-27, 42 working days) leaves the window
@@ -219,14 +223,22 @@ ever tracked. Nothing distinguishes "resolved" from "aged out unchased".
 FIX — filter on conversation activity, or keep a persistent tracker carried
 forward until answered or explicitly closed; at minimum emit an `aged_out` list.
 
-### B-13 OPEN — Empty `my_addr` turns the tracker into a permanent all-clear
+### B-13 FIXED (this commit) — Empty `my_addr` turns the tracker into a permanent all-clear
+
+Fixed 2026-07-25. An unresolvable mailbox address now prints an error and exits non-zero instead of skipping every candidate and reporting a clean morning.
+
+Original report follows.
 `outlook_check.py:345`. `my_address()` swallows both failures and returns `""`;
 the ownership test then skips every candidate, JSON stays valid,
 `overdue_count` is 0, digest exits silent. `prefetch` only checks the return
 code and the JSON parse.
 FIX — exit non-zero on empty `you`; have `prefetch` reject a blank `you` field.
 
-### B-14 OPEN — Working-day clock mixes UTC instants with Eastern days
+### B-14 FIXED (this commit) — Working-day clock mixes UTC instants with Eastern days
+
+Fixed 2026-07-25. Both ends of the wait clock are converted to `America/Toronto` before the date is taken. The measured same-Monday pair (19:30Z and 01:30Z) now agrees at 4 days where it used to differ by a full working day.
+
+Original report follows.
 `outlook_check.py:210`. Measured: `business_days_since('2026-07-20T19:30:00Z')`
 = 4 but `('2026-07-21T01:30:00Z')` = 3 — two mails sent the same Monday (15:30
 and 21:30 ET) differ by a whole working day. Anything sent after ~20:00 ET goes
@@ -234,14 +246,22 @@ overdue a day late; the 19:00 sweep under EST is 00:00 UTC next day, adding a
 phantom day and firing items early.
 FIX — convert both ends to `ZoneInfo('America/Toronto')` before `.date()`.
 
-### B-15 OPEN — Sent Items capped at `$top=250`, truncation invisible
+### B-15 FIXED (this commit) — Sent Items capped at `$top=250`, truncation invisible
+
+Fixed 2026-07-25. `_all_sent_since` follows `@odata.nextLink` up to `SENT_PAGE_LIMIT` (20 pages / 5,000 messages) and reports `sent_window_truncated` when it hits the cap, instead of silently discarding the oldest mail.
+
+Original report follows.
 `outlook_check.py:326`. No `@odata.nextLink` follow-up; ordering is
 `sentDateTime desc`, so overflow discards the OLDEST mail — the most overdue
 threads. Headroom is thin (99 sent in 60 days; 300 reach back to 2026-01-06), and
 `days_back` is a free-form argument.
 FIX — page until the window is exhausted, or emit `truncated: true`/`oldest_seen`.
 
-### B-16 OPEN — Category inferred from quoted history and forwarded bank notices
+### B-16 FIXED (this commit) — Category inferred from quoted history and forwarded bank notices
+
+Fixed 2026-07-25. A quote-numbered subject now outranks payment words, only Rachad's own text is classified (`strip_quoted` removes the quoted history), and a thread whose ROOT message came from an automated sender is excluded even when he forwarded it - so the forwarded bank notices stop becoming urgent chase targets.
+
+Original report follows.
 `outlook_check.py:197`. `classify_thread` reads subject + `bodyPreview`, and
 `_PAY_WORDS` wins first. On a reply the preview leads with quoted history, so the
 tier is often set by words that are not Rachad's — a quote misfiled as `payment`

@@ -100,9 +100,15 @@ class WaitingOnThemSuppressionTests(unittest.TestCase):
         self._folder = tempfile.TemporaryDirectory()
         self.addCleanup(self._folder.cleanup)
         self.log = Path(self._folder.name) / "chase_log.jsonl"
-        patcher = patch.object(tool, "CHASE_LOG", self.log)
-        patcher.start()
-        self.addCleanup(patcher.stop)
+        self.watch = Path(self._folder.name) / "followup_watch.json"
+        # BOTH must be redirected: show_waiting_on_them reads the chase log and
+        # WRITES the follow-up watch. A test run must never leave real threads
+        # registered in operational state.
+        for target, attr, value in ((tool, "CHASE_LOG", self.log),
+                                    (check, "FOLLOWUP_WATCH", self.watch)):
+            patcher = patch.object(target, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
 
     def _run(self, thread_messages):
         """Runs the tracker over one conversation and returns the parsed JSON."""
@@ -177,6 +183,197 @@ class WaitingOnThemSuppressionTests(unittest.TestCase):
         result = self._run(self._thread())
         self.assertEqual(result["overdue_count"], 1,
                          "an unsent chase older than the quiet period must resurface")
+
+
+class BusinessDayClockTests(unittest.TestCase):
+    """B-14: the wait clock must be measured in Rachad's working days."""
+
+    def test_two_mails_sent_the_same_eastern_monday_agree(self):
+        # 15:30 and 21:30 ET on 2026-07-20. The second is 2026-07-21 in UTC, so
+        # the old UTC-date version reported a whole working day less for a mail
+        # sent SIX HOURS LATER.
+        afternoon = check.business_days_since("2026-07-20T19:30:00Z")
+        evening = check.business_days_since("2026-07-21T01:30:00Z")
+        self.assertEqual(afternoon, evening)
+
+    def test_weekends_are_not_counted_as_silence(self):
+        friday = check.business_days_since("2026-07-17T14:00:00Z")
+        monday = check.business_days_since("2026-07-20T14:00:00Z")
+        self.assertEqual(friday - monday, 1, "Fri->Mon is one working day, not three")
+
+    def test_a_naive_timestamp_does_not_crash_the_clock(self):
+        self.assertIsInstance(check.business_days_since("2026-07-20T19:30:00"), int)
+
+    def test_unparseable_input_is_zero_not_an_exception(self):
+        self.assertEqual(check.business_days_since("not a date"), 0)
+
+
+class ClassificationTests(unittest.TestCase):
+    """B-16: the category sets the threshold, so it must read the right text."""
+
+    def test_a_quote_numbered_subject_outranks_payment_words(self):
+        self.assertEqual(
+            check.classify_thread("Quote QT-000099 for FRP pipe", "Deposit invoice attached"),
+            "rfq_quote", "a quote must wait 5 working days, not payment's 7")
+
+    def test_quoted_history_does_not_set_the_category(self):
+        self.assertEqual(
+            check.classify_thread(
+                "Re: Manway covers",
+                "Any update?\n-----Original Message-----\nFrom: x@y.com\n"
+                "Invoice payment overdue"),
+            "general")
+
+    def test_ordinary_classification_is_unchanged(self):
+        self.assertEqual(check.classify_thread("Invoice INV-000040 outstanding", ""), "payment")
+        self.assertEqual(check.classify_thread("RFQ for elbows", ""), "rfq_quote")
+        self.assertEqual(check.classify_thread("Shipping address", ""), "general")
+
+    def test_strip_quoted_keeps_only_his_own_text(self):
+        self.assertEqual(
+            check.strip_quoted("Please advise.\nFrom: someone@x.com\nold stuff").strip(),
+            "Please advise.")
+
+
+class TrackerResilienceTests(unittest.TestCase):
+    """B-13 and B-15, plus the automated-root half of B-16."""
+
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._folder.cleanup)
+        for target, attr, value in (
+            (tool, "CHASE_LOG", Path(self._folder.name) / "chase_log.jsonl"),
+            (check, "FOLLOWUP_WATCH", Path(self._folder.name) / "followup_watch.json"),
+        ):
+            patcher = patch.object(target, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_an_unresolvable_mailbox_exits_nonzero_instead_of_reporting_all_clear(self):
+        with patch.object(check, "my_address", return_value=""):
+            out = io.StringIO()
+            with self.assertRaises(SystemExit) as caught, redirect_stdout(out):
+                check.show_waiting_on_them("token", 60)
+        self.assertNotEqual(caught.exception.code, 0)
+        self.assertIn("error", json.loads(out.getvalue()))
+
+    def test_sent_paging_follows_next_link_and_reports_a_capped_scan(self):
+        page = {"value": [{"conversationId": "c1"}], "@odata.nextLink": "https://g/v1.0/next"}
+        with patch.object(check, "get", return_value=page):
+            messages, truncated = check._all_sent_since("token", "2026-01-01T00:00:00Z")
+        self.assertTrue(truncated, "an endlessly paging scan must admit it was capped")
+        self.assertEqual(len(messages), check.SENT_PAGE_LIMIT)
+
+    def test_sent_paging_stops_cleanly_without_a_next_link(self):
+        page = {"value": [{"conversationId": "c1"}, {"conversationId": "c2"}]}
+        with patch.object(check, "get", return_value=page):
+            messages, truncated = check._all_sent_since("token", "2026-01-01T00:00:00Z")
+        self.assertFalse(truncated)
+        self.assertEqual(len(messages), 2)
+
+    def test_a_forwarded_bank_notice_is_not_a_chase_target(self):
+        now = datetime.datetime.now(datetime.timezone.utc)
+        old = (now - datetime.timedelta(days=30)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ours = (now - datetime.timedelta(days=21)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        thread = [
+            {"id": "m1", "isDraft": False,  # the ROOT is automated
+             "from": {"emailAddress": {"address": "no-reply@plooto.com"}},
+             "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+             "sentDateTime": old},
+            {"id": "m2", "isDraft": False,  # Rachad forwards it onward
+             "from": {"emailAddress": {"address": "info@frpdepots.com"}},
+             "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
+             "sentDateTime": ours},
+        ]
+        sent_page = {"value": [{
+            "conversationId": "conv-bank",
+            "subject": "Fw: You received a deposit of 49,100.00 USD",
+            "bodyPreview": "You received a deposit", "sentDateTime": ours,
+            "toRecipients": [{"emailAddress": {"address": "someone@example.com"}}],
+        }]}
+        with (
+            patch.object(check, "my_address", return_value="info@frpdepots.com"),
+            patch.object(check, "get", return_value=sent_page),
+            patch.object(check, "_conversation", return_value=thread),
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                check.show_waiting_on_them("token", 60)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["overdue_count"], 0,
+                         "a forwarded no-reply bank notice must not become a chase")
+
+
+class CarryForwardTests(unittest.TestCase):
+    """B-12: ageing past the window must not retire a thread unchased."""
+
+    def setUp(self):
+        self._folder = tempfile.TemporaryDirectory()
+        self.addCleanup(self._folder.cleanup)
+        self.watch = Path(self._folder.name) / "followup_watch.json"
+        for target, attr, value in (
+            (tool, "CHASE_LOG", Path(self._folder.name) / "chase_log.jsonl"),
+            (check, "FOLLOWUP_WATCH", self.watch),
+        ):
+            patcher = patch.object(target, attr, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def _old_thread(self):
+        long_ago = (datetime.datetime.now(datetime.timezone.utc)
+                    - datetime.timedelta(days=70)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return [
+            {"id": "m1", "isDraft": False,
+             "from": {"emailAddress": {"address": "cadelacruz@sctfrp.com"}},
+             "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+             "sentDateTime": long_ago},
+            {"id": "m2", "isDraft": False, "subject": "Re: Quote - QT-000023",
+             "from": {"emailAddress": {"address": "info@frpdepots.com"}},
+             "toRecipients": [{"emailAddress": {"address": "cadelacruz@sctfrp.com"}}],
+             "sentDateTime": long_ago},
+        ]
+
+    def test_a_thread_outside_the_window_is_still_tracked(self):
+        # It was registered on an earlier run; Sent Items no longer returns it.
+        self.watch.write_text(json.dumps({
+            "conv-qt23": {"subject": "Re: Quote - QT-000023", "last_sent": "2026-05-27 19:09"}
+        }), encoding="utf-8")
+        with (
+            patch.object(check, "my_address", return_value="info@frpdepots.com"),
+            patch.object(check, "get", return_value={"value": []}),
+            patch.object(check, "_conversation", return_value=self._old_thread()),
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                check.show_waiting_on_them("token", 60)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["overdue_count"], 1,
+                         "QT-000023 must not vanish just for ageing out of the window")
+        self.assertTrue(result["overdue"][0]["carried_forward"])
+        self.assertEqual(result["carried_forward_count"], 1)
+
+    def test_an_answered_carried_thread_drops_off_the_watch(self):
+        self.watch.write_text(json.dumps({"conv-x": {"subject": "s", "last_sent": ""}}),
+                              encoding="utf-8")
+        answered = self._old_thread() + [{
+            "id": "m3", "isDraft": False,  # they finally replied
+            "from": {"emailAddress": {"address": "cadelacruz@sctfrp.com"}},
+            "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+            "sentDateTime": datetime.datetime.now(datetime.timezone.utc)
+                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }]
+        with (
+            patch.object(check, "my_address", return_value="info@frpdepots.com"),
+            patch.object(check, "get", return_value={"value": []}),
+            patch.object(check, "_conversation", return_value=answered),
+        ):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                check.show_waiting_on_them("token", 60)
+        result = json.loads(out.getvalue())
+        self.assertEqual(result["overdue_count"], 0)
+        self.assertEqual(json.loads(self.watch.read_text(encoding="utf-8")), {},
+                         "an answered thread must stop being carried forward")
 
 
 if __name__ == "__main__":

@@ -43,12 +43,16 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from zoneinfo import ZoneInfo
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import outlook_tool as ot  # noqa: E402  (auth + shared helpers, read-only use)
 
 GRAPH = "https://graph.microsoft.com/v1.0"
 INTERNAL_DOMAIN = "frpdepots.com"
+# Rachad's working days are Eastern. Every wait-clock date is taken in this zone,
+# never UTC - see business_days_since.
+BUSINESS_TZ = ZoneInfo("America/Toronto")
 AUTO_PREFIXES = ("no-reply", "noreply", "no_reply", "donotreply", "do-not-reply",
                  "mailer-daemon", "mailerdaemon", "postmaster", "bounce",
                  "notification", "notifications", "automated", "auto-reply")
@@ -233,13 +237,42 @@ _PAY_WORDS = re.compile(
     r"deposit|wire|e-?transfer)\b", re.I)
 
 
+# A quote/RFQ number in the SUBJECT is the strongest signal there is: it says
+# what the thread is, regardless of which words appear further down.
+_QUOTE_NUMBER = re.compile(r"\b(?:qt|rfq|quote)[-_ ]?\d", re.I)
+# Where Outlook's quoted history starts inside a bodyPreview. Everything from
+# here on was written by somebody else on an earlier message.
+_QUOTED_HISTORY = re.compile(
+    r"(-{2,}\s*original message|_{5,}|from:\s*\S+@|on .{0,40}\bwrote:|sent:\s*\w)", re.I)
+
+
+def strip_quoted(preview: str) -> str:
+    """The part of a preview Rachad actually wrote on THIS message.
+
+    bodyPreview on a reply or forward leads with quoted history, so classifying
+    the whole string let words from someone else's earlier mail set the
+    category - and therefore the threshold and the urgency.
+    """
+    match = _QUOTED_HISTORY.search(preview or "")
+    return (preview or "")[:match.start()] if match else (preview or "")
+
+
 def classify_thread(subject: str, preview: str = "") -> str:
     """rfq_quote / payment / general - a hint, not a verdict.
 
     Deterministic so the wait-clock is reproducible; Dado still reads the whole
     thread before she says anything, and may overrule this.
+
+    Two corrections over the first version (2026-07-25). Both were measured:
+    (1) a quote-numbered subject wins over payment words, so
+        classify_thread('Quote QT-000099 for FRP pipe', 'Deposit invoice
+        attached') is rfq_quote and waits 5 working days, not 7; and
+    (2) only Rachad's own added text is read, not the quoted history below it.
     """
-    haystack = f"{subject or ''} {preview or ''}"
+    own_text = strip_quoted(preview)
+    if _QUOTE_NUMBER.search(subject or ""):
+        return "rfq_quote"
+    haystack = f"{subject or ''} {own_text}"
     if _PAY_WORDS.search(haystack):
         return "payment"
     if _RFQ_WORDS.search(haystack):
@@ -248,13 +281,25 @@ def classify_thread(subject: str, preview: str = "") -> str:
 
 
 def business_days_since(iso_timestamp: str) -> int:
-    """Working days elapsed, Monday-Friday. Weekends are not silence."""
+    """Working days elapsed in RACHAD'S timezone, Monday-Friday.
+
+    Both ends are converted to America/Toronto before the date is taken. They
+    used to be UTC dates while the thresholds were stated in his working days,
+    which moved the clock by a whole day at each end. Measured against the old
+    version: business_days_since('2026-07-20T19:30:00Z') was 4 and
+    ('2026-07-21T01:30:00Z') was 3 - two mails sent the same Monday, 15:30 and
+    21:30 Eastern, a full working day apart. Anything sent after ~20:00 ET went
+    overdue a day late, and the 19:00 sweep (00:00 UTC next day under EST) added
+    a phantom day to every thread, firing not-yet-due items early.
+    """
     try:
         start = datetime.datetime.fromisoformat((iso_timestamp or "").replace("Z", "+00:00"))
     except ValueError:
         return 0
-    today = datetime.datetime.now(datetime.timezone.utc).date()
-    day = start.date()
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=datetime.timezone.utc)
+    today = datetime.datetime.now(BUSINESS_TZ).date()
+    day = start.astimezone(BUSINESS_TZ).date()
     count = 0
     while day < today:
         day += datetime.timedelta(days=1)
@@ -357,6 +402,73 @@ def show_awaiting(token: str, days_back: int) -> None:
     }, indent=2, ensure_ascii=False))
 
 
+FOLLOWUP_WATCH = Path(r"C:\FRPDepot\Dado\30_Memory\followup_watch.json")
+SENT_PAGE_LIMIT = 20  # 20 x 250 = 5,000 sent messages; a backstop, not a budget
+
+
+def _all_sent_since(token: str, cutoff: str) -> tuple[list[dict], bool]:
+    """Every sent message in the window, following @odata.nextLink.
+
+    The seed used to be a single $top=250 page with no paging. Ordering is
+    sentDateTime desc, so overflow discarded the OLDEST mail - precisely the
+    most overdue threads - and the output said nothing about it. Headroom was
+    thin rather than comfortable: 99 sent messages in 60 days, and days_back is
+    a free-form argument.
+    """
+    url = ("/me/mailFolders/sentitems/messages?$top=250"
+           "&$select=subject,toRecipients,ccRecipients,sentDateTime,"
+           "conversationId,bodyPreview"
+           "&$filter=" + urllib.parse.quote(f"sentDateTime ge {cutoff}") +
+           "&$orderby=sentDateTime%20desc")
+    messages: list[dict] = []
+    for _ in range(SENT_PAGE_LIMIT):
+        data = get(token, url)
+        messages.extend(data.get("value", []))
+        nxt = data.get("@odata.nextLink") or ""
+        if not nxt:
+            return messages, False
+        url = nxt.split("/v1.0", 1)[-1] if "/v1.0" in nxt else nxt
+    return messages, True  # hit the page cap - say so rather than pretend
+
+
+def load_followup_watch() -> dict[str, dict]:
+    """Conversations the tracker has seen before, so ageing cannot hide them.
+
+    Candidates are seeded from Sent Items within days_back, and the clock keeps
+    running - so the longer a thread was ignored the closer it came to leaving
+    the window entirely, with nothing distinguishing "resolved" from "aged out
+    unchased". QT-000023 (last sent 2026-05-27, 42 working days silent) was due
+    to vanish from every future digest on 2026-07-27.
+    """
+    if not FOLLOWUP_WATCH.exists():
+        return {}
+    try:
+        data = json.loads(FOLLOWUP_WATCH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_followup_watch(candidates: list[dict]) -> None:
+    """Remember every still-unanswered thread. Answered ones simply drop out."""
+    try:
+        FOLLOWUP_WATCH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            c["conversation_id"]: {
+                "subject": c.get("subject", "")[:120],
+                "last_sent": c.get("last_sent", ""),
+                "first_tracked": (load_followup_watch().get(c["conversation_id"]) or {})
+                                 .get("first_tracked") or c.get("last_sent", ""),
+            }
+            for c in candidates
+        }
+        FOLLOWUP_WATCH.write_text(json.dumps(payload, indent=1, ensure_ascii=False),
+                                  encoding="utf-8")
+    except OSError as exc:
+        print(json.dumps({"warning": "follow-up watch not saved",
+                          "error": f"{type(exc).__name__}: {exc}"}), file=sys.stderr)
+
+
 def show_waiting_on_them(token: str, days_back: int) -> None:
     """The reverse of --awaiting: threads where RACHAD spoke last and nobody replied.
 
@@ -367,17 +479,30 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
     CAD 4,101.30 outstanding.
     """
     my_addr = my_address(token)
+    if not my_addr:
+        # my_address() swallows both its lookups and returns "". The ownership
+        # test below is `!= my_addr`, so an empty value skipped EVERY candidate:
+        # valid JSON, overdue_count 0, digest silent - a permanent all-clear
+        # produced by a broken /me call. Fail loudly instead.
+        print(json.dumps({
+            "error": "could not resolve the FRP Depot mailbox address (/me and the "
+                     "Sent Items fallback both failed) - refusing to report an "
+                     "all-clear that would only mean the lookup broke.",
+        }, indent=2))
+        sys.exit(2)
     chased = recent_chases()
+    watch = load_followup_watch()
     cutoff = (datetime.datetime.now(datetime.timezone.utc)
               - datetime.timedelta(days=days_back)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    sent = get(token, "/me/mailFolders/sentitems/messages?$top=250"
-                      "&$select=subject,toRecipients,ccRecipients,sentDateTime,"
-                      "conversationId,bodyPreview"
-                      "&$filter=" + urllib.parse.quote(f"sentDateTime ge {cutoff}") +
-                      "&$orderby=sentDateTime%20desc")
+    sent_messages, truncated = _all_sent_since(token, cutoff)
     seen: set[str] = set()
     candidates = []
-    for m in sent.get("value", []):
+    # Threads carried forward from an earlier run are appended so a conversation
+    # never falls out of the tracker just by ageing past the window (B-12).
+    carried = [cid for cid in watch if cid not in {m.get("conversationId")
+                                                   for m in sent_messages}]
+    work = [(m, False) for m in sent_messages] + [({"conversationId": c}, True) for c in carried]
+    for m, is_carried in work:
         cid = m.get("conversationId")
         if not cid or cid in seen:
             continue
@@ -394,15 +519,24 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         external = [r for r in _recipients(last) if r and not _is_internal(r)]
         if not external:
             continue
+        # A thread STARTED by an automated sender is a bank/portal notice Rachad
+        # forwarded, not a conversation anyone will reply to. _is_automated only
+        # inspects the sender, and on a forward the sender is Rachad - so these
+        # were landing in the overdue list as urgent payment items with a chase
+        # draft prepared against a no-reply notification.
+        root_sender = _addr(msgs[0], "from") if msgs else ""
+        if root_sender and _is_automated(root_sender):
+            continue
         # Informational only. This count must NEVER decide whether the thread is
         # tracked - that was the bug. Whether WE chased it is `chased_on`.
         drafts = [x for x in msgs if x.get("isDraft") is True]
-        subject = m.get("subject") or ""
-        preview = (m.get("bodyPreview") or "").strip()
+        subject = m.get("subject") or last.get("subject") or ""
+        preview = (m.get("bodyPreview") or last.get("bodyPreview") or "").strip()
         category = classify_thread(subject, preview)
         waited = business_days_since(_when(last))
         due_after = FOLLOWUP_BUSINESS_DAYS[category]
         candidates.append({
+            "carried_forward": is_carried,
             "conversation_id": cid,
             "subject": subject,
             "to": external[0],
@@ -421,16 +555,23 @@ def show_waiting_on_them(token: str, days_back: int) -> None:
         })
     candidates.sort(key=lambda c: -c["business_days_silent"])
     overdue = [c for c in candidates if c["overdue"] and not c["chase_draft_pending"]]
+    save_followup_watch(candidates)
     print(json.dumps({
         "you": my_addr,
         "days_back": days_back,
+        "sent_window_truncated": truncated,
+        "carried_forward_count": sum(1 for c in candidates if c["carried_forward"]),
         "thresholds_business_days": FOLLOWUP_BUSINESS_DAYS,
         "note": ("Threads where YOU spoke last to an outside party. 'overdue' applies the "
                  "per-category threshold. Read the full thread with --thread before "
                  "chasing: the answer may have arrived out of band. 'already_chased' "
                  f"means WE created a chase draft within {CHASE_QUIET_DAYS} days "
                  "(chased_on); it is not inferred from drafts in the thread, so an "
-                 "unrelated draft no longer hides a live thread."),
+                 "unrelated draft no longer hides a live thread. Threads marked "
+                 "carried_forward are older than days_back and are kept on the list "
+                 "until answered, so ageing cannot retire them unchased. If "
+                 "sent_window_truncated is true the Sent scan hit its page cap and "
+                 "the oldest mail in the window was not read."),
         "chase_quiet_days": CHASE_QUIET_DAYS,
         "overdue_count": len(overdue),
         "overdue": overdue,
