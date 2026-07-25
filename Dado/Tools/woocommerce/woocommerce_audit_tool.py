@@ -497,6 +497,10 @@ def command_store(_: argparse.Namespace) -> None:
         vault=vault, max_items=PRIVATE_MAX_ITEMS,
     )
 
+    # Collects every endpoint that was advertised but could not be served. Shared
+    # by the shipping-zone and settings-group loops below, and surfaced as real
+    # findings so a partial audit can never read as a complete one.
+    settings_group_warnings: list[dict[str, str]] = []
     system_raw, _ = wc.api_get(
         "/system_status", {"_fields": "environment,active_plugins,theme,security,pages"}, vault
     )
@@ -511,15 +515,20 @@ def command_store(_: argparse.Namespace) -> None:
     zone_location_type_counts: Counter[str] = Counter()
     for zone in zones:
         zid = int(zone.get("id") or 0)
-        locations, _ = wc.api_get(
-            f"/shipping/zones/{zid}/locations", {"_fields": "type"}, vault
+        # Same list-then-fetch race as the settings groups: a zone deleted
+        # between the listing and this call, or one a shipping plugin advertises
+        # but cannot serve, used to 404 and kill the whole audit after every
+        # catalog, order and customer page had already been fetched.
+        locations = wc.api_get_optional(
+            f"/shipping/zones/{zid}/locations", {"_fields": "type"}, vault,
+            settings_group_warnings,
         )
         for location in locations if isinstance(locations, list) else []:
             zone_location_type_counts[str(location.get("type") or "unknown")] += 1
-        rows, _ = wc.api_get(
+        rows = wc.api_get_optional(
             f"/shipping/zones/{zid}/methods",
             {"_fields": "instance_id,title,order,enabled,method_id,method_title,method_description"},
-            vault,
+            vault, settings_group_warnings,
         )
         for row in rows if isinstance(rows, list) else []:
             shipping_methods.append({
@@ -533,7 +542,6 @@ def command_store(_: argparse.Namespace) -> None:
     # rest_setting_setting_group_invalid when opened. Record and skip that stale
     # advertisement instead of discarding the entire otherwise-valid store audit.
     settings_safe: dict[str, Any] = {}
-    settings_group_warnings: list[dict[str, str]] = []
     groups, _ = wc.api_get(
         "/settings", {"_fields": "id,label,parent_id,sub_groups"}, vault
     )
@@ -541,19 +549,12 @@ def command_store(_: argparse.Namespace) -> None:
         gid = str(group.get("id") or "")
         if not gid:
             continue
-        try:
-            metadata, _ = wc.api_get(
-                f"/settings/{gid}", {"_fields": "id,label,type,group_id"}, vault
-            )
-        except wc.WooError as exc:
-            detail = str(exc)
-            if "HTTP 404" in detail and "rest_setting_setting_group_invalid" in detail:
-                settings_group_warnings.append({
-                    "group": gid,
-                    "warning": "Advertised settings group returned HTTP 404 and was skipped.",
-                })
-                continue
-            raise
+        metadata = wc.api_get_optional(
+            f"/settings/{gid}", {"_fields": "id,label,type,group_id"}, vault,
+            settings_group_warnings,
+        )
+        if metadata is None:
+            continue
         for setting in metadata if isinstance(metadata, list) else []:
             sid = str(setting.get("id") or "")
             setting_type = str(setting.get("type") or "").casefold()
@@ -602,6 +603,20 @@ def command_store(_: argparse.Namespace) -> None:
                 product_order_counts[key] += int(line.get("quantity") or 0)
 
     findings = product_findings(products, variations)
+    # A skipped endpoint becomes a real FINDING, before the severity count is
+    # taken. It used to live only in configuration.settings_group_warnings inside
+    # the JSON under %LOCALAPPDATA% - not in the markdown, not in the summary,
+    # not in stdout, not in the receipt - so the operator saw STORE_AUDIT_COMPLETE
+    # and a configuration block that looked authoritative while silently missing
+    # every setting from the failed group.
+    for warning in settings_group_warnings:
+        findings.append({
+            "severity": "medium",
+            "issue": "Part of the store configuration could not be read and was skipped",
+            "endpoint": warning.get("endpoint", warning.get("group", "?")),
+            "code": warning.get("code", ""),
+            "evidence": warning.get("warning", ""),
+        })
     severity = Counter(str(row.get("severity") or "info") for row in findings)
     gateway_rows = [
         {"id": row.get("id"), "title": row.get("title"), "enabled": row.get("enabled"),
@@ -619,6 +634,7 @@ def command_store(_: argparse.Namespace) -> None:
             "orders": len(orders), "customers": len(customers),
             "critical_findings": severity["critical"], "high_findings": severity["high"],
             "medium_findings": severity["medium"],
+            "endpoints_skipped": len(settings_group_warnings),
         },
         "catalog": {
             "status_counts": dict(Counter(str(p.get("status") or "unknown") for p in products)),

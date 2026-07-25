@@ -42,7 +42,20 @@ SECRET_PATTERN = re.compile(r"(?i)(?:ck|cs)_[a-z0-9]{8,}")
 
 
 class WooError(RuntimeError):
-    pass
+    """A WooCommerce failure, carrying the HTTP status and REST code separately.
+
+    Callers used to decide what a failure MEANT by searching the message text
+    ("HTTP 404" in str(exc) and "rest_setting_setting_group_invalid" in ...).
+    That is fragile in both directions: a wording change breaks the check, and a
+    scrubbed response body containing those words fools it. Anything that needs
+    to distinguish "this one endpoint is not there" from "the site is down"
+    should read .status and .code.
+    """
+
+    def __init__(self, message: str, status: int | None = None, code: str | None = None):
+        super().__init__(message)
+        self.status = status
+        self.code = code
 
 
 class DATA_BLOB(ctypes.Structure):
@@ -237,9 +250,17 @@ def api_request(
             response_headers = {k.casefold(): v for k, v in response.headers.items()}
             return parsed, response_headers
     except HTTPError as exc:
-        detail = scrub(exc.read().decode("utf-8", errors="replace"), vault)
+        raw = exc.read().decode("utf-8", errors="replace")
+        detail = scrub(raw, vault)
+        rest_code = None
+        try:
+            rest_code = (json.loads(raw) or {}).get("code")
+        except (ValueError, AttributeError):
+            pass
         raise WooError(
-            f"WooCommerce {verb} {safe_endpoint} failed with HTTP {exc.code}: {detail[:1000]}"
+            f"WooCommerce {verb} {safe_endpoint} failed with HTTP {exc.code}: {detail[:1000]}",
+            status=exc.code,
+            code=str(rest_code) if rest_code else None,
         ) from exc
     except URLError as exc:
         raise WooError(f"WooCommerce could not be reached: {scrub(str(exc.reason), vault)}") from exc
@@ -248,6 +269,36 @@ def api_request(
 def api_get(endpoint: str, params: dict[str, Any] | None = None,
             vault: dict[str, Any] | None = None) -> tuple[Any, dict[str, str]]:
     return api_request("GET", endpoint, params=params, vault=vault)
+
+
+def api_get_optional(endpoint: str, params: dict[str, Any] | None = None,
+                     vault: dict[str, Any] | None = None,
+                     skipped: list[dict[str, str]] | None = None) -> Any:
+    """GET an endpoint that may legitimately not exist. Returns None if so.
+
+    Every enumerate-then-fetch site in the audit has the same race: something is
+    listed, then fetched individually, and it can be gone (or advertised by a
+    plugin that cannot actually serve it) by the time we ask. A 404 there used to
+    propagate out of command_store and kill the whole audit AFTER every catalog,
+    order and customer page had already been fetched.
+
+    Only a genuine not-found is swallowed. Anything else - auth, 5xx, a network
+    failure - still raises, because those mean the audit's numbers are wrong
+    rather than merely incomplete.
+    """
+    try:
+        data, _ = api_get(endpoint, params, vault)
+        return data
+    except WooError as exc:
+        if exc.status == 404:
+            if skipped is not None:
+                skipped.append({
+                    "endpoint": endpoint,
+                    "code": exc.code or "not_found",
+                    "warning": "Endpoint was advertised but returned HTTP 404; skipped.",
+                })
+            return None
+        raise
 
 
 def get_all(

@@ -506,7 +506,11 @@ token mtime: "Reusing the sign-in stored on <date>. Tokens minted before
 
 ## P2 — WooCommerce audit (UNCOMMITTED working-tree change, 2026-07-24)
 
-### B-28 OPEN — `settings_group_warnings` never reaches the operator
+### B-28 FIXED (this commit) — `settings_group_warnings` never reaches the operator
+
+Fixed 2026-07-25. Each skipped endpoint now becomes a real `finding` (severity medium) BEFORE the severity Counter is taken, so it flows into the summary counts, the markdown and stdout. `summary.endpoints_skipped` added. The warning is no longer visible only inside the audit JSON under %LOCALAPPDATA%.
+
+Original report follows.
 `woocommerce_audit_tool.py:663`. `public_report` is only
 `generated_utc/summary/findings`, so the markdown never renders it; `summary` has
 no warning count; stdout omits it; the receipt records only the markdown path, so
@@ -518,7 +522,11 @@ FIX — append a real `finding` per skipped group before the severity `Counter`,
 it flows into summary counts, markdown and stdout; add
 `settings_groups_skipped` to `report["summary"]`.
 
-### B-29 OPEN — The same list-then-fetch race is unguarded elsewhere
+### B-29 FIXED (this commit) — The same list-then-fetch race is unguarded elsewhere
+
+Fixed 2026-07-25. `WooError` carries `.status` and `.code` as attributes, parsed from the response, so callers stop deciding what a failure MEANT by searching its message text. New `wc.api_get_optional()` returns None on a genuine 404 and records it; auth, 5xx and network failures still raise, because those mean the numbers are wrong rather than merely incomplete. Applied to the settings groups and to BOTH per-zone shipping fetches.
+
+Original report follows.
 `woocommerce_audit_tool.py:514`. `/shipping/zones` is listed, then
 `/locations` and `/methods` are fetched per zone; a zone deleted in between (or
 one a plugin advertises but cannot serve) 404s and kills the whole audit after

@@ -7,6 +7,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from unittest.mock import patch
 
 import woocommerce_common as wc
 import woocommerce_change_tool as change
@@ -305,3 +306,54 @@ class AuditPrivacyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class OptionalEndpointTests(unittest.TestCase):
+    """B-28 and B-29: a partial audit must never read as a complete one.
+
+    The audit enumerates then fetches in several places (settings groups,
+    shipping-zone locations and methods, product-attribute terms). Anything
+    listed can be gone, or advertised by a plugin that cannot serve it, by the
+    time it is fetched. That 404 used to propagate out of command_store and kill
+    the whole run AFTER every catalog, order and customer page had been fetched.
+    The one place it was handled matched on exception TEXT, and the resulting
+    warning reached neither the markdown, the summary, stdout, nor the receipt.
+    """
+
+    def test_woo_error_carries_status_and_code_separately(self):
+        exc = wc.WooError("boom", status=404, code="rest_setting_setting_group_invalid")
+        self.assertEqual(exc.status, 404)
+        self.assertEqual(exc.code, "rest_setting_setting_group_invalid")
+
+    def test_woo_error_defaults_are_none_not_crashes(self):
+        exc = wc.WooError("plain message")
+        self.assertIsNone(exc.status)
+        self.assertIsNone(exc.code)
+
+    def test_a_404_returns_none_and_is_recorded(self):
+        skipped = []
+        err = wc.WooError("gone", status=404, code="rest_no_route")
+        with patch.object(wc, "api_get", side_effect=err):
+            result = wc.api_get_optional("/settings/advanced", None, {}, skipped)
+        self.assertIsNone(result)
+        self.assertEqual(len(skipped), 1)
+        self.assertEqual(skipped[0]["endpoint"], "/settings/advanced")
+        self.assertEqual(skipped[0]["code"], "rest_no_route")
+
+    def test_a_real_failure_still_raises(self):
+        """Auth and 5xx mean the numbers are WRONG, not merely incomplete."""
+        for status in (401, 403, 500, 502, None):
+            with self.subTest(status=status):
+                skipped = []
+                err = wc.WooError("nope", status=status)
+                with patch.object(wc, "api_get", side_effect=err):
+                    with self.assertRaises(wc.WooError):
+                        wc.api_get_optional("/settings/x", None, {}, skipped)
+                self.assertEqual(skipped, [])
+
+    def test_a_successful_call_is_passed_straight_through(self):
+        skipped = []
+        with patch.object(wc, "api_get", return_value=([{"id": "woocommerce_x"}], {})):
+            result = wc.api_get_optional("/settings/general", None, {}, skipped)
+        self.assertEqual(result, [{"id": "woocommerce_x"}])
+        self.assertEqual(skipped, [])
