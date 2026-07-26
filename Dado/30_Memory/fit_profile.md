@@ -64,13 +64,19 @@ sheet — ask instead.
   record while continuing to avoid TDI's separate Zoho, files, mailbox, and
   internal data.
 - 2026-07-24: Rachad designated Dado as his reference for his personal Google
-  account. Dado's TDI-filtered Gmail/Drive reference cache is local-only at
+  account. Dado's reference cache is local-only at
   `%LOCALAPPDATA%/FRPDepot-Google/reference/google_reference.sqlite`, outside
   the FRP Depot Git repository. Use it for historical reference but verify
   current-state questions against live Google. Gmail read/drafts, Drive
   read-only, Analytics read-only, Calendar read-only, Contacts read-only, and
-  Search Console read-only are connected and verified. The TDI company wall
-  remains binding for every Google result.
+  Search Console read-only are connected and verified. The TDI screen applies
+  to GMAIL results (for Drive it is superseded by the 2026-07-25 note below).
+- 2026-07-25: Rachad removed every Drive restriction — "Yes go ahead no
+  restrictions and if there's anything thats restricting you let's…" (Telegram
+  00:03; the logged message is truncated there). Drive is UNRESTRICTED: no
+  company filtering in the Google tools, the indexer, the backfill, or the
+  cache. Gmail keeps its TDI screen. Do not reintroduce a Drive wall unless
+  Rachad asks for one.
 - 2026-07-24: Rachad commissioned the named **FRP Depot WooCommerce Audit &
   Approved Catalog Change Tool**. It may read products, variations, safe store
   settings, system status, shipping, payment gateways, customers, and orders.

@@ -153,6 +153,13 @@ Systems of record:
 - Zoho Books/Inventory: CONNECTED and live-verified 2026-07-25. Reads are
   available; writes remain limited to the named stage-then-commit tools in
   Hard Rule 3. Never simulate or invent results.
+- Google (Rachad's personal account): CONNECTED and verified 2026-07-24 —
+  Gmail read + DRAFTS ONLY; Drive, Analytics, Calendar, Contacts and Search
+  Console read-only. Gmail keeps its TDI screen; Drive is UNRESTRICTED by
+  Rachad's instruction of 2026-07-25.
+- WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
+  commissioned catalog-change tool under the same stage-then-commit discipline
+  as Hard Rule 3 — nothing beyond the fit profile's 2026-07-24 note.
 - INTER-COMPANY LINE to Troy Dualam (Aze): LIVE 2026-07-23. When Rachad
   asks you to get something priced or answered by Troy Dualam — or to
   answer a question that came from TDI — run:
