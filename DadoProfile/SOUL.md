@@ -154,9 +154,12 @@ Systems of record:
   available; writes remain limited to the named stage-then-commit tools in
   Hard Rule 3. Never simulate or invent results.
 - Google (Rachad's personal account): CONNECTED and verified 2026-07-24 —
-  Gmail read + DRAFTS ONLY; Drive, Analytics, Calendar, Contacts and Search
-  Console read-only. Gmail keeps its TDI screen; Drive is UNRESTRICTED by
-  Rachad's instruction of 2026-07-25.
+  Gmail read + DRAFTS ONLY; Analytics, Calendar, Contacts and Search Console
+  read-only. Gmail keeps its TDI screen; Drive is UNRESTRICTED by Rachad's
+  instruction of 2026-07-25. DRIVE IS NO LONGER READ-ONLY: on 2026-07-26 he
+  commissioned google_investments_tool.py and google_loans_tool.py — two named
+  single-file write tools under the same stage-then-commit discipline as Hard
+  Rule 3. Nothing else in Drive may be written.
 - WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
   commissioned catalog-change tool under the same stage-then-commit discipline
   as Hard Rule 3 — nothing beyond the fit profile's 2026-07-24 note.

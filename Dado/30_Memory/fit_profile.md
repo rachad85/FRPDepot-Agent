@@ -94,6 +94,18 @@ sheet — ask instead.
   accounts, not revenue. Preserve the source-account history; match/categorize
   them as bank transfers only after confirming the corresponding Airwallex
   outgoing entries.
+- 2026-07-26: Rachad commissioned TWO named Google write tools (Telegram 19:04,
+  "let's give you write access"). Drive is no longer read-only. (a) **Investments
+  workbook tool** (`google_investments_tool.py`) — the ONE file he means by "the
+  investments log" is `My Drive / My Files / Rachad / Bussiness Folder /
+  Investements.xlsx` (19:00, "From now on when i tell you update the investments
+  log its this one"); allowed edit is a cash-profit row in the `Pistavo Labs`
+  section. (b) **Loans tool** (`google_loans_tool.py`) — Google Sheet `Loans`,
+  tab `CCIVS`, fills the next blank row with a dated negative repayment. Both are
+  stage-then-commit under the Hard Rule 3 discipline. Rachad's approval word is
+  ONE PLAIN WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a
+  checksum. Sheet screenshots: crop to the changed rows, do not show the live
+  Google Sheet (23:14; his message is truncated in the log — confirm the wording).
 - 2026-07-23 correction from Rachad: An RFQ sweep must cross-check the live
   Outlook thread against Zoho Books transaction/payment status and Zoho
   Inventory item, price, and stock data before calling it open. Formal RFQs are

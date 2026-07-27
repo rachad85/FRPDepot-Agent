@@ -52,12 +52,33 @@ def day_lines(path: Path, day: str, limit: int = 3000) -> list[str]:
 BATCH_RECEIPT = re.compile(r'"action":\s*"[^"]*(_batch|_index_batch)"')
 
 
+TS_RE = re.compile(r'"ts":\s*"([^"]+)"')
+
+
+def receipt_day(line: str, day: str) -> bool:
+    """Receipt ts is UTC; the bundle day is LOCAL. Convert, never substring-match.
+
+    A bare `day in line` was wrong twice over (found 2026-07-26): it matched the
+    date anywhere, so a receipt was kept only because a FILENAME carried it, and
+    every receipt after 20:00 local carries the next UTC date and vanished. 14 of
+    that day's 17 receipts were invisible -- including both live-write commits,
+    which is exactly what this review checks for.
+    """
+    m = TS_RE.search(line)
+    if not m:
+        return day in line
+    try:
+        return dt.datetime.fromisoformat(m.group(1)).astimezone().strftime("%Y-%m-%d") == day
+    except ValueError:
+        return day in line
+
+
 def tail_jsonl(path: Path, day: str, limit: int = 60) -> list[str]:
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
         return []
-    today = [l for l in lines if day in l]
+    today = [l for l in lines if receipt_day(l, day)]
     batch = [l for l in today if BATCH_RECEIPT.search(l)]
     real = [l for l in today if not BATCH_RECEIPT.search(l)]
     out = real[-limit:]
