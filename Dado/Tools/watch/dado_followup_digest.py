@@ -44,7 +44,50 @@ RUN_LOCK_STALE_SECONDS = 3600
 SWEEP_DIR = Path(r"C:\FRPDepot\Dado\20_Working\followups")
 VENV_PY = r"C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"
 CHECK_PY = r"C:\FRPDepot\Dado\Tools\outlook\outlook_check.py"
+CLOSED_TASKS = Path(r"C:\FRPDepot\Dado\30_Memory\closed_task_threads.jsonl")
 DAYS_BACK = 60
+
+
+def load_closed_task_threads() -> dict[str, dict]:
+    """Return the latest closure record per conversation."""
+    closed: dict[str, dict] = {}
+    if not CLOSED_TASKS.exists():
+        return closed
+    for raw in CLOSED_TASKS.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
+        try:
+            row = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        conversation_id = str(row.get("conversation_id") or "").strip()
+        if not conversation_id:
+            continue
+        prior = closed.get(conversation_id)
+        if prior is None or str(row.get("closed_at") or "") >= str(prior.get("closed_at") or ""):
+            closed[conversation_id] = row
+    return closed
+
+
+def suppress_closed_task_threads(data: dict) -> tuple[dict, int]:
+    """Remove closed candidates unless a later sent message created a new task."""
+    closed = load_closed_task_threads()
+    suppressed_ids: set[str] = set()
+    for key in ("overdue", "not_yet_due", "chase_draft_waiting"):
+        kept = []
+        for item in data.get(key) or []:
+            conversation_id = str(item.get("conversation_id") or "")
+            record = closed.get(conversation_id)
+            last_sent = str(item.get("last_sent") or "")
+            last_sent_at_close = str((record or {}).get("last_sent_at_close") or "")
+            if record and last_sent_at_close and last_sent <= last_sent_at_close:
+                suppressed_ids.add(conversation_id)
+                continue
+            kept.append(item)
+        data[key] = kept
+    data["overdue_count"] = len(data.get("overdue") or [])
+    data["closed_task_suppressed_count"] = len(suppressed_ids)
+    return data, len(suppressed_ids)
 
 PROMPT = r"""
 You are preparing Rachad's MORNING FOLLOW-UP DIGEST: the threads HE is waiting
@@ -172,8 +215,12 @@ def prefetch() -> int:
         raise RuntimeError(f"follow-up collection failed rc={proc.returncode}: "
                            f"{(proc.stderr or out or 'no output').strip()[:300]}")
     data = json.loads(out)
+    data, suppressed = suppress_closed_task_threads(data)
+    rendered = json.dumps(data, indent=2, ensure_ascii=False)
     SWEEP_DIR.mkdir(parents=True, exist_ok=True)
-    (SWEEP_DIR / "waiting_on_them.json").write_text(out + "\n", encoding="utf-8")
+    (SWEEP_DIR / "waiting_on_them.json").write_text(rendered + "\n", encoding="utf-8")
+    if suppressed:
+        log(f"suppressed {suppressed} Rachad-closed draft tasks")
     return int(data.get("overdue_count", 0))
 
 

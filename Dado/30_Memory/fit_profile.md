@@ -106,9 +106,24 @@ sheet — ask instead.
   ONE PLAIN WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a
   checksum. Sheet screenshots: crop to the changed rows, do not show the live
   Google Sheet (23:14; his message is truncated in the log — confirm the wording).
+- 2026-07-27: FRP Depot GA4 access is live and read-only. Google Analytics
+  account `2499934` ("Northnet Media") exposes property `529941333` ("FRP
+  Depots"). A live Data API audit returned historical frpdepots.com traffic,
+  engagement, form, cart, and purchase events. This supersedes the 2026-07-24
+  finding that no FRP Depot property was accessible.
 - 2026-07-23 correction from Rachad: An RFQ sweep must cross-check the live
   Outlook thread against Zoho Books transaction/payment status and Zoho
   Inventory item, price, and stock data before calling it open. Formal RFQs are
   prepared as DRAFT estimates inside Zoho Books for Rachad to inspect and send.
   Only when Rachad asks for quick item pricing is the response prepared as an
   Outlook draft without a Zoho estimate. Dado never sends either one.
+- 2026-07-27: Rachad treats Dado-prepared drafts that he deliberately leaves
+  unsent or abandons as closed tasks. Do not remind him about those drafts again.
+  A genuinely new inbound message or an explicit instruction from Rachad creates
+  a new task; otherwise the closed item stays silent.
+- 2026-07-27: Rachad commissioned a local Custom Quotes Log for quotations sent
+  by Outlook outside Zoho. The system of record is
+  `C:\FRPDepot\Dado\30_Memory\custom_quotes_log.csv`. Record a quote only after
+  live Outlook Sent Items confirms the message and non-inline PDF attachment;
+  drafts are not logged as sent. Use `Dado\Tools\quotes\custom_quote_log_tool.py`.
+  The first verified entry is `CQ-2026-0001`, KENZ reference 2600AM-KE4288.

@@ -304,17 +304,14 @@ engineer.
       deliberate, separately-taken decision, NOT a fix for the conversion
       question. THE FACT THAT PROMPTED IT, keep it on record: Dado reported
       she could not give FRP Depot conversion rates and blamed the company
-      wall. Wrong diagnosis. frpdepots.com has NO GA4 property at all; the
-      only two GA4 properties in Rachad's Google account are Troy Dualam's
+      wall. Wrong diagnosis. At that 2026-07-24 check, frpdepots.com had no
+      accessible GA4 property; the only two visible properties were Troy Dualam's
       (accounts/320963476 "Troy Dualam" -> properties/449339383;
       accounts/333650696 "Troy Dualam Services" -> properties/463861653).
-      So no permission change could ever produce an FRP conversion number —
-      the data is not collected. FRP DOES own Search Console
-      (sc-domain:frpdepots.com, siteOwner), so search metrics work today;
-      only click->lead conversion is missing, and that needs a GA4 property
-      created + tagged on frpdepots.com (GA4 has NO retroactive data, so the
-      clock starts at creation). Shown that, Rachad chose to grant the TDI
-      analytics read anyway so Dado can work TDI marketing alongside Aze.
+      So no permission change could produce an FRP conversion number at that
+      time. FRP DID own Search Console (sc-domain:frpdepots.com, siteOwner),
+      while click->lead conversion was unavailable. Shown that, Rachad chose
+      to grant the TDI analytics read anyway so Dado can work TDI marketing alongside Aze.
       SCOPE AND LIMITS: marketing METRICS only, read-only, via
       Dado\Tools\google\analytics_tool.py (list/report/compare; Admin-API
       GETs + Data-API runReport only, no administration, no writes). TDI
@@ -328,10 +325,12 @@ engineer.
       NOTE FOR WHOEVER COMMITS: this HARD RULES edit should be committed —
       while uncommitted, a tripped conduct guard runs
       `git checkout -- DadoProfile/SOUL.md` and would silently wipe it.
-- [ ] FRP Depot GA4 property: does not exist. Until Rachad creates one for
-      frpdepots.com and tags the site, conversion rate is unreportable by
-      ANY agent with ANY permissions. Search Console is live and shows the
-      real bottleneck is RANKING, not conversion: 28d to 2026-07-21 gave
+- [x] FRP Depot GA4 LIVE (verified 2026-07-27): account 2499934 "Northnet
+      Media" exposes property 529941333 "FRP Depots" to Dado's read-only
+      Analytics token. The Data API returns historical site and ecommerce
+      activity. This supersedes the 2026-07-24 no-property finding above.
+      Search Console's prior audit showed the real bottleneck was RANKING:
+      28d to 2026-07-21 gave
       7,036 impressions / 56 clicks / 0.80% CTR at average position 22.4
       (page 3), impressions +46.5% and clicks +43.6% vs the prior 28d — so
       CTR is flat, not collapsing. 99.2% of impressions come from

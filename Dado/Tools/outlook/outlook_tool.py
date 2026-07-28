@@ -56,7 +56,6 @@ REQUESTED_SCOPES = (
 REQUIRED_TOKEN_SCOPES = {"User.Read", "Mail.ReadWrite", "Calendars.Read"}
 FORBIDDEN_TOKEN_SCOPE = "Mail.Send"
 DPAPI_DESCRIPTION = "FRP Depot Outlook refresh token"
-FORBIDDEN_REPLY_DOMAINS = {"troydualam.com"}
 INTERNAL_DOMAIN = "frpdepots.com"
 # Senders that are never a reply target: a bounce or a no-reply notice is not
 # the other party speaking. Mirrors outlook_check.AUTO_PREFIXES.
@@ -605,15 +604,17 @@ def message_participants(message: dict[str, Any]) -> set[str]:
 
 
 def assert_reply_participants_safe(addresses: set[str]) -> None:
-    forbidden = sorted(
-        address
-        for address in addresses
-        if any(address.endswith("@" + domain) for domain in FORBIDDEN_REPLY_DOMAINS)
-    )
-    if forbidden:
-        raise OutlookError(
-            "Reply All blocked by the company wall; use only the sanctioned inter-company relay."
-        )
+    """NO CHECK IS PERFORMED -- every address is accepted.
+
+    Rachad's standing instruction (2026-07-24) is that Troy Dualam is an
+    arm's-length customer/vendor inside FRP Depot's OWN mailbox, so the
+    troydualam.com domain block was removed on 2026-07-27.  Read the name
+    literally and nothing more: this does NOT verify that an address was
+    already a participant on the thread.  Kept as a named hook so the three
+    reply-all call sites stay one edit away from a real check if Rachad ever
+    asks for one.  Access to TDI's separate mailbox is unaffected.
+    """
+    _ = addresses
 
 
 def message_datetime(message: dict[str, Any]) -> str:

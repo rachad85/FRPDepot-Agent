@@ -91,10 +91,24 @@ def tail_jsonl(path: Path, day: str, limit: int = 60) -> list[str]:
 
 
 def whole_file(path: Path, limit_chars: int = 8000) -> str:
+    """Keep the HEAD as well as the tail, and say so when anything is cut.
+
+    A bare [-limit_chars:] silently dropped the first 18 lines of
+    fit_profile.md once it grew past 8000 chars (found 2026-07-27): legal
+    name, what we sell, location, the verified mailbox address and the
+    signature rules all vanished mid-word -- exactly the facts this review
+    checks "invented company fact" against.
+    """
     try:
-        return path.read_text(encoding="utf-8", errors="replace")[-limit_chars:]
+        text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return "(missing)"
+    if len(text) <= limit_chars:
+        return text
+    head = limit_chars // 2
+    tail = limit_chars - head
+    omitted = len(text) - limit_chars
+    return f"{text[:head]}\n\n(... {omitted} chars omitted from the middle ...)\n\n{text[-tail:]}"
 
 
 def auto_flags(turns: list[str], errors: list[str]) -> list[str]:

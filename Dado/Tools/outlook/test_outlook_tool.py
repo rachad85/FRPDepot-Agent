@@ -65,6 +65,13 @@ class OutlookToolTests(unittest.TestCase):
         self.assertNotIn("https://graph.microsoft.com/Mail.Send", tool.REQUESTED_SCOPES)
         self.assertEqual(tool.FORBIDDEN_TOKEN_SCOPE, "Mail.Send")
 
+    def test_frp_reply_all_allows_tdi_thread_participants(self) -> None:
+        self.assertIsNone(
+            tool.assert_reply_participants_safe(
+                {"jean@abitibico.ca", "jl@troydualam.com", "ian@troydualam.com"}
+            )
+        )
+
     def test_required_token_scopes_are_accepted(self) -> None:
         scopes = tool.decode_token_scopes(
             fake_token("User.Read Mail.ReadWrite Calendars.Read offline_access")

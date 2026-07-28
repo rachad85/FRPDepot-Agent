@@ -31,6 +31,7 @@ UNDELIVERED = Path(r"C:\FRPDepot\Dado\40_Logs\undelivered_alerts.txt")
 MAX_QUEUE_AGE_HOURS = 24
 VENV_PY = r"C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\venv\Scripts\python.exe"
 CHECK_PY = r"C:\FRPDepot\Dado\Tools\outlook\outlook_check.py"
+CLOSED_TASKS = Path(r"C:\FRPDepot\Dado\30_Memory\closed_task_threads.jsonl")
 SWEEP_DIR = Path(r"C:\FRPDepot\Dado\20_Working\inbox_watch")
 
 PROMPT = r"""
@@ -278,6 +279,39 @@ def collect(name, args_list, timeout=300):
     return out
 
 
+def suppress_closed_waiting_on_them(raw: str) -> str:
+    """Hide Rachad-closed draft tasks while allowing later activity to reopen them."""
+    data = json.loads(raw)
+    closed: dict[str, dict] = {}
+    if CLOSED_TASKS.exists():
+        for line in CLOSED_TASKS.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            conversation_id = str(row.get("conversation_id") or "").strip()
+            if conversation_id:
+                closed[conversation_id] = row
+    suppressed_ids: set[str] = set()
+    for key in ("overdue", "not_yet_due", "chase_draft_waiting"):
+        kept = []
+        for item in data.get(key) or []:
+            conversation_id = str(item.get("conversation_id") or "")
+            record = closed.get(conversation_id)
+            last_sent = str(item.get("last_sent") or "")
+            last_sent_at_close = str((record or {}).get("last_sent_at_close") or "")
+            if record and last_sent_at_close and last_sent <= last_sent_at_close:
+                suppressed_ids.add(conversation_id)
+                continue
+            kept.append(item)
+        data[key] = kept
+    data["overdue_count"] = len(data.get("overdue") or [])
+    data["closed_task_suppressed_count"] = len(suppressed_ids)
+    return json.dumps(data, indent=2, ensure_ascii=False)
+
+
 def prefetch_triage():
     """Deterministically pull the sweep's source data before the brain runs.
     Added 2026-07-23 after E2E runs 1-2: the brain's own terminal mangled
@@ -299,6 +333,7 @@ def prefetch_triage():
     # of failure for the pre-existing [awaits YOU] monitoring.
     try:
         waiting_on_them = collect("waiting_on_them", ["--waiting-on-them", "60"], timeout=900)
+        waiting_on_them = suppress_closed_waiting_on_them(waiting_on_them)
     except Exception as exc:
         log(f"waiting-on-them collection failed, continuing without it: "
             f"{type(exc).__name__}: {exc}")

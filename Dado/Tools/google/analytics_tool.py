@@ -5,18 +5,18 @@ Run:  python analytics_tool.py list
       python analytics_tool.py report  --property <id> [--days 28]
       python analytics_tool.py compare --property <id> [--days 28]
 
-WHY THIS EXISTS / WHAT RACHAD DECIDED (2026-07-24):
-Dado reported she could not produce FRP Depot conversion rates and blamed the
-company wall. That diagnosis was WRONG and the evidence is worth keeping:
-frpdepots.com has NO GA4 property at all. The only two GA4 properties in
-Rachad's account are Troy Dualam's own:
+WHY THIS EXISTS / WHAT RACHAD DECIDED:
+On 2026-07-24 Dado reported she could not produce FRP Depot conversion rates
+and blamed the company wall. That diagnosis was WRONG: at that time the
+account exposed only the two Troy Dualam properties below, so permissions were
+not the blocker:
     accounts/320963476 "Troy Dualam"          -> properties/449339383
     accounts/333650696 "Troy Dualam Services" -> properties/463861653
-So no permission change could ever have produced an FRP conversion number -
-the data is not being collected. FRP Depot DOES own Search Console
-(sc-domain:frpdepots.com, siteOwner), so search metrics are available today;
-only click->lead conversion is missing, and that needs a GA4 property created
-and tagged on frpdepots.com first (GA4 has no retroactive data).
+On 2026-07-27 a live Admin API check showed a third property now accessible:
+    accounts/2499934 "Northnet Media" -> properties/529941333 "FRP Depots"
+The Data API returns historical frpdepots.com activity, including ecommerce
+events. Use that property for FRP Depot reporting. FRP Depot also owns Search
+Console (sc-domain:frpdepots.com, siteOwner).
 
 Shown that, Rachad chose separately and deliberately to grant Dado READ access
 to Troy Dualam + Troy Dualam Services analytics so she can work TDI marketing

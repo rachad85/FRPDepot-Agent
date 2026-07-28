@@ -22,8 +22,19 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-24 BPO Flanges — J-Rain pricing request is still unanswered after 35 working days; follow-up draft blocked because Outlook rejected the older inbound source after Rachad's newer sent message.
 - 2026-07-24 Manway Covers — One Wabash still owes a drawing/sketch and quantities after 25 working days; follow-up draft blocked because Outlook rejected the older inbound source after Rachad's newer sent message.
 - 2026-07-24 Fittings - RFQ — SCT has not responded to the partial availability and elbow price after 20 working days; follow-up draft blocked by the same Outlook source-message safeguard.
+- 2026-07-27 BPO Flanges — J-Rain pricing request remains unanswered after 37 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-27 FRP Flanges — CSG still owes the pressure ratings after 36 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-27 Manway Covers — One Wabash still owes a drawing/sketch and quantities after 26 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-27 Fittings - RFQ — SCT has not responded to the partial availability and elbow price after 21 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-27 SYNCH ISSUE-URGENT — Northnet has not confirmed the inventory synchronization audit after 19 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-27 !! Rush !! RFQ Grating — Abitibi has not responded to the CAD 19,416 / CAD 39,780 options after 65 working days; verify whether to close or chase.
+- 2026-07-27 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT update says its bank still shows delivery and has opened a payment trace; Zoho Books still shows the full CAD 4,101.30 overdue balance, so bank receipt needs verification.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
 - 2026-07-23 Inbox monitoring failure (19:19 ET) — root cause fixed by backend: the wrapper now collects the triage data itself with no shell in the path, and reports collection failures deterministically without relying on the model; verified by rerun.
 - 2026-07-23 commande de bride Derakane 470 — Rachad confirmed Fibre Mauricie had already received and paid; Zoho shows SO-00046 invoiced and INV-000048 paid with CAD 0.00 balance.
+- 2026-07-27 BPO Flanges — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-27 FRP Flanges — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-27 Manway Covers — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-27 Fittings - RFQ — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
