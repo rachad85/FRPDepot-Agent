@@ -120,8 +120,17 @@ def auto_flags(turns: list[str], errors: list[str]) -> list[str]:
         seconds, calls = float(match.group(3)), int(match.group(4))
         if seconds > SLOW_SECONDS or calls >= MANY_CALLS:
             flags.append(f"CIRCLING TURN ({seconds/60:.0f} min / {calls} steps): {line.strip()}")
+    # Drop the parts that differ between IDENTICAL failures: timestamp, the
+    # per-turn session id, and the tool's elapsed time. On 2026-07-28 the same
+    # google_reference.py crash fired four times and never reached the x3
+    # threshold, because "(0.62s)" vs "(0.60s)" and two session ids made one
+    # failure mode look like four distinct errors. Paths and payload stay in
+    # the signature, so unrelated errors are still counted apart.
     counts = Counter(
-        re.sub(r"^\S+ \S+ ", "", l).strip() for l in errors if l.strip()
+        re.sub(r"\(\d+\.\d+s\)", "(Ns)",
+               re.sub(r"\[[^\]]+\]", "[sid]",
+                      re.sub(r"^\S+ \S+ ", "", l))).strip()
+        for l in errors if l.strip()
     )
     for message, count in counts.items():
         if count >= ERROR_REPEATS:

@@ -38,8 +38,12 @@ from pathlib import Path
 
 CLAUDE = Path.home() / ".local" / "bin" / "claude.exe"
 PYTHON = sys.executable
-COLLECTOR = Path(__file__).with_name("conduct_collect.py")
 REPO = Path(r"C:\FRPDepot")
+# Always the REPO collector, never "next to whatever copy of this file ran".
+# The profile scripts copy is what cron executes, so with_name() pinned the
+# review to a stale collector: the 2026-07-27 fit-profile truncation fix was
+# committed here and the 2026-07-28 bundle came out truncated exactly as before.
+COLLECTOR = REPO / "Dado" / "Tools" / "conduct" / "conduct_collect.py"
 REVIEW_DIR = REPO / "Dado" / "30_Memory" / "conduct_reviews"
 MIRROR_SOUL = REPO / "DadoProfile" / "SOUL.md"
 LIVE_SOUL = Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dado" / "SOUL.md"

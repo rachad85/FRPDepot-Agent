@@ -29,6 +29,13 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-27 SYNCH ISSUE-URGENT — Northnet has not confirmed the inventory synchronization audit after 19 working days; chase draft prepared in the original Outlook thread.
 - 2026-07-27 !! Rush !! RFQ Grating — Abitibi has not responded to the CAD 19,416 / CAD 39,780 options after 65 working days; verify whether to close or chase.
 - 2026-07-27 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT update says its bank still shows delivery and has opened a payment trace; Zoho Books still shows the full CAD 4,101.30 overdue balance, so bank receipt needs verification.
+- 2026-07-28 RE: PO 104685 (J6254) — Troy Dualam has not confirmed the attached quote after 100 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-28 Re: Inquiry : FRP Panel / plate / sheet — Permatech has not responded to the 470/470 HT resin clarification after 97 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-28 Re: Quote - QT-000023 is awaiting your approval — SCT has not responded to the stock-availability note after 44 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-28 FRP Tank — New Fibre Mauricie RFQ requests a custom 31.5 m³ heated, insulated horizontal tank for 50% sodium hydroxide/sodium potassium service, sized for a 40 ft sea can and required by end of September; approval requested to start the formal quote.
+- 2026-07-28 FRP Tank / Troy Dualam Q26-1549 — New supplier reply gives a CAD 416,200 budget price and requires the PO by July 31 for September 30 readiness; missing design data must be obtained before a firm customer quote.
+- 2026-07-28 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT/Plooto update says the accepted payment cannot be cancelled and the recipient bank must reject it for automatic return; Zoho Books still shows the full CAD 4,101.30 overdue balance, so receipt or return needs verification.
+- 2026-07-28 FRP Tank / Fibre Mauricie proposal submitted — New inbound says Yannick submitted the CAD 416,200 supplier-budget proposal to his client and will revert; the July 31 PO cutoff remains active.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
@@ -38,3 +45,6 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-27 FRP Flanges — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
 - 2026-07-27 Manway Covers — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
 - 2026-07-27 Fittings - RFQ — Rachad closed the unsent Dado-prepared chase draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-28 RE: PO 104685 (J6254) — Rachad closed the unsent Dado-prepared follow-up draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-28 Re: Inquiry : FRP Panel / plate / sheet — Rachad closed the unsent Dado-prepared follow-up draft; do not remind unless genuinely new activity creates a new task.
+- 2026-07-28 Re: Quote - QT-000023 is awaiting your approval — Rachad closed the unsent Dado-prepared follow-up draft; do not remind unless genuinely new activity creates a new task.
