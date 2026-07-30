@@ -127,3 +127,19 @@ sheet — ask instead.
   live Outlook Sent Items confirms the message and non-inline PDF attachment;
   drafts are not logged as sent. Use `Dado\Tools\quotes\custom_quote_log_tool.py`.
   The first verified entry is `CQ-2026-0001`, KENZ reference 2600AM-KE4288.
+- 2026-07-29: Rachad's official HANDWRITTEN signature (for signing PDF forms —
+  separate from the Outlook HTML signature bundle above) is saved canonically
+  OUTSIDE the repo at `%LOCALAPPDATA%\FRPDepot-Signature\`:
+  `Rachad_official_signature_source.jpg`,
+  `Rachad_official_signature_transparent_CANONICAL.png`, and
+  `official_signature.json`. He asked for it to be kept (Telegram 10:28, "can
+  you make sure this is saved for future ?") after supplying the source image
+  himself. Reuse that file; do not re-derive a signature from Drive or a Sent
+  Item.
+- 2026-07-29: Filled-PDF delivery rule, learned after Rachad replied "the form
+  you sent me is empty not filled" (Telegram 11:52) about a form the receipts
+  already called filled and visually verified. A filled AcroForm can render
+  blank in the viewer he opens. Before calling a form done: flatten it (or
+  render with annotations disabled), visually verify THAT file, and deliver the
+  flattened copy. A structural field-value check is not evidence of what he
+  will see.

@@ -129,6 +129,7 @@ def ensure_vault_dir() -> None:
             ["icacls", str(VAULT_DIR), "/inheritance:r", "/grant:r",
              f"{user}:(OI)(CI)F", "SYSTEM:(OI)(CI)F"],
             capture_output=True, text=True, check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
             raise WooError("Windows could not restrict the WooCommerce vault folder.")

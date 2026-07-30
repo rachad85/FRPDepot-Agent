@@ -36,6 +36,9 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-28 FRP Tank / Troy Dualam Q26-1549 — New supplier reply gives a CAD 416,200 budget price and requires the PO by July 31 for September 30 readiness; missing design data must be obtained before a firm customer quote.
 - 2026-07-28 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT/Plooto update says the accepted payment cannot be cancelled and the recipient bank must reject it for automatic return; Zoho Books still shows the full CAD 4,101.30 overdue balance, so receipt or return needs verification.
 - 2026-07-28 FRP Tank / Fibre Mauricie proposal submitted — New inbound says Yannick submitted the CAD 416,200 supplier-budget proposal to his client and will revert; the July 31 PO cutoff remains active.
+- 2026-07-29 RE: / Les Plastiques P.V. 8-inch pipe estimate — Roland has not responded to the estimate after 124 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-29 There’s a problem with your direct debit payout to FORTE — New Airwallex notice says the CAD 1,148.23 Forte debit failed because the old Global Account is inactive; verify whether accounting rerouted it through Desjardins.
+- 2026-07-29 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT update says Dilza asked Plooto for recovery steps and is waiting; Zoho Books still shows the full CAD 4,101.30 overdue balance.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

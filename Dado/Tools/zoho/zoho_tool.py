@@ -183,6 +183,7 @@ def ensure_vault_dir() -> None:
         capture_output=True,
         text=True,
         check=False,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if result.returncode != 0:
         raise ZohoError("Windows could not restrict the Zoho vault folder permissions.")
@@ -356,7 +357,7 @@ def command_scope_list(args: argparse.Namespace) -> None:
     validate_scopes(SCOPES)
     value = ",".join(SCOPES)
     if args.copy:
-        result = subprocess.run(["clip.exe"], input=value, text=True, capture_output=True, check=False)
+        result = subprocess.run(["clip.exe"], input=value, text=True, capture_output=True, check=False, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if result.returncode != 0:
             raise ZohoError("Windows could not copy the Zoho scope list to the clipboard.")
         print("Zoho scope list copied to the Windows clipboard.")

@@ -209,6 +209,7 @@ def prefetch() -> int:
         [VENV_PY, CHECK_PY, "--waiting-on-them", str(DAYS_BACK)],
         text=True, encoding="utf-8", errors="replace",
         capture_output=True, timeout=900,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     out = (proc.stdout or "").strip()
     if proc.returncode != 0 or not out:
@@ -241,6 +242,7 @@ def run_dado() -> str | None:
             [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
             cwd=WORKDIR, env=env, text=True, encoding="utf-8", errors="replace",
             capture_output=True, timeout=2700,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception as exc:
         log(f"dado run raised: {type(exc).__name__}: {exc}")

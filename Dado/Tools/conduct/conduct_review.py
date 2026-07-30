@@ -109,6 +109,7 @@ def git(*args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", "-C", str(REPO), *args],
         capture_output=True, text=True, timeout=120,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
 
 
@@ -120,6 +121,7 @@ def main() -> int:
     collected = subprocess.run(
         [PYTHON, str(COLLECTOR), day],
         capture_output=True, text=True, timeout=300,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if collected.returncode != 0 or not collected.stdout.strip():
         print(f"Dado conduct review skipped: evidence collection failed for {day} "
@@ -145,6 +147,7 @@ def main() -> int:
              "--disallowedTools", "Bash,WebFetch,WebSearch,NotebookEdit"],
             capture_output=True, text=True, encoding="utf-8", errors="replace",
             timeout=TIMEOUT_SECONDS, cwd=str(REPO),
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except subprocess.TimeoutExpired:
         print(f"Dado conduct review for {day} timed out after "

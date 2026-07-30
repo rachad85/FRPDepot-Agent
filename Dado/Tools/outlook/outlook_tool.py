@@ -205,6 +205,7 @@ def ensure_vault_dir() -> None:
             capture_output=True,
             text=True,
             check=False,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
         if result.returncode != 0:
             raise OutlookError(

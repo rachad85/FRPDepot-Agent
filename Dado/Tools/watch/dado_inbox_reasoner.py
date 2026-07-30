@@ -271,6 +271,7 @@ def collect(name, args_list, timeout=300):
         errors="replace",
         capture_output=True,
         timeout=timeout,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     out = (proc.stdout or "").strip()
     if proc.returncode != 0 or not out:
@@ -377,6 +378,7 @@ def run_dado():
             errors="replace",
             capture_output=True,
             timeout=2700,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception as exc:
         # timeout=2700 raises TimeoutExpired, which used to escape run_once and
@@ -402,6 +404,7 @@ def _try_send(message):
             errors="replace",
             capture_output=True,
             timeout=60,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
     except Exception as exc:
         # A hung Telegram call raises TimeoutExpired; a missing hermes binary
