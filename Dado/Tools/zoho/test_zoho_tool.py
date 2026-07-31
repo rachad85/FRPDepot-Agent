@@ -167,6 +167,45 @@ class ZohoToolTests(unittest.TestCase):
             with self.assertRaisesRegex(draft.DraftToolError, "source"):
                 draft.command_stage_quote(argparse.Namespace(input=str(bad_path)))
 
+    def test_tds_quote_forces_quebec_tax_and_ten_percent_discount(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            temp_path = Path(temp)
+            input_path = temp_path / "tds_quote.json"
+            input_path.write_text(
+                json.dumps(
+                    {
+                        "customer_id": draft.TDS_CUSTOMER_ID,
+                        "line_items": [
+                            {
+                                "item_id": "2002",
+                                "quantity": 2,
+                                "rate": 100,
+                                "quantity_source": "Rachad's words",
+                                "rate_source": "Zoho item rate",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(draft, "PLAN_DIR", temp_path / "plans"), patch.object(
+                draft.zoho_tool, "append_receipt"
+            ):
+                draft.command_stage_quote(argparse.Namespace(input=str(input_path)))
+            plan_path = next((temp_path / "plans").glob("*.json"))
+            plan = json.loads(plan_path.read_text(encoding="utf-8"))
+            payload = plan["payload"]
+            self.assertEqual(payload["discount_type"], "item_level")
+            self.assertIs(payload["is_discount_before_tax"], True)
+            self.assertEqual(payload["line_items"][0]["discount"], 10.0)
+            self.assertEqual(payload["line_items"][0]["tax_id"], draft.TDS_GST_QST_TAX_ID)
+            self.assertIn("Rachad's standing instruction", plan["sources"]["line_items"][0]["discount"])
+            self.assertIn("Quebec", plan["sources"]["line_items"][0]["tax"])
+
+            payload["line_items"][0]["discount"] = 0
+            with self.assertRaisesRegex(draft.DraftToolError, "automatic 10% discount"):
+                draft.validate_quote_customer_policy(payload)
+
     def test_customer_tool_refuses_vendor_or_portal_fields(self) -> None:
         with tempfile.TemporaryDirectory() as temp:
             path = Path(temp) / "customer.json"

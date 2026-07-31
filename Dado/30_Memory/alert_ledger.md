@@ -39,6 +39,14 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-29 RE: / Les Plastiques P.V. 8-inch pipe estimate — Roland has not responded to the estimate after 124 working days; chase draft prepared in the original Outlook thread.
 - 2026-07-29 There’s a problem with your direct debit payout to FORTE — New Airwallex notice says the CAD 1,148.23 Forte debit failed because the old Global Account is inactive; verify whether accounting rerouted it through Desjardins.
 - 2026-07-29 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT update says Dilza asked Plooto for recovery steps and is waiting; Zoho Books still shows the full CAD 4,101.30 overdue balance.
+- 2026-07-30 RE: New submission from Contact — Nasahtec has not responded to the DK411 budgetary pricing after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-30 RE: New submission from Contact // KENZ Ref. 2600AM-KE4288 — KENZ Jordan has not responded to the D411 quotation and datasheet after 3 working days; chase draft prepared in the original Outlook thread.
+- 2026-07-30 RFQ to J-Rain — Fei has not replied to the B95 pipe and flange pricing request after 5 working days; approval requested to prepare a chase draft.
+- 2026-07-30 Debit Return FRP DEPOTS - MID 426988 — New Forte second notice says the CAD 1,148.23 transaction was deleted after insufficient funds and must be resubmitted only after funds are available; accounting action requires verification.
+- 2026-07-30 Payment of CAD4,101.30 is outstanding for INV-000040 — New Airwallex update says the refund was approved July 22 and should reach SCT within 3–5 working days; Dilza will monitor, while Zoho Books still shows the full CAD 4,101.30 overdue balance.
+- 2026-07-30 RE: New submission from Contact — New Nasahtec reply says Brian passed the CAD 16,085.60 DK411 budget pricing onward for review; no Zoho customer or transaction exists yet.
+- 2026-07-30 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT reply says Dilza forwarded Airwallex's refund timing to Plooto and will confirm when the funds arrive; Zoho Books still shows the full CAD 4,101.30 overdue balance.
+- 2026-07-30 Troy Dualam Services Inc. accepted QT-000027 — Zoho confirms the CAD 3,061.80 estimate was accepted and converted to SO-00047 / sent INV-000049 for CAD 3,017.40; physical stock covers the order, but the CAD 44.40 total change requires verification.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

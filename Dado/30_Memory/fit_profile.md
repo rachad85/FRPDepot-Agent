@@ -9,6 +9,7 @@ sheet — ask instead.
 - What we sell: Catalog-based FRP products. Mailbox evidence includes FRP pipe,
   fittings, stub flanges, saddle tees, grating, profiles, and separately quoted
   coatings/unlisted items.
+- Resin standard (Rachad, 2026-07-30): use DK411 unless Rachad explicitly requests another resin. Stock availability does not authorize changing the resin.
 - Location / warehouse: Business/contact address repeatedly shown as 4507
   Ferguson Dr., Brockville, Ontario, Canada K6T 1A9. Warehouse status is not
   confirmed.
@@ -35,6 +36,10 @@ sheet — ask instead.
 - Price list location / source of truth: Sales replies direct customers to the
   website catalog for listed pipe and fittings; exact source-of-truth rule still
   requires Rachad's confirmation.
+- Stock availability rule (Rachad, 2026-07-30): use **Physical Available for Sale** only. Accounting stock and billed-but-unreceived purchase-order quantities must never be represented as physically in stock. Zoho's **Inventory Summary and phone quote item picker display accounting availability even when the organization mode is Physical Stock** (live-confirmed with SKU PIDN150150PSI411: 600 ft displayed versus physical 0 ft). For accurate quotes, open the item and use **Overview > Physical Stock > Available for Sale**, or use the read-only Inventory API field `actual_available_stock`.
+- Sales tax follows the customer's address/jurisdiction. Troy Dualam Services Inc. (customer ID 96274000000060019) is in Quebec and must use the combined **GST + QST** tax group (14.975%; Zoho tax ID 96274000001071139).
+- Troy Dualam Services Inc. receives an automatic **10% discount** on every FRP Depot order/estimate (Rachad, 2026-07-30).
+
 
 ## People
 - Rachad Homsi — owner. Telegram 891365639.
@@ -143,3 +148,9 @@ sheet — ask instead.
   render with annotations disabled), visually verify THAT file, and deliver the
   flattened copy. A structural field-value check is not evidence of what he
   will see.
+- 2026-07-30: Standing duty — Rachad asked for the four-month lead-time reorder
+  analysis to run "every 1st of the month automatically going forward"
+  (Telegram 19:00). It runs READ-ONLY from `zoho_reorder_analysis.py` on the 1st
+  at 08:00 (Hermes cron `96e29b6507b1`) and the order candidates go to Rachad.
+  Confirm it actually fired on the next 1st; if it did not, tell him and fix the
+  schedule rather than re-running it by hand and staying silent.

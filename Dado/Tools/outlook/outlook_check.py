@@ -615,7 +615,7 @@ def show_thread(token: str, conversation_id: str) -> None:
     data = get(token, "/me/messages?$filter=" + flt +
                       "&$select=id,subject,from,toRecipients,ccRecipients,"
                       "sentDateTime,receivedDateTime,isDraft,body,bodyPreview,"
-                      "hasAttachments")
+                      "hasAttachments&$top=50")
     msgs = data.get("value", [])
     msgs.sort(key=_when)
     print(f"THREAD ({len(msgs)} messages, oldest first):")

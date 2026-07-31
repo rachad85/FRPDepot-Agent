@@ -33,6 +33,23 @@ ALLOWED_POSTS = {
     "customer": "/books/v3/contacts",
     "quote": "/books/v3/estimates",
 }
+TDS_CUSTOMER_ID = "96274000000060019"
+TDS_GST_QST_TAX_ID = "96274000001071139"
+CUSTOMER_QUOTE_POLICIES = {
+    TDS_CUSTOMER_ID: {
+        "customer_name": "Troy Dualam Services Inc.",
+        "province": "Quebec",
+        "tax_id": TDS_GST_QST_TAX_ID,
+        "tax_name": "Gst & Qst",
+        "tax_percentage": 14.975,
+        "line_discount": 10.0,
+        "tax_source": (
+            "Rachad's standing instruction 2026-07-30; live Zoho billing address "
+            "for Troy Dualam Services Inc. is Quebec and tax group is Gst & Qst."
+        ),
+        "discount_source": "Rachad's standing instruction 2026-07-30: automatic 10% TDS discount.",
+    }
+}
 CUSTOMER_FIELDS = {
     "contact_name", "company_name", "contact_type", "customer_sub_type",
     "website", "billing_address", "shipping_address", "contact_persons",
@@ -180,12 +197,37 @@ def nonempty_source(value: Any, label: str) -> str:
     return source
 
 
+def validate_quote_customer_policy(payload: dict[str, Any]) -> None:
+    customer_id = str(payload.get("customer_id") or "")
+    policy = CUSTOMER_QUOTE_POLICIES.get(customer_id)
+    if not policy:
+        return
+    if payload.get("discount_type") != "item_level" or payload.get("is_discount_before_tax") is not True:
+        raise DraftToolError(
+            f"{policy['customer_name']} quotes must use a 10% item-level discount before tax."
+        )
+    lines = payload.get("line_items")
+    if not isinstance(lines, list) or not lines:
+        raise DraftToolError(f"{policy['customer_name']} quote has no line items.")
+    for index, line in enumerate(lines):
+        discount = numeric(line.get("discount", 0), f"line_items[{index}].discount")
+        if discount != policy["line_discount"]:
+            raise DraftToolError(
+                f"{policy['customer_name']} line_items[{index}] must have the automatic 10% discount."
+            )
+        if str(line.get("tax_id") or "") != policy["tax_id"]:
+            raise DraftToolError(
+                f"{policy['customer_name']} line_items[{index}] must use Quebec combined GST + QST."
+            )
+
+
 def command_stage_quote(args: argparse.Namespace) -> None:
     raw = read_json(args.input)
     reject_extra(raw, QUOTE_FIELDS | TOP_SOURCE_FIELDS, "quote")
     customer_id = str(raw.get("customer_id") or "").strip()
     if not customer_id.isdigit():
         raise DraftToolError("customer_id must be the numeric Zoho customer ID.")
+    policy = CUSTOMER_QUOTE_POLICIES.get(customer_id)
     raw_lines = raw.get("line_items")
     if not isinstance(raw_lines, list) or not raw_lines:
         raise DraftToolError("At least one line item is required.")
@@ -195,6 +237,15 @@ def command_stage_quote(args: argparse.Namespace) -> None:
     }
     payload["customer_id"] = customer_id
     payload["status"] = "draft"
+    if policy:
+        if numeric(payload.get("discount", 0), "discount") != 0:
+            raise DraftToolError(
+                f"Do not add an entity-level discount for {policy['customer_name']}; "
+                "the tool applies its automatic 10% item-level discount."
+            )
+        payload.pop("discount", None)
+        payload["discount_type"] = "item_level"
+        payload["is_discount_before_tax"] = True
     sources: dict[str, Any] = {"line_items": []}
     clean_lines = []
     for index, raw_line in enumerate(raw_lines):
@@ -212,11 +263,14 @@ def command_stage_quote(args: argparse.Namespace) -> None:
             "quantity": nonempty_source(raw_line.get("quantity_source"), f"line_items[{index}].quantity_source"),
             "rate": nonempty_source(raw_line.get("rate_source"), f"line_items[{index}].rate_source"),
         }
-        if numeric(raw_line.get("discount", 0), f"line_items[{index}].discount") != 0:
+        if policy:
+            line_sources["discount"] = policy["discount_source"]
+            line_sources["tax"] = policy["tax_source"]
+        elif numeric(raw_line.get("discount", 0), f"line_items[{index}].discount") != 0:
             line_sources["discount"] = nonempty_source(
                 raw_line.get("discount_source"), f"line_items[{index}].discount_source"
             )
-        if raw_line.get("tax_id"):
+        if not policy and raw_line.get("tax_id"):
             line_sources["tax"] = nonempty_source(
                 raw_line.get("tax_source"), f"line_items[{index}].tax_source"
             )
@@ -227,9 +281,13 @@ def command_stage_quote(args: argparse.Namespace) -> None:
         clean_line["item_id"] = item_id
         clean_line["quantity"] = quantity
         clean_line["rate"] = rate
+        if policy:
+            clean_line["discount"] = policy["line_discount"]
+            clean_line["tax_id"] = policy["tax_id"]
         clean_lines.append(clean_line)
         sources["line_items"].append(line_sources)
     payload["line_items"] = clean_lines
+    validate_quote_customer_policy(payload)
     for field in ("shipping_charge", "adjustment", "discount", "exchange_rate"):
         if field in payload:
             value = numeric(payload[field], field)
@@ -245,6 +303,8 @@ def command_stage_quote(args: argparse.Namespace) -> None:
                 "item_id": line["item_id"],
                 "quantity": line["quantity"],
                 "rate": line["rate"],
+                "discount": line.get("discount", 0),
+                "tax_id": line.get("tax_id"),
                 "sources": sources["line_items"][index],
             }
             for index, line in enumerate(clean_lines)
@@ -321,6 +381,8 @@ def exact_customer_exists(access_token: str, vault: dict[str, Any], contact_name
 
 def command_commit(args: argparse.Namespace, kind: str) -> None:
     plan = load_verified_plan(args.plan, kind)
+    if kind == "quote":
+        validate_quote_customer_policy(plan["payload"])
     digest = plan["sha256"]
     expected = f"APPROVE {'CUSTOMER' if kind == 'customer' else 'QUOTE'} {digest[:8]}"
     if args.approval != expected:
