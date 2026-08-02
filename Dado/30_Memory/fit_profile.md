@@ -105,12 +105,15 @@ sheet — ask instead.
   investments log" is `My Drive / My Files / Rachad / Bussiness Folder /
   Investements.xlsx` (19:00, "From now on when i tell you update the investments
   log its this one"); allowed edit is a cash-profit row in the `Pistavo Labs`
-  section. (b) **Loans tool** (`google_loans_tool.py`) — Google Sheet `Loans`,
-  tab `CCIVS`, fills the next blank row with a dated negative repayment. Both are
-  stage-then-commit under the Hard Rule 3 discipline. Rachad's approval word is
-  ONE PLAIN WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a
-  checksum. Sheet screenshots: crop to the changed rows, do not show the live
-  Google Sheet (23:14; his message is truncated in the log — confirm the wording).
+  section. (b) **Loans tool** (`google_loans_tool.py`) — Google Sheet `Loans`;
+  `CCIVS` fills the next blank A:B row with a dated negative repayment. On
+  2026-07-31 Rachad directly commissioned and confirmed the live `Stefe` tab
+  (spelled exactly that way): its fixed C6:E43 table may receive one staged row
+  containing date, negative amount and plain-text description. Both operations
+  remain stage-then-commit under Hard Rule 3. Rachad's approval word is ONE PLAIN
+  WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a checksum.
+  Sheet screenshots omit "live Google Sheets" wording and crop at the latest
+  payment.
 - 2026-07-27: FRP Depot GA4 access is live and read-only. Google Analytics
   account `2499934` ("Northnet Media") exposes property `529941333` ("FRP
   Depots"). A live Data API audit returned historical frpdepots.com traffic,
@@ -148,6 +151,10 @@ sheet — ask instead.
   render with annotations disabled), visually verify THAT file, and deliver the
   flattened copy. A structural field-value check is not evidence of what he
   will see.
+- 2026-07-31: Currency wording on his personal loan/investment sheets — Rachad,
+  approving the Stefe line: "Approved but don't use CAD just dollar sign"
+  (Telegram 20:32). Write amounts as `$50` in these plans, screenshots and
+  Telegram reports; do not label them CAD. Zoho/invoice figures are unaffected.
 - 2026-07-30: Standing duty — Rachad asked for the four-month lead-time reorder
   analysis to run "every 1st of the month automatically going forward"
   (Telegram 19:00). It runs READ-ONLY from `zoho_reorder_analysis.py` on the 1st

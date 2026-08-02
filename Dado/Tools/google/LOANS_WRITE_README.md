@@ -1,6 +1,6 @@
-# Loans spreadsheet write connection (CCIVS repayments)
+# Loans spreadsheet write connection (CCIVS and Stefe)
 
-Commissioned by Rachad Homsi on 2026-07-26. Built and tested with no live write.
+Commissioned by Rachad Homsi on 2026-07-26. The fixed `Stefe` table extension was commissioned by his direct instruction and live-tab confirmation on 2026-07-31. Built and tested with no live write before staging.
 
 ## Scope
 
@@ -12,14 +12,20 @@ Commissioned by Rachad Homsi on 2026-07-26. Built and tested with no live write.
   ending at Business Folder ID `12C-CPb_1PWt-WHTQOd3PDLeJ_IV9zSdw`. Both the ID
   chain and the folder-name path must match, or the tool stops.
 - Sheets identity is checked too: spreadsheet title `Loans`, locale `en_US`,
-  time zone `America/Los_Angeles`, tab `CCIVS` with immutable sheetId
-  `909361371`.
-- Table: `CCIVS!A4:B60`, with `B3` required to be exactly `=SUM(B4:B60)`.
-- The ONE commissioned operation: fill the next existing blank repayment row
-  (date, negative amount) in that table. Sheets `values.append` is used only as
-  a safe table-end locator with `OVERWRITE`; it does not insert or shift rows.
-  Nothing else exists — no update, clear, batch, create,
-  delete, rename, move, copy, permission, or revision path anywhere in the file.
+  time zone `America/Los_Angeles`, and the immutable tab IDs for either fixed
+  target: `CCIVS` (`909361371`) or `Stefe` (`396384971`).
+- CCIVS operation: `CCIVS!A4:B60`, with `B3` required to be exactly
+  `=SUM(B4:B60)`; fill the next blank row with date and negative repayment.
+- Stefe operation: `Stefe!C6:E43`, with `D4` required to be exactly
+  `=SUM(D6:D212)`, headers `DATE / Amount / Description` fixed at C5:E5, and
+  the note at C44 fixed; fill the next blank row with date, negative amount and
+  a 1-100 character plain-text description. The write range ends at row 43 and
+  can never overwrite the row 44 note.
+- Both operations use the same single Sheets `values.append` write expression
+  with `OVERWRITE`; it does not insert or shift rows. The selected range is
+  derived only from the plan's closed, allowlisted action. Nothing else exists —
+  no update, clear, batch, create, delete, rename, move, copy, permission, or
+  revision path anywhere in the file.
 
 ## Authorization
 
@@ -35,33 +41,37 @@ that module.
 Run with the hermes venv interpreter
 `%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe`.
 
-1. `check` — read-only. Verifies Drive identity, the full parent chain,
-   editability, Sheets identity, the `B3` total formula, the last used row, the
-   next free row, and the current balance. Never writes.
-2. `stage-ccivs-payment --date YYYY-MM-DD --amount <positive> --source "<why>"`
-   — live-reads everything above plus the FORMULA values of `A1:B60`, then
-   writes a plan file to `Dado\20_Working\loans_plans`. Nothing remote changes.
-3. `commit --plan <plan.json> --approval APPROVED` — the only path that writes.
+1. `check` — read-only CCIVS check. Verifies Drive identity, the full parent
+   chain, editability, Sheets identity, the `B3` total formula, the last used
+   row, the next free row, and the current balance. Never writes.
+2. `check-stefe` — the equivalent read-only check for the fixed `Stefe`
+   C1:E44 layout, immutable tab ID, formula, headers, note, next row and balance.
+3. `stage-ccivs-payment --date YYYY-MM-DD --amount <positive> --source "<why>"`
+   — live-reads the CCIVS state and writes a plan file. Nothing remote changes.
+4. `stage-stefe-adjustment --date YYYY-MM-DD --amount <positive>
+   --description "<plain text>" --source "<why>"` — live-reads the Stefe state
+   and writes a closed-schema plan for its next row. Nothing remote changes.
+5. `commit --plan <plan.json> --approval APPROVED` — the only path that writes;
+   the plan's action chooses one of the two fixed ranges.
 
 The amount is given as a POSITIVE deduction (max two decimals, ≤ 100,000,000)
-and is stored NEGATIVE in column B. `--date 2026-07-26 --amount 1000` writes
-`7/26/2026` and `-1000`.
+and is stored NEGATIVE. For example, `--amount 50` writes `-50`.
 
 ## What staging checks
 
-- Exact Drive identity, path chain, and editability; exact Sheets title, locale,
-  time zone, tab title and tab ID.
-- `B3` is exactly `=SUM(B4:B60)`.
-- Current table end and the next row: it must fall inside rows 4–60 and both
-  A and B must be blank.
-- Duplicate guard: refuses if the same date AND the same negative amount already
-  exist anywhere in rows 4–60 (serial-number and text date cells both parsed).
-- Balance arithmetic with `Decimal` over the numeric rows of `B4:B60`. A formula
-  or non-numeric value inside the used part of column B stops the run rather
-  than producing a balance that cannot be trusted.
+- Exact Drive identity, path chain and editability; exact Sheets title, locale,
+  time zone, selected tab title and tab ID.
+- Selected layout guard: CCIVS requires `B3 = SUM(B4:B60)`; Stefe requires
+  `D4 = SUM(D6:D212)`, exact C5:E5 headers and the unchanged C44 note.
+- Current table end and next row must stay inside the selected fixed range and
+  every target cell must be blank.
+- Duplicate guard: CCIVS refuses the same date and amount; Stefe refuses the
+  same date, amount and description.
+- Balance arithmetic with `Decimal` over the selected numeric amount column. A
+  formula, non-numeric amount, partial Stefe row or layout drift stops the run.
 - The plan is a closed-schema JSON document with a canonical full SHA-256 over
   every field, a 128-bit nonce, a 24-hour lifetime, and a SHA-256 of the exact
-  pre-write `A1:B60` FORMULA values.
+  pre-write FORMULA values for the selected fixed read range.
 - Rachad sees a short plan (row, date, value written, current and resulting
   balance) and one approval word: `APPROVED`. The digest is never printed.
 
@@ -76,21 +86,20 @@ and is stored NEGATIVE in column B. `--date 2026-07-26 --amount 1000` writes
    and the balance must still match. A Drive version-counter-only change is
    ignored when modification time and exact cell content remain unchanged,
    because opening a native Google Sheet can advance that counter.
-3. Writes a local JSON backup of the pre-write `A1:B60` values to
+3. Writes a local JSON backup of the selected pre-write FORMULA grid to
    `%LOCALAPPDATA%\FRPDepot-Google-Investments-Write\loans_backups`.
 4. Takes an exclusive, digest-keyed replay lock — created with `O_EXCL`, so a
    second commit of the same plan can never reach the write.
 5. Repeats the full identity/content recheck immediately before the write, then
-   performs the single remote write:
-   `spreadsheets.values.append`, range `'CCIVS'!A4:B60`,
-   `valueInputOption=USER_ENTERED`, `insertDataOption=OVERWRITE`,
-   body `[[M/D/YYYY, negative amount]]`, `num_retries=0`.
-6. Requires the API response `updatedRange` to be exactly the planned
-   `CCIVS!A{row}:B{row}` and exactly 1 row / 2 columns / 2 cells.
-7. Live readback of the FORMULA values: the appended row must hold that exact
-   date and negative amount, `B3` must be unchanged, no other row may have
-   moved, and the recomputed balance must equal the approved resulting balance.
-   Drive and Sheets identity are verified again.
+   performs the module's single remote write expression: `values.append` on
+   exactly `'CCIVS'!A4:B60` or `'Stefe'!C6:E43` as sealed in the allowlisted
+   action, `USER_ENTERED`, `OVERWRITE`, `num_retries=0`.
+6. Requires `updatedRange` to equal the staged target row and exactly one row /
+   two CCIVS cells or three Stefe cells.
+7. Live readback of the selected FORMULA grid: the target cells must match, the
+   total formula and pinned layout must remain unchanged, no other row may move,
+   and the recomputed balance must equal the approved resulting balance. Drive
+   and Sheets identity are verified again.
 8. Only then does it print `COMMITTED_AND_VERIFIED` and write the receipt to
    `Dado\40_Logs\receipts.jsonl`.
 
@@ -103,10 +112,11 @@ plainly that nothing was written.
 
 ## Row behaviour
 
-`OVERWRITE` fills the next existing blank table row; it does not insert or shift
-rows. The staged target must still be blank immediately before the write. A
-concurrent entry would move the API's returned range away from the approved row;
-the tool then locks without retry and reports reconciliation required.
+`OVERWRITE` fills the next existing blank row in the selected fixed table; it
+does not insert or shift rows. Every staged target cell must still be blank
+immediately before the write. A concurrent entry would move the returned range
+away from the approved row; the tool then locks without retry and reports that
+reconciliation is required.
 
 ## Testing
 
