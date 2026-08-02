@@ -767,6 +767,19 @@ latest sent message, original recipients; refused whenever any live external
 message exists, on non-chase use, and when an external reply lands mid-draft.
 Digest prompt, skill and fit profile updated. 23/23 + tracker suites green.
 
+### A-07 OPEN (Rachad's call — money) — Nous auxiliary account out of credits since 2026-08-01 19:10
+Dado's auxiliary services all point at nous/deepseek-v4-pro (config.yaml:
+vision, title_generation, compression, summary, web_extract, approval) and
+web.backend firecrawl rides the same subscription. errors.log shows
+SUBSCRIPTION_REQUIRED / "balance is too low" from 2026-08-01 19:10 onward:
+web_search is BROKEN, title generation failing (cosmetic), and vision will fail
+the next time Rachad sends Dado a photo on Telegram. Compression has NOT failed
+yet (0 hits) but shares the account. The MAIN model (gpt-5.6-sol on
+openai-codex) is unaffected — live PIPELINE-OK turn 2026-08-02 01:3x. Options:
+top up at portal.nousresearch.com, or repoint auxiliaries at a free model —
+either is a spend/model choice, so his call, not a backend auto-fix (no silent
+model drift).
+
 ### A-06 FIXED (this commit) — Stefe loans balance could silently diverge from the sheet (07-31 review FINDING 3)
 `D4 = SUM(D6:D212)` but the tool read only C1:E44, so content in rows 45:212
 would falsify every current/resulting balance Rachad approves. Read widened to
