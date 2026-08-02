@@ -786,13 +786,16 @@ char count. Two mandated checks (anything sent/promised, invented facts) cannot
 be evidenced. Backend check needed: does gateway.log (or state.db) record reply
 text, and can the collector include a bounded outbound section per turn?
 
-### A-09 OPEN (needs Rachad, pinged 08-02 05:15) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
+### A-09 FIXED (config, Rachad-approved 08-02) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
 Session 20260730_233504 served turns for ~43h; context summary failed twice with
 524 origin timeouts; two of Rachad's messages sat ~16 min unanswered (FINDING 1
-is largely downstream). Config `session_reset: mode: none`. Recommendation:
-daily reset (at_hour is already 4) so every day starts a fresh session before
-the 05:10 review. Live-config change — waits for Rachad's word, same as
-verify_on_stop. Related: Telegram progress-EDIT failures ("Message to edit not
+is largely downstream). Rachad approved ("Yes proceed", 08-02):
+`session_reset.mode: daily` set via hermes config CLI — sessions now reset at
+04:00 local (at_hour was already 4), before the 05:10 conduct run and the 07:00
+sweeps; `notify: true` tells him in chat when it happens; a reset-guard spares
+sessions with live background processes (<24h old). Mirror synced. Watch point:
+first reset fires 2026-08-03 04:00 — Monday's 09:23 watch confirms it behaved.
+Related, still open: Telegram progress-EDIT failures ("Message to edit not
 found") live in shared hermes' telegram adapter — pinned install, not a repo
 fix.
 
