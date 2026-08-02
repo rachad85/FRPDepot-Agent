@@ -8,6 +8,7 @@ agent:
   service_tier: normal
   verbose: false
   reasoning_effort: xhigh
+  verify_on_stop: false
 terminal:
   backend: local
   cwd: C:\FRPDepot
