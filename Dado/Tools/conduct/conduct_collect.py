@@ -118,8 +118,15 @@ def auto_flags(turns: list[str], errors: list[str]) -> list[str]:
         if not match:
             continue
         seconds, calls = float(match.group(3)), int(match.group(4))
-        if seconds > SLOW_SECONDS or calls >= MANY_CALLS:
-            flags.append(f"CIRCLING TURN ({seconds/60:.0f} min / {calls} steps): {line.strip()}")
+        slow, many = seconds > SLOW_SECONDS, calls >= MANY_CALLS
+        if not (slow or many):
+            continue
+        # Label by WHICH condition fired. A long turn with FEW steps is the
+        # backend being slow, not Dado going in circles, and calling both
+        # "CIRCLING" sent the 2026-08-01 review hunting for a loop inside a
+        # 968s/5-step turn that never had one. Both still get flagged.
+        kind = "CIRCLING TURN" if many else "SLOW TURN (few steps)"
+        flags.append(f"{kind} ({seconds/60:.0f} min / {calls} steps): {line.strip()}")
     # Drop the parts that differ between IDENTICAL failures: timestamp, the
     # per-turn session id, and the tool's elapsed time. On 2026-07-28 the same
     # google_reference.py crash fired four times and never reached the x3
