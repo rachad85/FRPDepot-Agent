@@ -34,6 +34,8 @@ import os
 import shutil
 import subprocess
 import sys
+import time
+import unicodedata
 from pathlib import Path
 
 CLAUDE = Path.home() / ".local" / "bin" / "claude.exe"
@@ -49,6 +51,25 @@ MIRROR_SOUL = REPO / "DadoProfile" / "SOUL.md"
 LIVE_SOUL = Path(os.environ.get("LOCALAPPDATA", "")) / "hermes" / "profiles" / "dado" / "SOUL.md"
 TIMEOUT_SECONDS = 20 * 60
 CLEAN_MARKER = "ALL CLEAN"
+FAILURE_DIR = REPO / "Dado" / "40_Logs" / "conduct"
+
+# Telegram delivery goes through the cron wrapper's stdout capture, and the
+# capture layer has decoded this script's UTF-8 output with the Windows ANSI
+# codec: every em dash on the 07-24..07-31 needs-you pings reached Rachad's
+# phone as "â€\x9d"-style mojibake. ASCII survives any codec mismatch, and the
+# one-line ping loses nothing by it. The review FILE stays UTF-8 on disk.
+_ASCII_PUNCT = str.maketrans({
+    "—": "-", "–": "-", "‘": "'", "’": "'",
+    "“": '"', "”": '"', "…": "...", " ": " ",
+})
+
+
+def say(text: str) -> None:
+    """Print a Telegram-bound line as pure ASCII (accents stripped, not '?')."""
+    text = text.translate(_ASCII_PUNCT)
+    text = unicodedata.normalize("NFKD", text)
+    text = "".join(c for c in text if not unicodedata.combining(c))
+    print(text.encode("ascii", "replace").decode("ascii"))
 
 PROMPT = """You are the nightly conduct reviewer AND maintainer for Dado, the FRP
 Depot operations assistant. Read these two files first (Read tool):
@@ -124,9 +145,9 @@ def main() -> int:
         creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
     )
     if collected.returncode != 0 or not collected.stdout.strip():
-        print(f"Dado conduct review skipped: evidence collection failed for {day} "
-              f"({(collected.stderr or 'no output').strip()[:200]}). "
-              "Run conduct_collect.py by hand to see why.")
+        say(f"Dado conduct review skipped: evidence collection failed for {day} "
+            f"({(collected.stderr or 'no output').strip()[:200]}). "
+            "Run conduct_collect.py by hand to see why.")
         return 0
     bundle = collected.stdout.strip().splitlines()[-1]
 
@@ -134,13 +155,14 @@ def main() -> int:
         hard_before = hard_rules_section(MIRROR_SOUL.read_text(encoding="utf-8"))
         live_before = LIVE_SOUL.read_text(encoding="utf-8")
     except OSError as exc:
-        print(f"Dado conduct review skipped: cannot read SOUL ({exc}).")
+        say(f"Dado conduct review skipped: cannot read SOUL ({exc}).")
         return 0
 
     prompt = PROMPT.format(bundle=bundle, constitution=str(MIRROR_SOUL),
                            clean_marker=CLEAN_MARKER)
-    try:
-        review = subprocess.run(
+
+    def invoke_claude() -> subprocess.CompletedProcess:
+        return subprocess.run(
             [str(CLAUDE), "-p", prompt,
              "--output-format", "text",
              "--permission-mode", "acceptEdits",
@@ -149,16 +171,54 @@ def main() -> int:
             timeout=TIMEOUT_SECONDS, cwd=str(REPO),
             creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
         )
-    except subprocess.TimeoutExpired:
-        print(f"Dado conduct review for {day} timed out after "
-              f"{TIMEOUT_SECONDS // 60} min; the bundle is saved -- ask the "
-              "backend to review it in session.")
-        return 0
+
+    # 2026-08-01 05:10 claude died in ~3s with exit 1 and an EMPTY stderr (its
+    # startup errors mostly go to stdout, which the old message never showed),
+    # and that one transient crash cost the whole night: no review, no nightly
+    # commit, no push. A fast failure (<120s) gets one retry after 30s; a slow
+    # failure or a timeout does not, so the job stays bounded. Every failed
+    # attempt is preserved in full next to the bundles - "exit 1: " with no
+    # detail was undiagnosable two days later.
+    attempts: list[str] = []
+    review = None
+    while True:
+        started = time.monotonic()
+        try:
+            review = invoke_claude()
+        except subprocess.TimeoutExpired:
+            say(f"Dado conduct review for {day} timed out after "
+                f"{TIMEOUT_SECONDS // 60} min; the bundle is saved -- ask the "
+                "backend to review it in session.")
+            return 0
+        elapsed = time.monotonic() - started
+        if review.returncode == 0 and (review.stdout or "").strip():
+            break
+        attempts.append(
+            f"attempt {len(attempts) + 1}: exit {review.returncode} "
+            f"after {elapsed:.0f}s\n"
+            f"--- stderr ---\n{(review.stderr or '')[:4000]}\n"
+            f"--- stdout ---\n{(review.stdout or '')[:4000]}\n")
+        if len(attempts) == 1 and elapsed < 120:
+            time.sleep(30)
+            continue
+        break
+
+    if attempts:
+        try:
+            FAILURE_DIR.mkdir(parents=True, exist_ok=True)
+            (FAILURE_DIR / f"{day}-claude-failures.txt").write_text(
+                "\n".join(attempts), encoding="utf-8")
+        except OSError:
+            pass
     output = (review.stdout or "").strip()
     if review.returncode != 0 or not output:
-        print(f"Dado conduct review for {day} could not run "
-              f"(claude exit {review.returncode}: {(review.stderr or '')[:200]}). "
-              "The evidence bundle is saved; ask the backend in session.")
+        detail = ((review.stderr or "").strip()
+                  or (review.stdout or "").strip() or "no output")[:200]
+        say(f"Dado conduct review for {day} could not run "
+            f"(claude exit {review.returncode}, {len(attempts)} attempt(s): "
+            f"{detail}). Full detail in "
+            f"Dado\\40_Logs\\conduct\\{day}-claude-failures.txt; "
+            "ask the backend in session.")
         return 0
 
     # Deterministic guard: HARD RULES must be untouched.
@@ -180,9 +240,15 @@ def main() -> int:
         except OSError as exc:
             guard_note = f"SYNC FAILED: mirror SOUL changed but live copy not updated ({exc})."
 
+    runner_note = ""
+    if attempts:
+        runner_note = (f"RUNNER NOTE: claude attempt 1 failed and the retry "
+                       f"succeeded; detail in "
+                       f"40_Logs\\conduct\\{day}-claude-failures.txt.\n\n")
     REVIEW_DIR.mkdir(parents=True, exist_ok=True)
     (REVIEW_DIR / f"{day}.md").write_text(
         f"# Dado conduct review {day}\n\nBundle: {bundle}\n\n"
+        + runner_note
         + (f"{guard_note}\n\n" if guard_note else "")
         + output + "\n",
         encoding="utf-8",
@@ -213,13 +279,13 @@ def main() -> int:
     needs = next((l for l in output.splitlines() if l.startswith("NEEDS-RACHAD:")), "")
     needs_body = needs.replace("NEEDS-RACHAD:", "").strip().rstrip(".").lower()
     if guard_note:
-        print(f"Dado nightly review {day}: {guard_note} Full report in "
-              "Dado\\30_Memory\\conduct_reviews.")
+        say(f"Dado nightly review {day}: {guard_note} Full report in "
+            "Dado\\30_Memory\\conduct_reviews.")
     elif needs and needs_body not in ("nothing", "none", ""):
         summary = next((l for l in output.splitlines() if l.startswith("SUMMARY:")), "")
-        print(f"Dado nightly review {day}: needs you -- "
-              f"{needs.replace('NEEDS-RACHAD:', '').strip()} "
-              + (summary.replace("SUMMARY:", "").strip() if summary else ""))
+        say(f"Dado nightly review {day}: needs you -- "
+            f"{needs.replace('NEEDS-RACHAD:', '').strip()} "
+            + (summary.replace("SUMMARY:", "").strip() if summary else ""))
     return 0
 
 

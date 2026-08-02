@@ -37,28 +37,22 @@ prompt_caching:
 auxiliary:
   vision:
     provider: nous
-    model: anthropic/claude-fable-5
-  web_extract:
-    provider: nous
-    model: anthropic/claude-fable-5
-  compression:
-    provider: nous
-    model: anthropic/claude-fable-5
-  skills_hub:
-    provider: nous
-    model: anthropic/claude-fable-5
-  approval:
-    provider: nous
-    model: anthropic/claude-fable-5
-  mcp:
-    provider: nous
-    model: anthropic/claude-fable-5
+    model: deepseek/deepseek-v4-pro
   title_generation:
     provider: nous
-    model: anthropic/claude-fable-5
-  curator:
+    model: deepseek/deepseek-v4-pro
+  compression:
     provider: nous
-    model: anthropic/claude-fable-5
+    model: deepseek/deepseek-v4-pro
+  summary:
+    provider: nous
+    model: deepseek/deepseek-v4-pro
+  web_extract:
+    provider: nous
+    model: deepseek/deepseek-v4-pro
+  approval:
+    provider: nous
+    model: deepseek/deepseek-v4-pro
 display:
   compact: false
   busy_input_mode: queue
@@ -110,3 +104,10 @@ platforms:
   api_server:
     enabled: true
 _config_version: 33
+approvals:
+  destructive_slash_confirm: false
+telegram:
+  reactions: true
+onboarding:
+  seen:
+    busy_input_prompt: true

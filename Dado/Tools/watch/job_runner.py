@@ -259,6 +259,7 @@ def cmd_run(args: argparse.Namespace) -> int:
             proc = subprocess.Popen(
                 job["command"],
                 stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
             code = proc.wait()
     except Exception as exc:
