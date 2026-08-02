@@ -697,15 +697,19 @@ def latest_live_external_non_draft(messages: list[dict[str, Any]]) -> dict[str, 
     return max(candidates, key=message_datetime) if candidates else None
 
 
-def resolve_source_message(access_token: str, match: str) -> dict[str, Any]:
+def resolve_source_message(
+    access_token: str, match: str, own_sent: bool = False
+) -> dict[str, Any]:
     """Resolve a reply target by a short, reliable search term instead of a raw
     ~150-char Graph message id. Hand-carrying that id through a JSON input file is
     what corrupts it and produces the 'malformed id' HTTP 400 - the encoding and
     the general /me/messages/{id} endpoint are both fine with a clean id.
 
-    Returns the newest EXTERNAL, non-draft message whose sender address or subject
-    contains *match* (case-insensitive). Raises with a candidate list when the term
-    is empty, matches nothing, or spans more than one conversation."""
+    Returns the newest non-draft message whose sender address or subject contains
+    *match* (case-insensitive) - EXTERNAL senders normally, OUR OWN sent messages
+    when *own_sent* is set (the chase-own path for threads nobody answered).
+    Raises with a candidate list when the term is empty, matches nothing, or
+    spans more than one conversation."""
     needle = str(match or "").strip().casefold()
     if not needle:
         raise OutlookError("Reply All resolve: source_match is empty.")
@@ -721,14 +725,19 @@ def resolve_source_message(access_token: str, match: str) -> dict[str, Any]:
         if message.get("isDraft") is True:
             continue
         sender = message_address(message.get("from")) or message_address(message.get("sender"))
-        if not sender or sender.endswith("@frpdepots.com"):
-            continue  # external senders only
+        if own_sent:
+            if not sender or not is_internal_address(sender):
+                continue  # chase-own: our own sent messages only
+        else:
+            if not sender or sender.endswith("@frpdepots.com"):
+                continue  # external senders only
         subject = str(message.get("subject") or "").casefold()
         if needle in sender or needle in subject:
             hits.append(message)
     if not hits:
+        kind = "own sent" if own_sent else "external"
         raise OutlookError(
-            f"Reply All resolve: no external message in the recent mailbox matches '{match}'."
+            f"Reply All resolve: no {kind} message in the recent mailbox matches '{match}'."
         )
     newest_by_conversation: dict[str, dict[str, Any]] = {}
     for message in hits:
@@ -911,7 +920,8 @@ def command_reply_all(args: argparse.Namespace) -> None:
             "body_text_file": getattr(args, "body_file", None),
             "body_html_file": getattr(args, "body_html_file", None),
             "replace_standalone": getattr(args, "replace_standalone", False),
-            "is_chase": getattr(args, "chase", False),
+            "is_chase": getattr(args, "chase", False) or getattr(args, "chase_own", False),
+            "chase_own": getattr(args, "chase_own", False),
             "superseded_draft_id": getattr(args, "superseded_id", None),
             "superseded_subject": getattr(args, "superseded_subject", None),
         }
@@ -954,10 +964,24 @@ def command_reply_all(args: argparse.Namespace) -> None:
         raise OutlookError(
             "Replacing a draft requires both superseded_draft_id and superseded_subject."
         )
+    # Chase-own: reply in-thread under Rachad's OWN last sent message, for
+    # threads the other side never answered. Approved by Rachad 2026-08-02
+    # (2026-07-31 review FINDING 4: 5 genuine follow-ups, zero drafts possible).
+    # Only ever a chase; never combined with standalone-draft replacement.
+    chase_own = bool(draft_input.get("chase_own"))
+    if chase_own:
+        draft_input["is_chase"] = True
+        if replace_standalone or superseded_draft_id:
+            raise OutlookError(
+                "Chase-own blocked: an unanswered outbound thread has no standalone "
+                "draft to supersede."
+            )
 
     access_token, _ = refresh_access_token()
     if not source_message_id:
-        source_message_id = str(resolve_source_message(access_token, source_match).get("id") or "")
+        source_message_id = str(
+            resolve_source_message(access_token, source_match, own_sent=chase_own).get("id") or ""
+        )
         if not source_message_id:
             raise OutlookError("Reply All resolve: could not determine a source message id.")
     encoded_source_id = quote(source_message_id, safe="")
@@ -975,13 +999,19 @@ def command_reply_all(args: argparse.Namespace) -> None:
     if not conversation_id:
         raise OutlookError("Reply All blocked: the source message has no Outlook conversation ID.")
     source_sender = message_address(source.get("from")) or message_address(source.get("sender"))
-    if not source_sender or is_internal_address(source_sender):
-        raise OutlookError("Reply All blocked: select the latest external message in the thread.")
-    if is_automated_address(source_sender):
-        raise OutlookError(
-            "Reply All blocked: that message is from an automated sender "
-            "(bounce/no-reply); it is not something to reply to."
-        )
+    if chase_own:
+        if not source_sender or not is_internal_address(source_sender):
+            raise OutlookError(
+                "Chase-own blocked: the source must be Rachad's own sent message."
+            )
+    else:
+        if not source_sender or is_internal_address(source_sender):
+            raise OutlookError("Reply All blocked: select the latest external message in the thread.")
+        if is_automated_address(source_sender):
+            raise OutlookError(
+                "Reply All blocked: that message is from an automated sender "
+                "(bounce/no-reply); it is not something to reply to."
+            )
     assert_reply_participants_safe(message_participants(source))
 
     # Auto-detect the obsolete standalone draft to supersede (so its id, too, need
@@ -1004,13 +1034,30 @@ def command_reply_all(args: argparse.Namespace) -> None:
         # zero standalone drafts -> nothing to supersede; proceed
 
     messages = conversation_messages(access_token, conversation_id)
-    latest = latest_live_external_non_draft(messages)
-    if not latest:
-        raise OutlookError(
-            "Reply All blocked: this thread has no live external message to reply to."
-        )
-    if str(latest.get("id") or "") != source_message_id:
-        raise OutlookError("Reply All blocked: a newer external reply exists in the live thread.")
+    if chase_own:
+        # Strictly the FINDING-4 class: the thread has NO live external message
+        # at all (they never answered). If one exists - however old - the normal
+        # chase path replies to it instead, and if one arrives later the chase
+        # is moot. The source must also be the newest message of any kind, so a
+        # chase always sits under Rachad's latest word in the thread.
+        if latest_live_external_non_draft(messages) is not None:
+            raise OutlookError(
+                "Chase-own blocked: this thread has a live external message - "
+                "chase that with the normal --chase path instead."
+            )
+        newest = latest_non_draft(messages)
+        if not newest or str(newest.get("id") or "") != source_message_id:
+            raise OutlookError(
+                "Chase-own blocked: the source is not the newest message in the thread."
+            )
+    else:
+        latest = latest_live_external_non_draft(messages)
+        if not latest:
+            raise OutlookError(
+                "Reply All blocked: this thread has no live external message to reply to."
+            )
+        if str(latest.get("id") or "") != source_message_id:
+            raise OutlookError("Reply All blocked: a newer external reply exists in the live thread.")
     same_response_drafts = [
         message
         for message in messages
@@ -1108,7 +1155,14 @@ def command_reply_all(args: argparse.Namespace) -> None:
     assert_reply_participants_safe(set(final_to + final_cc))
 
     latest_after = latest_live_external_non_draft(conversation_messages(access_token, conversation_id))
-    if not latest_after or str(latest_after.get("id") or "") != source_message_id:
+    if chase_own:
+        if latest_after is not None:
+            raise OutlookError(
+                "Chase-own draft blocked: an external reply arrived during drafting - "
+                "they have answered, so the chase is moot. Review the thread and the "
+                "leftover draft before any retry."
+            )
+    elif not latest_after or str(latest_after.get("id") or "") != source_message_id:
         raise OutlookError("Reply All draft blocked: a newer external reply arrived during drafting.")
 
     if superseded_draft_id:
@@ -1119,7 +1173,10 @@ def command_reply_all(args: argparse.Namespace) -> None:
         )
         append_receipt("outlook_superseded_draft_removed", superseded_draft_id)
 
-    append_receipt("outlook_reply_all_draft_created", draft_id)
+    append_receipt(
+        "outlook_chase_own_reply_draft_created" if chase_own else "outlook_reply_all_draft_created",
+        draft_id,
+    )
     # ONLY when the caller says this is a follow-up chase. Logging every reply-all
     # draft was wrong: an ordinary customer reply would then suppress that thread
     # from follow-up monitoring for CHASE_QUIET_DAYS - reintroducing, in narrower
@@ -1131,6 +1188,7 @@ def command_reply_all(args: argparse.Namespace) -> None:
             {
                 "status": "REPLY_ALL_DRAFT_CREATED_NOT_SENT",
                 "id": draft_id,
+                "chase_own": chase_own,
                 "source_message_id": source_message_id,
                 "conversation_id": conversation_id,
                 "to": final_to,
@@ -1182,6 +1240,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="This draft is a FOLLOW-UP CHASE. Records it in chase_log.jsonl so the "
              "tracker stops re-offering the thread for a few days. Omit for ordinary "
              "replies, or they will suppress follow-up monitoring for that thread.")
+    reply_all.add_argument(
+        "--chase-own", action="store_true", dest="chase_own",
+        help="Chase a thread NOBODY answered: reply in-thread under Rachad's own "
+             "last sent message (same recipients, drafts only). Implies --chase. "
+             "Refused if the thread has any live external message. Approved by "
+             "Rachad 2026-08-02.")
     reply_all.add_argument("--superseded-id", help="Exact id of a draft to supersede (instead of --replace-standalone)")
     reply_all.add_argument("--superseded-subject", help="Exact subject of the --superseded-id draft")
     reply_all.set_defaults(func=command_reply_all)

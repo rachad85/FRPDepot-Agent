@@ -130,7 +130,13 @@ FOR EACH OVERDUE THREAD, IN THIS ORDER:
      ...\Tools\outlook\outlook_tool.py reply-all ...
    Follow the fit-profile reply rules exactly: reply-all from the latest live
    external non-draft message, the official HTML signature once, new text above
-   the quoted history. Tone: short, warm, no pressure, no invented facts, no
+   the quoted history. THREADS NOBODY EVER ANSWERED (Rachad wrote first, zero
+   external messages in the conversation - the tool refuses the normal path):
+   use the chase-own path he approved 2026-08-02 - add --chase-own, which
+   creates the Reply All draft under HIS OWN last sent message with the
+   original recipients. The tool itself refuses --chase-own whenever any live
+   external message exists, so wrongly choosing it cannot misfire.
+   Tone: short, warm, no pressure, no invented facts, no
    new numbers he has not approved. A chase is two or three sentences - refer
    to what was sent, ask if they need anything to move it forward.
    DRAFTS ONLY (HARD RULE 1). You never send.

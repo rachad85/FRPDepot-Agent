@@ -556,6 +556,106 @@ class OutlookToolTests(unittest.TestCase):
                 with self.assertRaisesRegex(tool.OutlookError, "automated sender"):
                     tool.command_reply_all(args)
 
+    def test_chase_own_drafts_under_own_sent_when_nobody_answered(self) -> None:
+        """Rachad's 2026-08-02 ruling: a thread nobody ever answered is chased by
+        replying under his OWN last sent message - same recipients, drafts only."""
+        _, our_sent = self._chase_thread()
+        with tempfile.TemporaryDirectory() as folder:
+            folder_path = Path(folder)
+            body_path = folder_path / "chase.txt"
+            body_path.write_text("Following up - has this reached the right person?",
+                                 encoding="utf-8")
+            image_path = folder_path / "logo.jpeg"
+            image_path.write_bytes(b"not-a-real-logo")
+            bundle = {
+                "html": '<p>Rachad Homsi</p><img src="cid:logo-cid"><p>frpdepots.com</p>',
+                "inline_attachments": [{"path": str(image_path), "name": "logo.jpeg",
+                                        "content_type": "image/jpeg", "content_id": "logo-cid"}],
+                "source_message_id": "sig-src",
+            }
+            updated_body = ""
+
+            def fake_graph(token, method, path, payload=None):
+                nonlocal updated_body
+                if method == "GET" and path.startswith("/me/messages?") and "conversationId" in path:
+                    return {"value": [our_sent]}
+                if method == "GET" and path.startswith("/me/messages/our-sent-id"):
+                    return our_sent
+                if method == "POST" and path.endswith("/createReplyAll"):
+                    return {"id": "chase-id", "isDraft": True}
+                if method == "GET" and path.startswith("/me/messages/chase-id?"):
+                    return {"id": "chase-id", "isDraft": True, "conversationId": "conv-chase",
+                            "subject": "RE: Fittings - RFQ",
+                            "body": {"contentType": "HTML",
+                                     "content": updated_body or "<div>hist</div>"},
+                            "toRecipients": [{"emailAddress": {"address": "buyer@sctfrp.com"}}],
+                            "ccRecipients": [], "bccRecipients": []}
+                if method == "PATCH" and path == "/me/messages/chase-id":
+                    updated_body = payload["body"]["content"]
+                    return {"id": "chase-id", "isDraft": True}
+                if method == "POST" and path.endswith("/attachments"):
+                    return {"id": "att"}
+                if method == "GET" and path.endswith("/attachments"):
+                    return {"value": [{"contentId": "logo-cid", "isInline": True}]}
+                self.fail(f"Unexpected Graph call: {method} {path}")
+
+            args = self._chase_args(folder_path, "our-sent-id")
+            args.chase_own = True
+            output = io.StringIO()
+            with (
+                patch.object(tool, "load_official_signature_bundle", return_value=bundle),
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+                patch.object(tool, "append_receipt") as receipt,
+                patch.object(tool, "record_chase") as chase_log,
+                redirect_stdout(output),
+            ):
+                tool.command_reply_all(args)
+
+            result = json.loads(output.getvalue())
+            self.assertEqual(result["status"], "REPLY_ALL_DRAFT_CREATED_NOT_SENT")
+            self.assertTrue(result["chase_own"])
+            receipt.assert_called_once_with("outlook_chase_own_reply_draft_created", "chase-id")
+            chase_log.assert_called_once()
+
+    def test_chase_own_blocked_when_an_external_message_exists(self) -> None:
+        inbound, our_sent = self._chase_thread()
+
+        def fake_graph(token, method, path, payload=None):
+            if method == "GET" and path.startswith("/me/messages?") and "conversationId" in path:
+                return {"value": [inbound, our_sent]}
+            if method == "GET" and path.startswith("/me/messages/our-sent-id"):
+                return our_sent
+            self.fail(f"Unexpected Graph call: {method} {path}")
+
+        with tempfile.TemporaryDirectory() as folder:
+            args = self._chase_args(Path(folder), "our-sent-id")
+            args.chase_own = True
+            with (
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+            ):
+                with self.assertRaisesRegex(tool.OutlookError, "live external message"):
+                    tool.command_reply_all(args)
+
+    def test_chase_own_refuses_an_external_source_message(self) -> None:
+        inbound, _ = self._chase_thread()
+
+        def fake_graph(token, method, path, payload=None):
+            if method == "GET" and path.startswith("/me/messages/inbound-id"):
+                return inbound
+            self.fail(f"Unexpected Graph call: {method} {path}")
+
+        with tempfile.TemporaryDirectory() as folder:
+            args = self._chase_args(Path(folder), "inbound-id")
+            args.chase_own = True
+            with (
+                patch.object(tool, "refresh_access_token", return_value=("t", set())),
+                patch.object(tool, "graph_request", side_effect=fake_graph),
+            ):
+                with self.assertRaisesRegex(tool.OutlookError, "own sent message"):
+                    tool.command_reply_all(args)
+
     def test_html_history_comparison_tolerates_graph_markup_normalization(self) -> None:
         original = '<div class="quoted"><p>Original&nbsp; history</p><br>Line two</div>'
         graph_normalized = '<div class=quoted><p>Original&#160; history</p><br />Line two</div>'
