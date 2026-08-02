@@ -700,7 +700,7 @@ class StefeFlowTests(LoansToolTestCase):
     def test_exact_stefe_constants_and_layout(self):
         self.assertEqual(tool.STEFE_SHEET_TITLE, "Stefe")
         self.assertEqual(tool.STEFE_SHEET_ID, 396384971)
-        self.assertEqual(tool.STEFE_READ_RANGE, "'Stefe'!C1:E44")
+        self.assertEqual(tool.STEFE_READ_RANGE, "'Stefe'!C1:E212")
         self.assertEqual(tool.STEFE_APPEND_RANGE, "'Stefe'!C6:E43")
         self.assertEqual(tool.STEFE_TOTAL_FORMULA, "=SUM(D6:D212)")
         grid = tool._normalize_stefe_grid(self.google.grid)
@@ -759,8 +759,8 @@ class StefeFlowTests(LoansToolTestCase):
         locks = self.locks()
         self.assertEqual(locks[0]["status"], "committed_verified")
         backup = json.loads(Path(locks[0]["backup"]).read_text(encoding="utf-8"))
-        self.assertEqual(backup["range"], "'Stefe'!C1:E44")
-        self.assertEqual(len(backup["values"]), 44)
+        self.assertEqual(backup["range"], "'Stefe'!C1:E212")
+        self.assertEqual(len(backup["values"]), 212)
         self.assertIn("loans_stefe_adjustment_committed_verified",
                       self.receipts.read_text(encoding="utf-8"))
 
@@ -779,6 +779,28 @@ class StefeFlowTests(LoansToolTestCase):
         after = tool.expected_stefe_grid_after(grid, entry)
         after[6][2] = "Changed historical description"
         with self.assertRaisesRegex(tool.LoansError, "row 7 changed"):
+            tool.verify_stefe_readback(grid, after, entry)
+
+    def test_stefe_data_below_the_note_row_fails_closed(self):
+        """2026-07-31 review FINDING 3: D4 sums D6:D212, but only C1:E44 was
+        read - a value in D45:D212 silently falsified every reported balance.
+        Now the read covers the whole summed range and anything below the
+        row-44 note stops the tool."""
+        grid = tool._normalize_stefe_grid(self.google.grid)
+        self.assertEqual(len(grid), 212)
+        below_note = copy.deepcopy(grid)
+        below_note[44][1] = "125"  # D45: counted by the sheet's Balance formula
+        with self.assertRaisesRegex(tool.LoansError, "row 45"):
+            tool.stefe_table_state(below_note)
+        stray = copy.deepcopy(grid)
+        stray[199][2] = "stray note"  # E200: not summed, but the table drifted
+        with self.assertRaisesRegex(tool.LoansError, "row 200"):
+            tool.stefe_table_state(stray)
+        # The same guard protects the post-write readback.
+        entry = tool.plan_stefe_entry(grid, "2026-07-31", "50", "Wissam")
+        after = tool.expected_stefe_grid_after(grid, entry)
+        after[44][1] = "125"
+        with self.assertRaisesRegex(tool.LoansError, "row 45"):
             tool.verify_stefe_readback(grid, after, entry)
 
 

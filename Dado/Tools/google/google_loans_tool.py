@@ -77,7 +77,13 @@ STEFE_FIRST_ROW = 6
 STEFE_LAST_ROW = 43
 STEFE_NOTE_ROW = 44
 STEFE_NOTE = "*Positive is owning, Negative are owed"
-STEFE_READ_RANGE = "'Stefe'!C1:E44"
+# The sheet's own Balance cell D4 sums D6:D212 - far past the modeled table.
+# The read must cover everything that formula counts, and rows 45:212 must be
+# EMPTY, or the balances this tool shows Rachad diverge from the sheet's own
+# Balance cell (2026-07-31 review FINDING 3: only C1:E44 was read, so content
+# below row 44 could silently falsify current/resulting_balance_cad).
+STEFE_SCAN_LAST_ROW = 212
+STEFE_READ_RANGE = "'Stefe'!C1:E212"
 STEFE_APPEND_RANGE = "'Stefe'!C6:E43"
 
 AMOUNT_RE = re.compile(r"^[0-9]{1,9}(?:\.[0-9]{1,2})?$")
@@ -208,7 +214,7 @@ def _normalize_grid(values: Any) -> list[list[str]]:
 def _normalize_stefe_grid(values: Any) -> list[list[str]]:
     rows = list(values or [])
     grid: list[list[str]] = []
-    for index in range(STEFE_NOTE_ROW):
+    for index in range(STEFE_SCAN_LAST_ROW):
         raw = list(rows[index]) if index < len(rows) and isinstance(rows[index], list) else []
         grid.append([cell_text(raw[column]) if column < len(raw) else "" for column in range(3)])
     return grid
@@ -511,8 +517,8 @@ def verify_readback(before: list[list[str]], after: list[list[str]], entry: dict
 
 
 def check_stefe_layout(grid: list[list[str]]) -> None:
-    if len(grid) != STEFE_NOTE_ROW or any(len(row) != 3 for row in grid):
-        raise LoansError("The Stefe read did not cover C1:E44 exactly.")
+    if len(grid) != STEFE_SCAN_LAST_ROW or any(len(row) != 3 for row in grid):
+        raise LoansError("The Stefe read did not cover C1:E212 exactly.")
     if grid[3][0].strip() != "Balance" or grid[3][1].strip() != STEFE_TOTAL_FORMULA:
         raise LoansError(
             f"Stefe {STEFE_TOTAL_CELL} is not the commissioned total formula {STEFE_TOTAL_FORMULA}; stopped."
@@ -523,6 +529,17 @@ def check_stefe_layout(grid: list[list[str]]) -> None:
         raise LoansError("Stefe row 44 note changed; stopped.")
     if grid[STEFE_NOTE_ROW - 1][1].strip() or grid[STEFE_NOTE_ROW - 1][2].strip():
         raise LoansError("Stefe row 44 contains unexpected values; stopped.")
+    # Fail closed on ANY content below the note row: the D4 Balance formula
+    # counts D6:D212, so a value in D45:D212 makes every balance this tool
+    # reports or verifies wrong - and stray C/E content down there means the
+    # table is no longer the one Rachad commissioned.
+    for row in range(STEFE_NOTE_ROW + 1, STEFE_SCAN_LAST_ROW + 1):
+        if any(cell.strip() for cell in grid[row - 1]):
+            raise LoansError(
+                f"Stefe row {row} contains data below the row-44 note. The D4 "
+                f"Balance formula sums D6:D212, so the tool's balance would be "
+                "wrong; clear rows 45:212 or recommission the table. Stopped."
+            )
 
 
 def stefe_table_state(grid: list[list[str]]) -> dict[str, Any]:
@@ -616,7 +633,7 @@ def verify_stefe_readback(before: list[list[str]], after: list[list[str]],
     if after[row - 1][2].strip() != str(entry["description"]):
         raise LoansError(f"Stefe E{row} does not read back as the approved description.")
     expected = expected_stefe_grid_after(before, entry)
-    for index in range(STEFE_NOTE_ROW):
+    for index in range(STEFE_SCAN_LAST_ROW):
         if index == row - 1:
             continue
         if after[index] != expected[index]:
@@ -1029,7 +1046,7 @@ def command_commit(args: argparse.Namespace) -> None:
     tab_title = STEFE_SHEET_TITLE if is_stefe else SHEET_TITLE
     read_range = STEFE_READ_RANGE if is_stefe else READ_RANGE
     append_range = STEFE_APPEND_RANGE if is_stefe else APPEND_RANGE
-    backup_label = "STEFE_C1_E44" if is_stefe else "CCIVS_A1_B60"
+    backup_label = "STEFE_C1_E212" if is_stefe else "CCIVS_A1_B60"
     receipt_prefix = "loans_stefe_adjustment" if is_stefe else "loans_ccivs_payment"
     before = recheck_live(drive, sheets, plan)
 

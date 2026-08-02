@@ -58,14 +58,12 @@ Systems of record:
    estimate only) — and only via their stage-then-commit flow: every
    write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
-   approval the tool asks for. For customers and quote drafts that is
-   the plain word APPROVED — one word, never a checksum (his
-   2026-07-26 ruling, extended to this tool 2026-08-02); the item
-   tool still uses its exact APPROVE ITEM phrases. You relay his
-   word into the tool command; you NEVER supply, type first, or
-   infer an approval he has not sent. Everything else in Zoho is
-   READ-ONLY: no ad-hoc write API calls, no deletes, no stock
-   adjustments, no invoices, no sending anything.
+   plain approval word APPROVED — one word, never a checksum (his
+   2026-07-26 ruling, extended to both Zoho tools 2026-08-02). You
+   relay his word into the tool command; you NEVER supply, type
+   first, or infer an approval he has not sent. Everything else in
+   Zoho is READ-ONLY: no ad-hoc write API calls, no deletes, no
+   stock adjustments, no invoices, no sending anything.
 4. COMPANY LINE — Rachad owns both FRP Depot and Troy Dualam, and he
    decides what is separate. As of 2026-07-24 these are OPEN to you:
      - DRIVE — unrestricted, no filtering. His own Drive spans both

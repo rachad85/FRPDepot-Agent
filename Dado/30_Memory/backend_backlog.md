@@ -715,3 +715,63 @@ normal path. If Telegram itself is unreachable, only the Desktop file remains. A
 genuinely independent channel would mean a different service, or routing via
 Aze's gateway (a separate process on 8642 that survived this outage) — the latter
 crosses the company line and is Rachad's call, not mine.
+
+
+---
+
+## Found by the cron-message audit, 2026-08-02 (Rachad: "check all the cron messages I got from Dado on Telegram")
+
+### A-01 FIXED (config, Rachad-approved) — hermes verify-on-stop replaced cron finals with verification babble
+Root cause of the 08-01 monthly-reorder Telegram message being a "Verification
+remains blocked..." stub (receipt falsely claimed issued) and of the 07-31 13:07
+Q26-1549 PO-cutoff re-alert being scrubbed to nothing while the ledger said
+"Re-alerted". Mechanism: hermes injects a verify-on-stop nudge when a turn edits
+"code" (receipts.jsonl counts — .jsonl is not in its prose exemption) and the
+model's ANSWER TO THE NUDGE becomes the final message; cron/`-z` headless turns
+do not register as messaging surfaces, so "auto" armed it. Fixed with
+`hermes -p dado config set agent.verify_on_stop false` (hermes's own off-switch;
+their changelog calls the narrative "more noise than signal"). Config hot-reloads
+on mtime. Ledger corrected; correction receipt appended. Commits a727b07,
+e91daff.
+
+### A-02 FIXED a727b07 — conduct runner: transient claude crash cost a whole night; mojibake on every ping
+08-01 05:10 claude.exe exited 1 in ~3s with empty stderr → no 07-31 review, no
+nightly commit, no push, and the failure text showed only stderr (claude errors
+mostly go to stdout). Now: one retry on fast (<120s) failures, full
+stdout/stderr preserved in `40_Logs\conduct\<day>-claude-failures.txt`, and
+every Telegram-bound line ASCII-sanitized (all six 07-24..07-31 needs-you pings
+reached Rachad with "â€\x9d"-mojibake — hermes decodes the script's UTF-8 stdout
+as ANSI). Missed 07-31 review recovered by running the fixed script (8bc5647).
+
+### A-03 FIXED a727b07 — profile scripts dir (what cron RUNS) was stale on three tools
+The nightly reviewer auto-fixes REPO copies but is barred from writing outside
+C:\FRPDepot, so its fixes never reach `%LOCALAPPDATA%\...\profiles\dado\scripts\`.
+Found: conduct_review/conduct_collect stale (receipt-UTC-day, fit-profile
+truncation, error-dedup bugs all still live in cron), zoho_reorder_analysis
+missing its dateless-invoice crash guard; job_runner had a profile-side
+improvement (CREATE_NO_WINDOW) missing from the repo — synced INTO the repo.
+All seven cron/tool scripts hash-verified in sync. Session-start sweep now
+includes this check (memory updated).
+
+### A-04 FIXED b36f02a (quote/customer) + this commit (item tool) — Zoho approval is the plain word APPROVED on BOTH tools
+Rachad's 2026-08-02 answers to the 07-30 review question: quote/customer AND
+item tools now require `APPROVED` (digest validated internally from the plan
+file), Hard Rule 3 rewritten — he ANSWERS THE PLAN in his own message, Dado
+never supplies the word. Live SOUL synced.
+
+### A-05 FIXED 68abd87 — chase-own: follow-ups for threads nobody ever answered
+07-31 review FINDING 4 (5 genuine follow-ups, zero drafts possible — no external
+source message exists in a thread Rachad started and nobody replied to).
+Rachad-approved: `outlook_tool.py reply-all --chase-own` drafts under his OWN
+latest sent message, original recipients; refused whenever any live external
+message exists, on non-chase use, and when an external reply lands mid-draft.
+Digest prompt, skill and fit profile updated. 23/23 + tracker suites green.
+
+### A-06 FIXED (this commit) — Stefe loans balance could silently diverge from the sheet (07-31 review FINDING 3)
+`D4 = SUM(D6:D212)` but the tool read only C1:E44, so content in rows 45:212
+would falsify every current/resulting balance Rachad approves. Read widened to
+C1:E212 with rows 45:212 required EMPTY (fail closed), same guard on post-write
+readback; backups now capture the full range. 55/55 tests. Live read-only
+`check-stefe` verified against the real sheet: rows 45:212 are empty, balance
+-15 matches the 08-01 committed plan — the bug was latent, not an active
+miscalculation.

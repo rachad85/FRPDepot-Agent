@@ -45,7 +45,11 @@ Run with the hermes venv interpreter
    chain, editability, Sheets identity, the `B3` total formula, the last used
    row, the next free row, and the current balance. Never writes.
 2. `check-stefe` — the equivalent read-only check for the fixed `Stefe`
-   C1:E44 layout, immutable tab ID, formula, headers, note, next row and balance.
+   layout, immutable tab ID, formula, headers, note, next row and balance. The
+   read covers C1:E212 — everything the `D4 = SUM(D6:D212)` Balance formula
+   counts — and any content below the row-44 note fails closed, because a value
+   in D45:D212 would make the tool's reported balance diverge from the sheet's
+   own Balance cell (2026-07-31 review FINDING 3).
 3. `stage-ccivs-payment --date YYYY-MM-DD --amount <positive> --source "<why>"`
    — live-reads the CCIVS state and writes a plan file. Nothing remote changes.
 4. `stage-stefe-adjustment --date YYYY-MM-DD --amount <positive>
@@ -62,7 +66,8 @@ and is stored NEGATIVE. For example, `--amount 50` writes `-50`.
 - Exact Drive identity, path chain and editability; exact Sheets title, locale,
   time zone, selected tab title and tab ID.
 - Selected layout guard: CCIVS requires `B3 = SUM(B4:B60)`; Stefe requires
-  `D4 = SUM(D6:D212)`, exact C5:E5 headers and the unchanged C44 note.
+  `D4 = SUM(D6:D212)`, exact C5:E5 headers, the unchanged C44 note, and
+  rows 45:212 completely empty (fail closed — they are inside the summed range).
 - Current table end and next row must stay inside the selected fixed range and
   every target cell must be blank.
 - Duplicate guard: CCIVS refuses the same date and amount; Stefe refuses the

@@ -34,6 +34,20 @@ CREATE_SCOPE = "ZohoInventory.items.CREATE"
 UPDATE_SCOPE = "ZohoInventory.items.UPDATE"
 CREATE_PATH = "/inventory/v1/items"
 UPDATE_PATH_RE = re.compile(r"^/inventory/v1/items/[0-9]+$")
+# Rachad's ruling (2026-07-26, extended to this tool 2026-08-02): his approval
+# is ONE PLAIN WORD, never a checksum — the plan digest stays internal and is
+# validated by load_plan. The word must come FROM RACHAD'S OWN MESSAGE
+# answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
+APPROVAL_WORD = "APPROVED"
+
+
+def require_rachad_approval(approval: str) -> None:
+    if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
+        raise ItemToolError(
+            f"Rachad must answer this staged plan with the one-word approval: "
+            f"{APPROVAL_WORD}. It must come from his own message (Hard Rule 3) — "
+            "never supplied by Dado."
+        )
 
 CREATE_FIELDS = {
     "name", "sku", "unit", "unit_id", "item_type", "product_type",
@@ -230,7 +244,7 @@ def command_stage_create(args: argparse.Namespace) -> None:
     }
     path = stage_plan("item_create", payload, sources, summary)
     digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-    print(json.dumps({"plan": str(path), "summary": summary, "approval": f"APPROVE ITEM {digest[:8]}"}, indent=2))
+    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
 
 
 def command_stage_name_sku(args: argparse.Namespace) -> None:
@@ -280,7 +294,7 @@ def command_stage_name_sku(args: argparse.Namespace) -> None:
     summary = {"before": before, "after": {"item_id": item_id, "name": desired_name, "sku": desired_sku}, "changed": changed}
     path = stage_plan("item_name_sku", payload, sources, summary)
     digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-    print(json.dumps({"plan": str(path), "summary": summary, "approval": f"APPROVE ITEM CHANGE {digest[:8]}"}, indent=2))
+    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
 
 
 def api_write_allowed(
@@ -329,9 +343,7 @@ def api_write_allowed(
 
 def command_commit_create(args: argparse.Namespace) -> None:
     plan = load_plan(args.plan, "item_create")
-    expected = f"APPROVE ITEM {plan['sha256'][:8]}"
-    if args.approval != expected:
-        raise ItemToolError(f"Exact Rachad approval required: {expected}")
+    require_rachad_approval(args.approval)
     vault = zoho_tool.load_vault()
     if CREATE_SCOPE not in (vault.get("scopes") or []):
         raise ItemToolError(f"Saved Zoho connection lacks {CREATE_SCOPE}.")
@@ -363,9 +375,7 @@ def command_commit_create(args: argparse.Namespace) -> None:
 
 def command_commit_name_sku(args: argparse.Namespace) -> None:
     plan = load_plan(args.plan, "item_name_sku")
-    expected = f"APPROVE ITEM CHANGE {plan['sha256'][:8]}"
-    if args.approval != expected:
-        raise ItemToolError(f"Exact Rachad approval required: {expected}")
+    require_rachad_approval(args.approval)
     vault = zoho_tool.load_vault()
     if UPDATE_SCOPE not in (vault.get("scopes") or []):
         raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
