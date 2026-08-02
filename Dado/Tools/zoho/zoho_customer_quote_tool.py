@@ -29,6 +29,11 @@ import zoho_tool
 TOOL_NAME = "FRP Depot Zoho Customer & Quote Draft Tool"
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_plans"
+# Rachad's ruling (2026-07-26, extended to this tool 2026-08-02): his approval
+# is ONE PLAIN WORD, never a checksum — the plan digest stays internal and is
+# validated by load_verified_plan. The word must come FROM RACHAD'S OWN MESSAGE
+# answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
+APPROVAL_WORD = "APPROVED"
 ALLOWED_POSTS = {
     "customer": "/books/v3/contacts",
     "quote": "/books/v3/estimates",
@@ -181,7 +186,7 @@ def command_stage_customer(args: argparse.Namespace) -> None:
     }
     path = stage_plan("customer", payload, {"record_source": args.source}, summary)
     digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-    print(json.dumps({"plan": str(path), "summary": summary, "approval": f"APPROVE CUSTOMER {digest[:8]}"}, indent=2))
+    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
 
 
 def numeric(value: Any, label: str) -> float:
@@ -315,7 +320,7 @@ def command_stage_quote(args: argparse.Namespace) -> None:
     }
     path = stage_plan("quote", payload, sources, summary)
     digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-    print(json.dumps({"plan": str(path), "summary": summary, "approval": f"APPROVE QUOTE {digest[:8]}"}, indent=2))
+    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
 
 
 def load_verified_plan(path: str, expected_kind: str) -> dict[str, Any]:
@@ -384,9 +389,12 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
     if kind == "quote":
         validate_quote_customer_policy(plan["payload"])
     digest = plan["sha256"]
-    expected = f"APPROVE {'CUSTOMER' if kind == 'customer' else 'QUOTE'} {digest[:8]}"
-    if args.approval != expected:
-        raise DraftToolError(f"Exact Rachad approval required: {expected}")
+    if str(args.approval).strip().casefold() != APPROVAL_WORD.casefold():
+        raise DraftToolError(
+            f"Rachad must answer this staged plan with the one-word approval: "
+            f"{APPROVAL_WORD}. It must come from his own message (Hard Rule 3) — "
+            "never supplied by Dado."
+        )
     vault = zoho_tool.load_vault()
     zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
     required_scope = "ZohoBooks.contacts.CREATE" if kind == "customer" else "ZohoBooks.estimates.CREATE"
