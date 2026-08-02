@@ -780,6 +780,22 @@ top up at portal.nousresearch.com, or repoint auxiliaries at a free model —
 either is a spend/model choice, so his call, not a backend auto-fix (no silent
 model drift).
 
+### A-08 OPEN — conduct bundle carries no outbound text (08-01 review FINDING 5)
+`conduct_collect.py` collects only inbound messages; Dado's replies survive as a
+char count. Two mandated checks (anything sent/promised, invented facts) cannot
+be evidenced. Backend check needed: does gateway.log (or state.db) record reply
+text, and can the collector include a bounded outbound section per turn?
+
+### A-09 OPEN (needs Rachad, pinged 08-02 05:15) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
+Session 20260730_233504 served turns for ~43h; context summary failed twice with
+524 origin timeouts; two of Rachad's messages sat ~16 min unanswered (FINDING 1
+is largely downstream). Config `session_reset: mode: none`. Recommendation:
+daily reset (at_hour is already 4) so every day starts a fresh session before
+the 05:10 review. Live-config change — waits for Rachad's word, same as
+verify_on_stop. Related: Telegram progress-EDIT failures ("Message to edit not
+found") live in shared hermes' telegram adapter — pinned install, not a repo
+fix.
+
 ### A-06 FIXED (this commit) — Stefe loans balance could silently diverge from the sheet (07-31 review FINDING 3)
 `D4 = SUM(D6:D212)` but the tool read only C1:E44, so content in rows 45:212
 would falsify every current/resulting balance Rachad approves. Read widened to
