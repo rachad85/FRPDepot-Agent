@@ -111,6 +111,16 @@ def whole_file(path: Path, limit_chars: int = 8000) -> str:
     return f"{text[:head]}\n\n(... {omitted} chars omitted from the middle ...)\n\n{text[-tail:]}"
 
 
+def _stamp_span(first: str, last: str) -> float | None:
+    """Seconds between two `HH:MM:SS,mmm` log stamps; None if unparseable."""
+    try:
+        a = dt.datetime.strptime(first.replace(",", "."), "%H:%M:%S.%f")
+        b = dt.datetime.strptime(last.replace(",", "."), "%H:%M:%S.%f")
+    except ValueError:
+        return None
+    return (b - a).total_seconds()
+
+
 def auto_flags(turns: list[str], errors: list[str]) -> list[str]:
     flags: list[str] = []
     for line in turns:
@@ -133,15 +143,29 @@ def auto_flags(turns: list[str], errors: list[str]) -> list[str]:
     # threshold, because "(0.62s)" vs "(0.60s)" and two session ids made one
     # failure mode look like four distinct errors. Paths and payload stay in
     # the signature, so unrelated errors are still counted apart.
-    counts = Counter(
-        re.sub(r"\(\d+\.\d+s\)", "(Ns)",
-               re.sub(r"\[[^\]]+\]", "[sid]",
-                      re.sub(r"^\S+ \S+ ", "", l))).strip()
+    sigs = [
+        (re.sub(r"\(\d+\.\d+s\)", "(Ns)",
+                re.sub(r"\[[^\]]+\]", "[sid]",
+                       re.sub(r"^\S+ \S+ ", "", l))).strip(),
+         l.split(" ", 2)[1] if len(l.split(" ", 2)) > 2 else "")
         for l in errors if l.strip()
-    )
+    ]
+    counts = Counter(sig for sig, _ in sigs)
     for message, count in counts.items():
         if count >= ERROR_REPEATS:
-            flags.append(f"REPEATED ERROR x{count}: {message[:160]}")
+            # Say the SPAN, not just the count. Five identical failures inside
+            # one second is ONE parallel batch; the same five over ten minutes
+            # is a retry loop -- opposite findings, identical flag text until
+            # now. Two consecutive reviews had to spend a paragraph undoing it
+            # (2026-08-01 web_search x5 in 103ms, 2026-08-02 firecrawl x5 in
+            # 29ms, neither one circling).
+            stamps = [t for sig, t in sigs if sig == message and t]
+            span = _stamp_span(stamps[0], stamps[-1]) if len(stamps) > 1 else None
+            note = ""
+            if span is not None:
+                shape = "one burst, not a retry loop" if span < 2 else "spread over time"
+                note = f" [{span:.1f}s span -- {shape}]"
+            flags.append(f"REPEATED ERROR x{count}{note}: {message[:160]}")
     return flags
 
 

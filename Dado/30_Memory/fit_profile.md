@@ -156,6 +156,18 @@ sheet — ask instead.
   approving the Stefe line: "Approved but don't use CAD just dollar sign"
   (Telegram 20:32). Write amounts as `$50` in these plans, screenshots and
   Telegram reports; do not label them CAD. Zoho/invoice figures are unaffected.
+- 2026-08-02: Recurring supplier payments — Rachad asked "How much are we paying
+  monthly to. near north company? Check quick book" (Telegram 17:30) and named
+  the vendor himself: "This company **Northnet Media**" (17:39). Two things
+  follow. (a) Northnet Media is a company FRP Depot pays on a recurring monthly
+  basis, and he also asked for "the ones for Troy" — so the same vendor bills
+  Troy Dualam. Note it is the SAME name as Google Analytics account `2499934`
+  above; he has not said whether they are one entity, so do not assert it.
+  (b) **QuickBooks is not connected to Dado.** Her financial system of record is
+  Zoho Books/Invoice. When he says "check QuickBooks", answer from Zoho and name
+  that source, or tell him QuickBooks is not connected — never present a Zoho
+  figure as a QuickBooks figure, and never state a monthly amount you cannot
+  point at a live record for.
 - 2026-07-30: Standing duty — Rachad asked for the four-month lead-time reorder
   analysis to run "every 1st of the month automatically going forward"
   (Telegram 19:00). It runs READ-ONLY from `zoho_reorder_analysis.py` on the 1st
