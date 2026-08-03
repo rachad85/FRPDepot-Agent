@@ -768,6 +768,12 @@ message exists, on non-chase use, and when an external reply lands mid-draft.
 Digest prompt, skill and fit profile updated. 23/23 + tracker suites green.
 
 ### A-07 OPEN (Rachad's call — money) — Nous auxiliary account out of credits since 2026-08-01 19:10
+UPDATE 2026-08-03 (08-02 review FINDING 4): the failure signature changed on
+08-02 to `Firecrawl client initialization failed: missing direct config and
+tool-gateway auth` — consistent with the same root cause (no direct firecrawl
+API key configured, and the Nous tool-gateway auth died with the subscription),
+but after any top-up, VERIFY web_search actually works before closing this; if
+init still fails, the fix is a direct firecrawl key or a different web backend.
 Dado's auxiliary services all point at nous/deepseek-v4-pro (config.yaml:
 vision, title_generation, compression, summary, web_extract, approval) and
 web.backend firecrawl rides the same subscription. errors.log shows
