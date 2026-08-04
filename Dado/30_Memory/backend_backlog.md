@@ -792,7 +792,47 @@ char count. Two mandated checks (anything sent/promised, invented facts) cannot
 be evidenced. Backend check needed: does gateway.log (or state.db) record reply
 text, and can the collector include a bounded outbound section per turn?
 
-### A-09 FIXED (config, Rachad-approved 08-02) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
+### A-10 OPEN — rg pattern starting with `--` is consumed as a flag (08-03 review FINDING 5)
+`search_files` died on pattern `--thread|add_argument("--thread|...` — rg parsed
+it as a flag. Fix belongs in the existing LOCAL PATCH to shared hermes
+`tools\file_operations.py` (the 2026-07-24 native-path patch): pass the pattern
+after `-e` (or a `--` separator) at the three rg call sites. Shared pinned
+install — do it deliberately, re-verify the path patch afterwards, note in
+CLAUDE.md's patch section.
+
+### A-11 OPEN — 07:00 sweep and 08:00 digest double-touch the same thread (08-03 review FINDING 3)
+Global Trade Links: sweep asked approval for a chase at 07:0x, digest prepared
+the chase at 08:08 unasked. Dedup needed: digest drops threads the same
+morning's sweep already raised, or rule 3b stays silent when the digest is <1h
+away. Cross-file behavior change (reasoner + digest prompts/charter) — design
+with Rachad's preference, not a quick edit.
+
+### A-12 RESOLVED-NO-ACTION — duplicate Fibre Mauricie drafts (08-03 review FINDING 1 / NEEDS-RACHAD)
+Graph readback 08-04: Drafts holds ZERO "Tuyauterie" messages; Sent Items holds
+TWO — the pre-correction reply sent 18:10 local 08-03, the corrected one sent
+18:53. Both receipt draft-ids died on send (normal Outlook behavior; explains
+the missing supersede receipt). The customer received the correction 43 min
+after the wrong version. Nothing to clean up; the 05:15 ping's warning was
+already moot. Reviewer's other ask stands as a small improvement: reply-all
+receipts should carry conversation id + subject, not just the opaque message id.
+
+### A-09 REOPENED 08-04 (config applied but INERT; needs Rachad's 10-second action) — daily reset never fired (08-03 review FINDING 2)
+The 08-02 `session_reset.mode: daily` write is correct in the live config, but
+the GATEWAY BUILDS ITS CONFIG OBJECT ONCE AT STARTUP (`load_gateway_config()`;
+only .env is per-turn reloaded) and Dado's gateway (pid 28456) started 07-28 —
+it still runs `mode: none`. Evidence: sid 20260802_115426 served all of 08-03
+(~35h), no reset at the 04:00 boundary despite 5 contacts.
+THE FIX NEEDS A GATEWAY RESTART, AND THE BACKEND CANNOT DO IT: this Claude Code
+session is a CHILD of the gateway (powershell←claude.exe←bash←bash←pythonw
+28456), hermes refuses `gateway restart` from inside its own tree, and killing
+the gateway kills this session and its session-only watch crons. Rachad must
+double-click STOP_DADO.bat then START_DADO.bat from Explorer (10 seconds;
+STOP's process matcher fixed 08-04 to also catch the `--profile` form the
+Startup .vbs uses). Until then, `/new` typed to Dado on Telegram is the manual
+substitute. After the restart: reopen a backend session and re-arm the watch
+per the dado-watch-thread memory.
+
+### A-09-prior FIXED (config, Rachad-approved 08-02) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
 Session 20260730_233504 served turns for ~43h; context summary failed twice with
 524 origin timeouts; two of Rachad's messages sat ~16 min unanswered (FINDING 1
 is largely downstream). Rachad approved ("Yes proceed", 08-02):
