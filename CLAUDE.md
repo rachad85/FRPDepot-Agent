@@ -73,6 +73,20 @@ engineer.
   so it was a no-op. Fix the ARGUMENT HANDED TO THE NATIVE BINARY, not the
   caller. Verified after: MSYS, Windows, /c/Intercompany, target=content and
   target=files all return matches; /home/x, relative paths and "." unchanged.
+  *** v0.20.0 additions (2026-08-04) — also re-apply after updates. ***
+  1. Every native-rg content pattern is passed after `-e`, including the three
+     zero-match probes. Otherwise a valid pattern beginning with `--` is parsed
+     as an rg option and dies. Those probe paths also use
+     `_escape_native_path_arg`. Regression test:
+     `TestSearchPathValidation::test_search_rg_pattern_starting_with_hyphens_uses_expression_flag`.
+  2. File `%LOCALAPPDATA%\hermes\hermes-agent\cron\lifecycle_guard.py`:
+     `_read_referenced_script` returns empty text (not `None`) for a local binary
+     and catches `ValueError` from NUL-bearing paths. v0.20.0 otherwise fed the
+     local Windows `python.exe` through the remote-script fallback, recursively
+     tokenized PE bytes, and crashed every full-path Python terminal command with
+     `open: embedded null character in path`; that broke the 11:00 inbox sweep.
+     Regression test:
+     `TestLifecycleGuardModule::test_local_binary_does_not_fall_back_to_remote_reader`.
 - Python: STILL no `py` launcher, and it cannot be installed — a Software
   Restriction Policy (HKLM\SOFTWARE\Policies\Microsoft\Windows\Safer) blocks
   running downloaded installers, so winget/python.org .exe fails with 1625.

@@ -792,13 +792,15 @@ char count. Two mandated checks (anything sent/promised, invented facts) cannot
 be evidenced. Backend check needed: does gateway.log (or state.db) record reply
 text, and can the collector include a bounded outbound section per turn?
 
-### A-10 OPEN — rg pattern starting with `--` is consumed as a flag (08-03 review FINDING 5)
+### A-10 FIXED 2026-08-04 — rg pattern starting with `--` is consumed as a flag (08-03 review FINDING 5)
 `search_files` died on pattern `--thread|add_argument("--thread|...` — rg parsed
 it as a flag. Fix belongs in the existing LOCAL PATCH to shared hermes
 `tools\file_operations.py` (the 2026-07-24 native-path patch): pass the pattern
 after `-e` (or a `--` separator) at the three rg call sites. Shared pinned
 install — do it deliberately, re-verify the path patch afterwards, note in
-CLAUDE.md's patch section.
+CLAUDE.md's patch section. Applied after the v0.20.0 update and covered by a
+focused regression test (1 passed); native Windows path handling remains in
+place. The running gateway must restart once to load the edited module.
 
 ### A-11 OPEN — 07:00 sweep and 08:00 digest double-touch the same thread (08-03 review FINDING 3)
 Global Trade Links: sweep asked approval for a chase at 07:0x, digest prepared
@@ -816,7 +818,7 @@ after the wrong version. Nothing to clean up; the 05:15 ping's warning was
 already moot. Reviewer's other ask stands as a small improvement: reply-all
 receipts should carry conversation id + subject, not just the opaque message id.
 
-### A-09 REOPENED 08-04 (config applied but INERT; needs Rachad's 10-second action) — daily reset never fired (08-03 review FINDING 2)
+### A-09 FIX-LOADED 08-04; verify at 04:00 on 08-05 — daily reset never fired (08-03 review FINDING 2)
 The 08-02 `session_reset.mode: daily` write is correct in the live config, but
 the GATEWAY BUILDS ITS CONFIG OBJECT ONCE AT STARTUP (`load_gateway_config()`;
 only .env is per-turn reloaded) and Dado's gateway (pid 28456) started 07-28 —
@@ -831,6 +833,22 @@ STOP's process matcher fixed 08-04 to also catch the `--profile` form the
 Startup .vbs uses). Until then, `/new` typed to Dado on Telegram is the manual
 substitute. After the restart: reopen a backend session and re-arm the watch
 per the dado-watch-thread memory.
+
+UPDATE 2026-08-04 10:44: Dado's watchdog started a new gateway after the Hermes
+v0.20.0 update. The running process therefore loaded `session_reset.mode: daily`
+and `at_hour: 4`. Do not call this fully verified until the 08-05 04:00 boundary
+creates a fresh session as configured.
+
+### A-13 PATCHED-PENDING-RESTART — v0.20.0 Windows lifecycle guard broke full-path Python commands
+Every command invoking the required full venv path failed before execution with
+`ValueError: open: embedded null character in path`. Root cause: a local PE
+binary returned `None` from `_read_referenced_script`, which wrongly activated
+the remote-script fallback; decoded binary bytes were recursively tokenized as
+paths. Shared-install patch now returns empty text for local binaries and catches
+NUL-path `ValueError`. Direct regression class: 14 passed. FRP's 236-test suite
+and every live system check pass when invoked with bare `python`. A Dado gateway
+restart is still required to load the patched module into the live tool process;
+after restart, verify the original full-path Python command and close this item.
 
 ### A-09-prior FIXED (config, Rachad-approved 08-02) — 43-hour agent session; compressor timing out (08-01 review FINDING 2)
 Session 20260730_233504 served turns for ~43h; context summary failed twice with
