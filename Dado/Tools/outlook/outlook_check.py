@@ -681,6 +681,15 @@ def main() -> int:
             if len(args) < 2:
                 print("usage: outlook_check.py --thread <conversationId>")
                 return 2
+            # A conversationId is one opaque token (base64-ish, no spaces). A
+            # subject or a company name here travels into the Graph $filter and
+            # comes back as a bare HTTP 400 that reads like a broken mailbox -
+            # 2026-08-03, --thread "Fibre Mauricie". Say what is wrong instead.
+            if " " in args[1] or len(args[1]) < 20:
+                print(f"outlook_check.py --thread needs a conversationId, not a subject "
+                      f"or a company name (got {args[1]!r}). Take the id from the "
+                      "'conversation_id' field of --awaiting or --waiting-on-them.")
+                return 2
             show_thread(token, args[1])
             return 0
         if args and args[0] == "--awaiting":

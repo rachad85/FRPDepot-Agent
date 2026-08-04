@@ -49,6 +49,14 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-07-30 Troy Dualam Services Inc. accepted QT-000027 — Zoho confirms the CAD 3,061.80 estimate was accepted and converted to SO-00047 / sent INV-000049 for CAD 3,017.40; physical stock covers the order, but the CAD 44.40 total change requires verification.
 - 2026-07-31 FRP Tank / Troy Dualam Q26-1549 — Re-alerted because Ian's July 31 PO cutoff for guaranteed September 30 readiness is today; verify whether Fibre Mauricie's client approved or the cutoff was extended.
 - 2026-08-02 FRP Tank / Troy Dualam Q26-1549 — CORRECTION (backend): the 2026-07-31 re-alert above was NEVER DELIVERED — the sweep's final message contained only verification-tool noise and the wrapper suppressed it (reasoner log 13:07:53). Treat the July 31 PO-cutoff re-alert as not sent; Rachad was informed in the 2026-08-02 backend session. Do not let the 2026-07-31 line above justify silence.
+- 2026-08-03 Global Trade Links / Re: New submission from Contact — Viswanath has not replied for 5 working days after Rachad directed him to website pricing for 2 × 2-inch Type 100 FRP lap joints; live Zoho has no customer, estimate, or exact SLP-PS09A item match, so approval requested to prepare a qualification chase.
+- 2026-08-03 KENZ Jordan / B95 and ASA clarification — Lina has not answered Rachad's clarification question after 7 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-03 RFQ to J-Rain — Fei has not replied to the B95 pipe and flange pricing request after 7 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-03 FRP Depot WooCommerce/Zoho and Search Console priorities — Northnet has not replied with the requested implementation plan after 6 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-03 FRP Components and Custom Fabrication for PCPS — Lucien has not replied to Rachad's introduction after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-03 Global Trade Links / Re: New submission from Contact — Viswanath has not replied after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-03 Racks for container — New corrected J-Rain supplier quotation offers 80 of each rack type for 8 containers: Option 1 USD 5,120 or Option 2 USD 2,800, both ex-works Jizhou; approval requested to prepare a reply after confirming design and quantity.
+- 2026-08-03 Tuyauterie en enroulement filamentaire — Fibre Mauricie confirms receipt of the D470 flange/pipe order but says the delivered pipe appears HLU with 4-inch wound sections rather than the website-described filament-wound construction; product construction needs verification before replying.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

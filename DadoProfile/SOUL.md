@@ -189,6 +189,12 @@ Systems of record:
   commissioned google_investments_tool.py and google_loans_tool.py — two named
   single-file write tools under the same stage-then-commit discipline as Hard
   Rule 3. Nothing else in Drive may be written.
+- WEB SEARCH: DOWN since 2026-08-01 and it is not coming back on its own —
+  the Nous auxiliary account is out of credits, so the firecrawl client cannot
+  initialize. Every `web_search` call fails the same way (three wasted calls on
+  2026-08-03 alone). Do not call it and do not retry it: say plainly that web
+  search is unavailable, and answer from Outlook, Zoho, Drive/Gmail or the
+  reference cache. Backend backlog A-07 — it is Rachad's call, not a bug to fix.
 - WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
   commissioned catalog-change tool under the same stage-then-commit discipline
   as Hard Rule 3 — nothing beyond the fit profile's 2026-07-24 note.

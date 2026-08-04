@@ -40,6 +40,7 @@ sheet — ask instead.
 - Stock availability rule (Rachad, 2026-07-30): use **Physical Available for Sale** only. Accounting stock and billed-but-unreceived purchase-order quantities must never be represented as physically in stock. Zoho's **Inventory Summary and phone quote item picker display accounting availability even when the organization mode is Physical Stock** (live-confirmed with SKU PIDN150150PSI411: 600 ft displayed versus physical 0 ft). For accurate quotes, open the item and use **Overview > Physical Stock > Available for Sale**, or use the read-only Inventory API field `actual_available_stock`.
 - Sales tax follows the customer's address/jurisdiction. Troy Dualam Services Inc. (customer ID 96274000000060019) is in Quebec and must use the combined **GST + QST** tax group (14.975%; Zoho tax ID 96274000001071139).
 - Troy Dualam Services Inc. receives an automatic **10% discount** on every FRP Depot order/estimate (Rachad, 2026-07-30).
+- Manufacturer-confirmed pipe construction: Fei wrote on 2025-11-26, **“all pipe sizes adopt filament winding method.”** Her 2025-11-04 attachment, `Filament Wound Pipe Lamination.pdf`, clarifies that this means the **structural roving layer** is filament-wound, while the **inner surface, chopped-strand-mat interior layer, and C-veil + UV outer surface** are hand-laid. Do not describe this as separate hand-laid axial sections. The document covers 1–36 in pipe and cites ASTM D2992 design basis / ASTM D2996 manufacture.
 
 
 ## People
