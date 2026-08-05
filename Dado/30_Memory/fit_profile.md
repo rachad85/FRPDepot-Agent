@@ -105,17 +105,20 @@ sheet — ask instead.
   "let's give you write access"). Drive is no longer read-only. (a) **Investments
   workbook tool** (`google_investments_tool.py`) — the ONE file he means by "the
   investments log" is `My Drive / My Files / Rachad / Bussiness Folder /
-  Investements.xlsx` (19:00, "From now on when i tell you update the investments
+  `Investements.xlsx` (19:00, "From now on when i tell you update the investments
   log its this one"); allowed edit is a cash-profit row in the `Pistavo Labs`
   section. (b) **Loans tool** (`google_loans_tool.py`) — Google Sheet `Loans`;
   `CCIVS` fills the next blank A:B row with a dated negative repayment. On
   2026-07-31 Rachad directly commissioned and confirmed the live `Stefe` tab
   (spelled exactly that way): its fixed C6:E43 table may receive one staged row
-  containing date, negative amount and plain-text description. Both operations
-  remain stage-then-commit under Hard Rule 3. Rachad's approval word is ONE PLAIN
-  WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a checksum.
-  Sheet screenshots omit "live Google Sheets" wording and crop at the latest
-  payment.
+  containing date, negative amount and plain-text description. On 2026-08-04,
+  Rachad directly commissioned the existing `In-Laws` tab (spelled with the
+  hyphen): its fixed A7:C61 table may receive the same staged three-cell row;
+  row 62 is the pinned note and the B5 balance formula counts B7:B234. Both
+  operations remain stage-then-commit under Hard Rule 3. Rachad's approval word
+  is ONE PLAIN WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a
+  checksum. Sheet screenshots omit "live Google Sheets" wording and crop at the
+  latest payment.
 - 2026-07-27: FRP Depot GA4 access is live and read-only. Google Analytics
   account `2499934` ("Northnet Media") exposes property `529941333` ("FRP
   Depots"). A live Data API audit returned historical frpdepots.com traffic,

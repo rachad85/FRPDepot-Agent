@@ -118,6 +118,19 @@ class FakeGoogle:
             while len(grid) < tool.STEFE_NOTE_ROW - 1:
                 grid.append([])
             grid.append([tool.STEFE_NOTE, "", ""])
+        if grid is None and mode == "in_laws":
+            grid = [
+                [], [], [], [],
+                ["Balance", tool.IN_LAWS_TOTAL_FORMULA, ""],
+                ["DATE", "Amount", "Description"],
+                [serial(2027, 7, 1), 1000, "PRS"],
+                [serial(2026, 7, 1), 4000, "Qatar"],
+                [serial(2026, 7, 4), -4190, "Gold"],
+                [serial(2026, 7, 13), 1250, "PRS"],
+            ]
+            while len(grid) < tool.IN_LAWS_NOTE_ROW - 1:
+                grid.append([])
+            grid.append([tool.IN_LAWS_NOTE, "", ""])
         self.grid = grid if grid is not None else [
             ["CCIVS", ""],
             [],
@@ -131,8 +144,12 @@ class FakeGoogle:
         self.mime = tool.SPREADSHEET_MIME
         self.locale = tool.EXPECTED_LOCALE
         self.time_zone = tool.EXPECTED_TIME_ZONE
-        self.tab_title = tool.STEFE_SHEET_TITLE if mode == "stefe" else tool.SHEET_TITLE
-        self.sheet_id = tool.STEFE_SHEET_ID if mode == "stefe" else tool.SHEET_ID
+        if mode == "stefe":
+            self.tab_title, self.sheet_id = tool.STEFE_SHEET_TITLE, tool.STEFE_SHEET_ID
+        elif mode == "in_laws":
+            self.tab_title, self.sheet_id = tool.IN_LAWS_SHEET_TITLE, tool.IN_LAWS_SHEET_ID
+        else:
+            self.tab_title, self.sheet_id = tool.SHEET_TITLE, tool.SHEET_ID
         self.editable = True
         self.modified = "2026-07-26T10:00:00.000Z"
         self.version = "412"
@@ -177,6 +194,8 @@ class FakeGoogle:
     def next_free_row(self) -> int:
         if self.mode == "stefe":
             state = tool.stefe_table_state(tool._normalize_stefe_grid(self.grid))
+        elif self.mode == "in_laws":
+            state = tool.in_laws_table_state(tool._normalize_in_laws_grid(self.grid))
         else:
             state = tool.table_state(tool._normalize_grid(self.grid))
         return int(state["next_row"])
@@ -188,7 +207,7 @@ class FakeGoogle:
         values = list(body["values"][0])
         while len(self.grid) < row:
             self.grid.append([])
-        width = 3 if self.mode == "stefe" else 2
+        width = 2 if self.mode == "ccivs" else 3
         cells = list(self.grid[row - 1])
         while len(cells) < width:
             cells.append("")
@@ -197,21 +216,22 @@ class FakeGoogle:
         parsed = datetime.strptime(str(values[0]), "%m/%d/%Y").date()
         cells[0] = (parsed - tool.SHEETS_EPOCH).days
         cells[1] = values[1]
-        if self.mode == "stefe":
+        if self.mode != "ccivs":
             cells[2] = values[2]
         self.grid[row - 1] = cells
         if self.mutate_after_append is not None:
             self.mutate_after_append(self)
         if self.append_response is not None:
             return self.append_response
-        updated = (
-            f"Stefe!C{row}:E{row}" if self.mode == "stefe"
-            else f"CCIVS!A{row}:B{row}"
-        )
-        table_range = (
-            f"Stefe!C6:E{row - 1}" if self.mode == "stefe"
-            else f"CCIVS!A4:B{row - 1}"
-        )
+        if self.mode == "stefe":
+            updated = f"Stefe!C{row}:E{row}"
+            table_range = f"Stefe!C6:E{row - 1}"
+        elif self.mode == "in_laws":
+            updated = f"In-Laws!A{row}:C{row}"
+            table_range = f"In-Laws!A7:C{row - 1}"
+        else:
+            updated = f"CCIVS!A{row}:B{row}"
+            table_range = f"CCIVS!A4:B{row - 1}"
         return {
             "spreadsheetId": tool.EXPECTED_FILE_ID,
             "tableRange": table_range,
@@ -280,6 +300,18 @@ class LoansToolTestCase(unittest.TestCase):
         buffer = io.StringIO()
         with mock.patch("sys.stdout", buffer):
             tool.command_stage_stefe(argparse.Namespace(
+                date=entry_date, amount=amount, description=description, source=source
+            ))
+        self.staged_output = json.loads(buffer.getvalue())
+        plans = sorted(self.plan_dir.glob("*.json"))
+        self.assertEqual(len(plans), 1)
+        return plans[0]
+
+    def stage_in_laws(self, *, entry_date="2026-08-04", amount="800",
+                      description="Hamza", source="Rachad instruction") -> Path:
+        buffer = io.StringIO()
+        with mock.patch("sys.stdout", buffer):
+            tool.command_stage_in_laws(argparse.Namespace(
                 date=entry_date, amount=amount, description=description, source=source
             ))
         self.staged_output = json.loads(buffer.getvalue())
@@ -805,6 +837,108 @@ class StefeFlowTests(LoansToolTestCase):
 
 
 # --------------------------------------------------------------------------
+# In-Laws fixed-table extension
+# --------------------------------------------------------------------------
+
+
+class InLawsFlowTests(LoansToolTestCase):
+    mode = "in_laws"
+
+    def test_exact_in_laws_constants_and_layout(self):
+        self.assertEqual(tool.IN_LAWS_SHEET_TITLE, "In-Laws")
+        self.assertEqual(tool.IN_LAWS_SHEET_ID, 1167058143)
+        self.assertEqual(tool.IN_LAWS_READ_RANGE, "'In-Laws'!A1:C234")
+        self.assertEqual(tool.IN_LAWS_APPEND_RANGE, "'In-Laws'!A7:C61")
+        self.assertEqual(tool.IN_LAWS_TOTAL_FORMULA, "=SUM(B7:B234)")
+        grid = tool._normalize_in_laws_grid(self.google.grid)
+        state = tool.in_laws_table_state(grid)
+        self.assertEqual(state["next_row"], 11)
+        self.assertEqual(state["current_balance"], tool.Decimal("2060"))
+
+    def test_in_laws_plan_is_exact_and_duplicate_guarded(self):
+        grid = tool._normalize_in_laws_grid(self.google.grid)
+        entry = tool.plan_in_laws_entry(grid, "2026-08-04", "800", "Hamza")
+        self.assertEqual(entry["range"], "In-Laws!A11:C11")
+        self.assertEqual(entry["date_cell"], "8/4/2026")
+        self.assertEqual(entry["appended_amount_cad"], "-800")
+        self.assertEqual(entry["description"], "Hamza")
+        self.assertEqual(entry["current_balance_cad"], "2060")
+        self.assertEqual(entry["resulting_balance_cad"], "1260")
+        duplicate = tool.expected_in_laws_grid_after(grid, entry)
+        with self.assertRaisesRegex(tool.LoansError, "already appears"):
+            tool.plan_in_laws_entry(duplicate, "2026-08-04", "800", "hamza")
+
+    def test_in_laws_check_and_stage_are_read_only(self):
+        buffer = io.StringIO()
+        with mock.patch("sys.stdout", buffer):
+            tool.command_check_in_laws(argparse.Namespace())
+        check = json.loads(buffer.getvalue())
+        self.assertEqual(check["tab"], "In-Laws")
+        self.assertEqual(check["next_row"], 11)
+        self.assertEqual(check["current_balance_cad"], "2060")
+        self.assertFalse(check["remote_write_performed"])
+        self.assertEqual(self.google.appends(), 0)
+
+        path = self.stage_in_laws()
+        self.assertEqual(self.google.appends(), 0)
+        self.assertEqual(self.staged_output["cell_range"], "In-Laws!A11:C11")
+        self.assertEqual(self.staged_output["value_written"], "-800")
+        self.assertEqual(self.staged_output["description"], "Hamza")
+        self.assertEqual(self.staged_output["resulting_balance_cad"], "1260")
+        plan = tool.load_plan(path)
+        self.assertEqual(plan["action"], tool.IN_LAWS_ACTION)
+        self.assertEqual(plan["entry"]["description"], "Hamza")
+
+    def test_in_laws_commit_appends_one_row_and_verifies_all_three_cells(self):
+        path = self.stage_in_laws()
+        result = self.commit(path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(result["cell_range"], "In-Laws!A11:C11")
+        self.assertEqual(result["description"], "Hamza")
+        self.assertEqual(result["resulting_balance_cad"], "1260")
+        self.assertEqual(self.google.appends(), 1)
+        kwargs = self.google.append_kwargs[0]
+        self.assertEqual(kwargs["range"], "'In-Laws'!A7:C61")
+        self.assertEqual(kwargs["body"], {"values": [["8/4/2026", -800, "Hamza"]]})
+        locks = self.locks()
+        self.assertEqual(locks[0]["status"], "committed_verified")
+        backup = json.loads(Path(locks[0]["backup"]).read_text(encoding="utf-8"))
+        self.assertEqual(backup["range"], "'In-Laws'!A1:C234")
+        self.assertEqual(len(backup["values"]), 234)
+        self.assertIn("loans_in_laws_adjustment_committed_verified",
+                      self.receipts.read_text(encoding="utf-8"))
+
+    def test_in_laws_layout_drift_and_collateral_damage_fail_closed(self):
+        grid = tool._normalize_in_laws_grid(self.google.grid)
+        for row_index, column_index, value, message in (
+            (4, 1, "=SUM(B7:B233)", "total formula"),
+            (5, 2, "Memo", "headers changed"),
+            (61, 0, "changed", "note changed"),
+        ):
+            changed = copy.deepcopy(grid)
+            changed[row_index][column_index] = value
+            with self.subTest(message=message), self.assertRaisesRegex(tool.LoansError, message):
+                tool.in_laws_table_state(changed)
+        entry = tool.plan_in_laws_entry(grid, "2026-08-04", "800", "Hamza")
+        after = tool.expected_in_laws_grid_after(grid, entry)
+        after[6][2] = "Changed historical description"
+        with self.assertRaisesRegex(tool.LoansError, "row 7 changed"):
+            tool.verify_in_laws_readback(grid, after, entry)
+
+    def test_in_laws_data_below_the_note_row_fails_closed(self):
+        grid = tool._normalize_in_laws_grid(self.google.grid)
+        self.assertEqual(len(grid), 234)
+        below_note = copy.deepcopy(grid)
+        below_note[62][1] = "125"
+        with self.assertRaisesRegex(tool.LoansError, "row 63"):
+            tool.in_laws_table_state(below_note)
+        stray = copy.deepcopy(grid)
+        stray[199][2] = "stray note"
+        with self.assertRaisesRegex(tool.LoansError, "row 200"):
+            tool.in_laws_table_state(stray)
+
+
+# --------------------------------------------------------------------------
 # Static write-surface assertions
 # --------------------------------------------------------------------------
 
@@ -817,7 +951,9 @@ class WriteSurfaceTests(unittest.TestCase):
         self.assertEqual(self.source.count("spreadsheets().values().append("), 1)
         self.assertEqual(self.source.count(".values().append("), 1)
         self.assertEqual(self.source.count("append_request"), 2)
-        self.assertIn('append_range = STEFE_APPEND_RANGE if is_stefe else APPEND_RANGE', self.source)
+        self.assertIn('append_range = IN_LAWS_APPEND_RANGE', self.source)
+        self.assertIn('append_range = STEFE_APPEND_RANGE', self.source)
+        self.assertIn('append_range = APPEND_RANGE', self.source)
         self.assertIn('range=append_range,', self.source)
         self.assertIn('valueInputOption="USER_ENTERED"', self.source)
         self.assertIn('insertDataOption="OVERWRITE"', self.source)

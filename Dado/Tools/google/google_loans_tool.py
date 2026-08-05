@@ -2,11 +2,14 @@
 """FRP Depot Loans Spreadsheet Approved Adjustment Tool.
 
 Commissioned by Rachad Homsi on 2026-07-26; fixed Stefe-table extension
-commissioned by his direct instruction and tab confirmation on 2026-07-31.
+commissioned by his direct instruction and tab confirmation on 2026-07-31;
+fixed In-Laws-table extension commissioned by his direct instruction on
+2026-08-04.
 
 The only remote write in this module is one Sheets v4 values append-with-OVERWRITE on the exact
-native spreadsheet My Drive/My Files/Rachad/Bussiness Folder/Loans. Two fixed operations exist:
-CCIVS A4:B60 (date + negative repayment) and Stefe C6:E43 (date + negative amount + description).
+native spreadsheet My Drive/My Files/Rachad/Bussiness Folder/Loans. Three fixed operations exist:
+CCIVS A4:B60 (date + negative repayment), Stefe C6:E43, and In-Laws A7:C61
+(date + negative amount + description).
 It cannot create, delete, rename, move, share, clear, batch, or otherwise restructure anything.
 Every write requires a 24-hour, full-SHA-256, single-use staged approval.
 
@@ -34,7 +37,8 @@ TOOL_NAME = "FRP Depot Loans Spreadsheet Approved Repayment Tool"
 SCHEMA_VERSION = 1
 ACTION = "ccivs_repayment_append"  # Backward-compatible CCIVS action.
 STEFE_ACTION = "stefe_adjustment_append"
-ALLOWED_ACTIONS = {ACTION, STEFE_ACTION}
+IN_LAWS_ACTION = "in_laws_adjustment_append"
+ALLOWED_ACTIONS = {ACTION, STEFE_ACTION, IN_LAWS_ACTION}
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
 ROOT = Path(r"C:\FRPDepot")
@@ -85,6 +89,24 @@ STEFE_NOTE = "*Positive is owning, Negative are owed"
 STEFE_SCAN_LAST_ROW = 212
 STEFE_READ_RANGE = "'Stefe'!C1:E212"
 STEFE_APPEND_RANGE = "'Stefe'!C6:E43"
+
+# Rachad commissioned the existing In-Laws table by direct instruction on
+# 2026-08-04. Only A:C rows 7:61 may receive one staged adjustment row; row 62
+# is a pinned note. The B5 Balance formula counts through row 234, so the read
+# covers A1:C234 and any content below the note fails closed.
+IN_LAWS_SHEET_TITLE = "In-Laws"
+IN_LAWS_SHEET_ID = 1167058143
+IN_LAWS_TOTAL_CELL = "B5"
+IN_LAWS_TOTAL_CELL_ROW = 5
+IN_LAWS_TOTAL_FORMULA = "=SUM(B7:B234)"
+IN_LAWS_HEADER_ROW = 6
+IN_LAWS_FIRST_ROW = 7
+IN_LAWS_LAST_ROW = 61
+IN_LAWS_NOTE_ROW = 62
+IN_LAWS_NOTE = "*Positive is owning, Negative are owed"
+IN_LAWS_SCAN_LAST_ROW = 234
+IN_LAWS_READ_RANGE = "'In-Laws'!A1:C234"
+IN_LAWS_APPEND_RANGE = "'In-Laws'!A7:C61"
 
 AMOUNT_RE = re.compile(r"^[0-9]{1,9}(?:\.[0-9]{1,2})?$")
 DESCRIPTION_RE = re.compile(r"^[^\r\n\x00-\x1f]{1,100}$")
@@ -215,6 +237,15 @@ def _normalize_stefe_grid(values: Any) -> list[list[str]]:
     rows = list(values or [])
     grid: list[list[str]] = []
     for index in range(STEFE_SCAN_LAST_ROW):
+        raw = list(rows[index]) if index < len(rows) and isinstance(rows[index], list) else []
+        grid.append([cell_text(raw[column]) if column < len(raw) else "" for column in range(3)])
+    return grid
+
+
+def _normalize_in_laws_grid(values: Any) -> list[list[str]]:
+    rows = list(values or [])
+    grid: list[list[str]] = []
+    for index in range(IN_LAWS_SCAN_LAST_ROW):
         raw = list(rows[index]) if index < len(rows) and isinstance(rows[index], list) else []
         grid.append([cell_text(raw[column]) if column < len(raw) else "" for column in range(3)])
     return grid
@@ -385,6 +416,36 @@ def read_stefe_identity(sheets) -> dict[str, Any]:
     }
 
 
+def read_in_laws_identity(sheets) -> dict[str, Any]:
+    info = sheets.spreadsheets().get(
+        spreadsheetId=EXPECTED_FILE_ID,
+        includeGridData=False,
+        fields="spreadsheetId,properties(title,locale,timeZone),sheets(properties(sheetId,title))",
+    ).execute(num_retries=3)
+    if str(info.get("spreadsheetId") or "") != EXPECTED_FILE_ID:
+        raise LoansError("Sheets returned a different spreadsheet id than the commissioned one.")
+    properties = info.get("properties") or {}
+    if str(properties.get("title") or "") != SPREADSHEET_NAME:
+        raise LoansError("The spreadsheet title is no longer the commissioned Loans workbook.")
+    if str(properties.get("locale") or "") != EXPECTED_LOCALE:
+        raise LoansError("The Loans spreadsheet locale changed; stopped.")
+    if str(properties.get("timeZone") or "") != EXPECTED_TIME_ZONE:
+        raise LoansError("The Loans spreadsheet time zone changed; stopped.")
+    tabs = [dict(sheet.get("properties") or {}) for sheet in (info.get("sheets") or [])]
+    matches = [tab for tab in tabs if str(tab.get("title") or "") == IN_LAWS_SHEET_TITLE]
+    if len(matches) != 1:
+        raise LoansError("The In-Laws tab is missing or duplicated; stopped.")
+    if int(matches[0].get("sheetId") or -1) != IN_LAWS_SHEET_ID:
+        raise LoansError("The In-Laws tab id changed; stopped.")
+    return {
+        "spreadsheet_title": SPREADSHEET_NAME,
+        "locale": EXPECTED_LOCALE,
+        "time_zone": EXPECTED_TIME_ZONE,
+        "tab": IN_LAWS_SHEET_TITLE,
+        "sheet_id": IN_LAWS_SHEET_ID,
+    }
+
+
 def read_grid(sheets) -> list[list[str]]:
     response = sheets.spreadsheets().values().get(
         spreadsheetId=EXPECTED_FILE_ID,
@@ -411,6 +472,20 @@ def read_stefe_grid(sheets) -> list[list[str]]:
     if returned and returned.split("!")[0].strip("'") != STEFE_SHEET_TITLE:
         raise LoansError("The values read did not come from the Stefe tab.")
     return _normalize_stefe_grid(response.get("values"))
+
+
+def read_in_laws_grid(sheets) -> list[list[str]]:
+    response = sheets.spreadsheets().values().get(
+        spreadsheetId=EXPECTED_FILE_ID,
+        range=IN_LAWS_READ_RANGE,
+        majorDimension="ROWS",
+        valueRenderOption="FORMULA",
+        dateTimeRenderOption="SERIAL_NUMBER",
+    ).execute(num_retries=3)
+    returned = str(response.get("range") or "")
+    if returned and returned.split("!")[0].strip("'") != IN_LAWS_SHEET_TITLE:
+        raise LoansError("The values read did not come from the In-Laws tab.")
+    return _normalize_in_laws_grid(response.get("values"))
 
 
 # --------------------------------------------------------------------------
@@ -643,6 +718,129 @@ def verify_stefe_readback(before: list[list[str]], after: list[list[str]],
         raise LoansError("The Stefe balance after the append does not match the approved plan.")
 
 
+def check_in_laws_layout(grid: list[list[str]]) -> None:
+    if len(grid) != IN_LAWS_SCAN_LAST_ROW or any(len(row) != 3 for row in grid):
+        raise LoansError("The In-Laws read did not cover A1:C234 exactly.")
+    if grid[IN_LAWS_TOTAL_CELL_ROW - 1][0].strip() != "Balance" or grid[IN_LAWS_TOTAL_CELL_ROW - 1][1].strip() != IN_LAWS_TOTAL_FORMULA:
+        raise LoansError(
+            f"In-Laws {IN_LAWS_TOTAL_CELL} is not the commissioned total formula {IN_LAWS_TOTAL_FORMULA}; stopped."
+        )
+    if [cell.strip() for cell in grid[IN_LAWS_HEADER_ROW - 1]] != ["DATE", "Amount", "Description"]:
+        raise LoansError("In-Laws A6:C6 headers changed; stopped.")
+    if grid[IN_LAWS_NOTE_ROW - 1][0].strip() != IN_LAWS_NOTE:
+        raise LoansError("In-Laws row 62 note changed; stopped.")
+    if grid[IN_LAWS_NOTE_ROW - 1][1].strip() or grid[IN_LAWS_NOTE_ROW - 1][2].strip():
+        raise LoansError("In-Laws row 62 contains unexpected values; stopped.")
+    for row in range(IN_LAWS_NOTE_ROW + 1, IN_LAWS_SCAN_LAST_ROW + 1):
+        if any(cell.strip() for cell in grid[row - 1]):
+            raise LoansError(
+                f"In-Laws row {row} contains data below the row-62 note. The B5 "
+                f"Balance formula sums B7:B234, so the tool's balance would be "
+                "wrong; clear rows 63:234 or recommission the table. Stopped."
+            )
+
+
+def in_laws_table_state(grid: list[list[str]]) -> dict[str, Any]:
+    check_in_laws_layout(grid)
+    last_used = 0
+    balance = Decimal("0")
+    numeric_rows = 0
+    for row in range(IN_LAWS_FIRST_ROW, IN_LAWS_LAST_ROW + 1):
+        date_cell, amount_cell, description_cell = grid[row - 1]
+        cells = [date_cell.strip(), amount_cell.strip(), description_cell.strip()]
+        if not any(cells):
+            continue
+        if not all(cells):
+            raise LoansError(f"In-Laws row {row} is partially filled; stopped.")
+        if cell_date(date_cell) is None:
+            raise LoansError(f"In-Laws A{row} is not a plain date; stopped.")
+        if amount_cell.startswith("="):
+            raise LoansError(f"In-Laws B{row} holds a formula; the balance cannot be trusted.")
+        value = cell_decimal(amount_cell)
+        if value is None:
+            raise LoansError(f"In-Laws B{row} is not a plain number; stopped.")
+        last_used = row
+        balance += value
+        numeric_rows += 1
+    next_row = last_used + 1 if last_used else IN_LAWS_FIRST_ROW
+    return {
+        "last_used_row": last_used,
+        "next_row": next_row,
+        "numeric_rows": numeric_rows,
+        "current_balance": balance,
+    }
+
+
+def plan_in_laws_entry(grid: list[list[str]], entry_date: str, amount_cad: str,
+                       description: str) -> dict[str, Any]:
+    state = in_laws_table_state(grid)
+    next_row = int(state["next_row"])
+    if not IN_LAWS_FIRST_ROW <= next_row <= IN_LAWS_LAST_ROW:
+        raise LoansError(
+            f"The In-Laws table is full through row {IN_LAWS_LAST_ROW}; no blank row remains before the row 62 note."
+        )
+    if any(cell.strip() for cell in grid[next_row - 1]):
+        raise LoansError(f"In-Laws row {next_row} is not blank; stopped.")
+    wanted_date = date.fromisoformat(clean_date(entry_date))
+    stored_amount = Decimal(negative_amount(amount_cad))
+    wanted_description = clean_description(description)
+    for row in range(IN_LAWS_FIRST_ROW, IN_LAWS_LAST_ROW + 1):
+        existing_date = cell_date(grid[row - 1][0])
+        existing_amount = cell_decimal(grid[row - 1][1])
+        existing_description = grid[row - 1][2].strip()
+        if (
+            existing_date == wanted_date
+            and existing_amount == stored_amount
+            and existing_description.casefold() == wanted_description.casefold()
+        ):
+            raise LoansError(f"That adjustment already appears at In-Laws row {row}; stopped.")
+    current_balance = Decimal(state["current_balance"])
+    resulting_balance = current_balance + stored_amount
+    return {
+        "tab": IN_LAWS_SHEET_TITLE,
+        "sheet_id": IN_LAWS_SHEET_ID,
+        "row": next_row,
+        "range": f"{IN_LAWS_SHEET_TITLE}!A{next_row}:C{next_row}",
+        "date": clean_date(entry_date),
+        "date_cell": sheet_date_text(entry_date),
+        "deduction_cad": clean_amount(amount_cad),
+        "appended_amount_cad": format(stored_amount, "f"),
+        "description": wanted_description,
+        "total_formula": IN_LAWS_TOTAL_FORMULA,
+        "current_balance_cad": format(current_balance, "f"),
+        "resulting_balance_cad": format(resulting_balance, "f"),
+    }
+
+
+def expected_in_laws_grid_after(grid: list[list[str]], entry: dict[str, Any]) -> list[list[str]]:
+    after = [list(row) for row in grid]
+    after[int(entry["row"]) - 1] = [
+        str(entry["date_cell"]), str(entry["appended_amount_cad"]), str(entry["description"])
+    ]
+    return after
+
+
+def verify_in_laws_readback(before: list[list[str]], after: list[list[str]],
+                            entry: dict[str, Any]) -> None:
+    check_in_laws_layout(after)
+    row = int(entry["row"])
+    if cell_date(after[row - 1][0]) != date.fromisoformat(str(entry["date"])):
+        raise LoansError(f"In-Laws A{row} does not read back as {entry['date_cell']}.")
+    if cell_decimal(after[row - 1][1]) != Decimal(str(entry["appended_amount_cad"])):
+        raise LoansError(f"In-Laws B{row} does not read back as {entry['appended_amount_cad']}.")
+    if after[row - 1][2].strip() != str(entry["description"]):
+        raise LoansError(f"In-Laws C{row} does not read back as the approved description.")
+    expected = expected_in_laws_grid_after(before, entry)
+    for index in range(IN_LAWS_SCAN_LAST_ROW):
+        if index == row - 1:
+            continue
+        if after[index] != expected[index]:
+            raise LoansError(f"In-Laws row {index + 1} changed during the append; reconciliation required.")
+    state = in_laws_table_state(after)
+    if format(Decimal(state["current_balance"]), "f") != str(entry["resulting_balance_cad"]):
+        raise LoansError("The In-Laws balance after the append does not match the approved plan.")
+
+
 # --------------------------------------------------------------------------
 # Plan handling
 # --------------------------------------------------------------------------
@@ -757,8 +955,12 @@ def load_plan(path: Path) -> dict[str, Any]:
         "version", "spreadsheet_title", "locale", "time_zone", "tab", "sheet_id",
         "content_sha256",
     }
-    expected_tab = STEFE_SHEET_TITLE if action == STEFE_ACTION else SHEET_TITLE
-    expected_sheet_id = STEFE_SHEET_ID if action == STEFE_ACTION else SHEET_ID
+    if action == STEFE_ACTION:
+        expected_tab, expected_sheet_id = STEFE_SHEET_TITLE, STEFE_SHEET_ID
+    elif action == IN_LAWS_ACTION:
+        expected_tab, expected_sheet_id = IN_LAWS_SHEET_TITLE, IN_LAWS_SHEET_ID
+    else:
+        expected_tab, expected_sheet_id = SHEET_TITLE, SHEET_ID
     if (
         set(file_info) != expected_file_keys
         or file_info.get("id") != EXPECTED_FILE_ID
@@ -801,6 +1003,23 @@ def load_plan(path: Path) -> dict[str, Any]:
             "resulting_balance_cad": resulting,
         }
         row_allowed = STEFE_FIRST_ROW <= row <= STEFE_LAST_ROW
+    elif action == IN_LAWS_ACTION:
+        description = clean_description(str(entry.get("description") or ""))
+        rebuilt = {
+            "tab": IN_LAWS_SHEET_TITLE,
+            "sheet_id": IN_LAWS_SHEET_ID,
+            "row": row,
+            "range": f"{IN_LAWS_SHEET_TITLE}!A{row}:C{row}",
+            "date": entry_date,
+            "date_cell": sheet_date_text(entry_date),
+            "deduction_cad": deduction,
+            "appended_amount_cad": negative_amount(deduction),
+            "description": description,
+            "total_formula": IN_LAWS_TOTAL_FORMULA,
+            "current_balance_cad": current,
+            "resulting_balance_cad": resulting,
+        }
+        row_allowed = IN_LAWS_FIRST_ROW <= row <= IN_LAWS_LAST_ROW
     else:
         rebuilt = {
             "tab": SHEET_TITLE,
@@ -843,21 +1062,33 @@ def recheck_live(drive, sheets, plan: dict[str, Any]) -> list[list[str]]:
         raise LoansError("Google no longer permits editing the Loans spreadsheet.")
     if not _same_live_state(item, plan["file"]):
         raise LoansError("The live Loans spreadsheet changed after review. Stage a new plan.")
-    is_stefe = plan["action"] == STEFE_ACTION
-    identity = read_stefe_identity(sheets) if is_stefe else read_identity(sheets)
+    action = plan["action"]
+    if action == STEFE_ACTION:
+        identity = read_stefe_identity(sheets)
+        grid = read_stefe_grid(sheets)
+    elif action == IN_LAWS_ACTION:
+        identity = read_in_laws_identity(sheets)
+        grid = read_in_laws_grid(sheets)
+    else:
+        identity = read_identity(sheets)
+        grid = read_grid(sheets)
     if any(
         identity[key] != plan["file"][key]
         for key in ("spreadsheet_title", "locale", "time_zone", "tab", "sheet_id")
     ):
         raise LoansError("The live Sheets identity changed after review. Stage a new plan.")
-    grid = read_stefe_grid(sheets) if is_stefe else read_grid(sheets)
     if content_sha256(grid) != plan["file"]["content_sha256"]:
         raise LoansError(f"The live {identity['tab']} values changed after review. Stage a new plan.")
     entry = plan["entry"]
     row = int(entry["row"])
     if any(cell.strip() for cell in grid[row - 1]):
         raise LoansError(f"{identity['tab']} row {row} is no longer blank. Stage a new plan.")
-    state = stefe_table_state(grid) if is_stefe else table_state(grid)
+    if action == STEFE_ACTION:
+        state = stefe_table_state(grid)
+    elif action == IN_LAWS_ACTION:
+        state = in_laws_table_state(grid)
+    else:
+        state = table_state(grid)
     if int(state["next_row"]) != row:
         raise LoansError(f"The {identity['tab']} next free row moved after review. Stage a new plan.")
     if format(Decimal(state["current_balance"]), "f") != str(entry["current_balance_cad"]):
@@ -879,7 +1110,7 @@ def _check_append_response(response: Any, entry: dict[str, Any]) -> None:
             f"Sheets wrote {actual or 'an unreported range'} instead of the planned "
             f"{expected_range}; reconciliation required."
         )
-    expected_columns = 3 if entry["tab"] == STEFE_SHEET_TITLE else 2
+    expected_columns = 2 if entry["tab"] == SHEET_TITLE else 3
     if (
         int(updates.get("updatedRows") or 0) != 1
         or int(updates.get("updatedColumns") or 0) != expected_columns
@@ -982,6 +1213,51 @@ def command_stage_stefe(args: argparse.Namespace) -> None:
     print(json.dumps(staged_view(plan, path), indent=2, ensure_ascii=False))
 
 
+def command_check_in_laws(_args: argparse.Namespace) -> None:
+    drive = auth.drive_service()
+    item = resolve_file(drive)
+    sheets = sheets_service()
+    identity = read_in_laws_identity(sheets)
+    grid = read_in_laws_grid(sheets)
+    state = in_laws_table_state(grid)
+    print(json.dumps({
+        "status": "ACCESS_VERIFIED_READ_ONLY_CHECK",
+        "account": auth.EXPECTED_ACCOUNT,
+        "spreadsheet": SPREADSHEET_NAME,
+        "path": " / ".join(EXPECTED_PARENT_PATH),
+        "tab": identity["tab"],
+        "sheet_id": identity["sheet_id"],
+        "locale": identity["locale"],
+        "time_zone": identity["time_zone"],
+        "total_formula": IN_LAWS_TOTAL_FORMULA,
+        "last_used_row": state["last_used_row"],
+        "next_row": state["next_row"],
+        "current_balance_cad": format(Decimal(state["current_balance"]), "f"),
+        "can_edit": bool(item.get("editable")),
+        "remote_write_performed": False,
+    }, indent=2))
+
+
+def command_stage_in_laws(args: argparse.Namespace) -> None:
+    entry_date = clean_date(args.date)
+    amount_cad = clean_amount(args.amount)
+    description = clean_description(args.description)
+    source = clean_source(args.source)
+    drive = auth.drive_service()
+    item = resolve_file(drive)
+    sheets = sheets_service()
+    identity = read_in_laws_identity(sheets)
+    grid = read_in_laws_grid(sheets)
+    entry = plan_in_laws_entry(grid, entry_date, amount_cad, description)
+    plan = build_plan(item, identity, grid, entry, source, action=IN_LAWS_ACTION)
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.fromisoformat(str(plan["created_utc"])).strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_{IN_LAWS_ACTION}_{str(plan['sha256'])[:16]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    append_receipt("loans_in_laws_adjustment_plan_staged", f"{path}; sha256={plan['sha256']}")
+    print(json.dumps(staged_view(plan, path), indent=2, ensure_ascii=False))
+
+
 def staged_view(plan: dict[str, Any], path: Path) -> dict[str, Any]:
     """Rachad-facing plan summary. The full digest is deliberately absent."""
     entry = plan["entry"]
@@ -1002,7 +1278,7 @@ def staged_view(plan: dict[str, Any], path: Path) -> dict[str, Any]:
         "approval": approval_phrase(str(plan["sha256"])),
         "remote_write_performed": False,
     }
-    if plan["action"] == STEFE_ACTION:
+    if plan["action"] in {STEFE_ACTION, IN_LAWS_ACTION}:
         view["description"] = entry["description"]
     return view
 
@@ -1022,7 +1298,7 @@ def committed_view(plan: dict[str, Any], backup: Path) -> dict[str, Any]:
         "replay_locked": True,
         "local_backup": str(backup),
     }
-    if plan["action"] == STEFE_ACTION:
+    if plan["action"] in {STEFE_ACTION, IN_LAWS_ACTION}:
         view["description"] = entry["description"]
     return view
 
@@ -1042,12 +1318,25 @@ def command_commit(args: argparse.Namespace) -> None:
     drive = auth.drive_service()
     sheets = sheets_service()
     entry = plan["entry"]
-    is_stefe = plan["action"] == STEFE_ACTION
-    tab_title = STEFE_SHEET_TITLE if is_stefe else SHEET_TITLE
-    read_range = STEFE_READ_RANGE if is_stefe else READ_RANGE
-    append_range = STEFE_APPEND_RANGE if is_stefe else APPEND_RANGE
-    backup_label = "STEFE_C1_E212" if is_stefe else "CCIVS_A1_B60"
-    receipt_prefix = "loans_stefe_adjustment" if is_stefe else "loans_ccivs_payment"
+    action = plan["action"]
+    if action == STEFE_ACTION:
+        tab_title = STEFE_SHEET_TITLE
+        read_range = STEFE_READ_RANGE
+        append_range = STEFE_APPEND_RANGE
+        backup_label = "STEFE_C1_E212"
+        receipt_prefix = "loans_stefe_adjustment"
+    elif action == IN_LAWS_ACTION:
+        tab_title = IN_LAWS_SHEET_TITLE
+        read_range = IN_LAWS_READ_RANGE
+        append_range = IN_LAWS_APPEND_RANGE
+        backup_label = "IN_LAWS_A1_C234"
+        receipt_prefix = "loans_in_laws_adjustment"
+    else:
+        tab_title = SHEET_TITLE
+        read_range = READ_RANGE
+        append_range = APPEND_RANGE
+        backup_label = "CCIVS_A1_B60"
+        receipt_prefix = "loans_ccivs_payment"
     before = recheck_live(drive, sheets, plan)
 
     BACKUP_DIR.mkdir(parents=True, exist_ok=True)
@@ -1081,7 +1370,7 @@ def command_commit(args: argparse.Namespace) -> None:
             str(entry["date_cell"]),
             sheet_number(str(entry["appended_amount_cad"])),
         ]
-        if is_stefe:
+        if action in {STEFE_ACTION, IN_LAWS_ACTION}:
             row_values.append(str(entry["description"]))
         write_attempted = True
         append_request = sheets.spreadsheets().values().append(
@@ -1094,9 +1383,12 @@ def command_commit(args: argparse.Namespace) -> None:
         )
         response = append_request.execute(num_retries=0)
         _check_append_response(response, entry)
-        if is_stefe:
+        if action == STEFE_ACTION:
             verify_stefe_readback(before, read_stefe_grid(sheets), entry)
             identity_after = read_stefe_identity(sheets)
+        elif action == IN_LAWS_ACTION:
+            verify_in_laws_readback(before, read_in_laws_grid(sheets), entry)
+            identity_after = read_in_laws_identity(sheets)
         else:
             verify_readback(before, read_grid(sheets), entry)
             identity_after = read_identity(sheets)
@@ -1154,6 +1446,8 @@ def build_parser() -> argparse.ArgumentParser:
     check.set_defaults(func=command_check)
     check_stefe = commands.add_parser("check-stefe")
     check_stefe.set_defaults(func=command_check_stefe)
+    check_in_laws = commands.add_parser("check-in-laws")
+    check_in_laws.set_defaults(func=command_check_in_laws)
     stage = commands.add_parser("stage-ccivs-payment")
     stage.add_argument("--date", required=True)
     stage.add_argument("--amount", required=True)
@@ -1165,6 +1459,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage_stefe.add_argument("--description", required=True)
     stage_stefe.add_argument("--source", required=True)
     stage_stefe.set_defaults(func=command_stage_stefe)
+    stage_in_laws = commands.add_parser("stage-in-laws-adjustment")
+    stage_in_laws.add_argument("--date", required=True)
+    stage_in_laws.add_argument("--amount", required=True)
+    stage_in_laws.add_argument("--description", required=True)
+    stage_in_laws.add_argument("--source", required=True)
+    stage_in_laws.set_defaults(func=command_stage_in_laws)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
     commit.add_argument("--approval", required=True)
