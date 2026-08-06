@@ -65,6 +65,9 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-04 Payment of CAD4,101.30 is outstanding for INV-000040 — New Airwallex update says the July 22 refund is still with its banking partner and has now been escalated to the banking team; live Zoho Books still shows the full CAD 4,101.30 overdue balance.
 - 2026-08-04 Payment of CAD4,101.30 is outstanding for INV-000040 — New Airwallex banking-partner update says SCT should receive the refund within 1–2 business days; live Zoho Books still shows the full CAD 4,101.30 overdue balance, so receipt should be verified after that window.
 - 2026-08-04 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT reply says the refund is still absent and Dilza has pressed Plooto for a solution; live Zoho Books still shows the full CAD 4,101.30 overdue balance, while Airwallex says the sender should receive the refund within 1–2 business days.
+- 2026-08-05 Q26-1436 — Permatech has not replied to the project information after 123 working days; chase draft blocked because the old sent message was outside the recent-mail resolver after the first attempt used the incompatible standalone-replacement flag.
+- 2026-08-05 Trust audit — Anh has not answered whether he can provide the audit documents after 95 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-05 PO5219 for SO0049 — New Troy Dualam PO received; live Zoho confirms open SO-00049 for CAD 5,003.64, with physical stock covering the ordered 2 × 16-inch D411 elbows; approval requested to prepare a Reply All acknowledgment draft.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
