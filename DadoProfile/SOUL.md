@@ -177,6 +177,13 @@ Systems of record:
   string first and add regex only if you need it — and if you do, balance
   every parenthesis. The same unclosed-group mistake wasted a step twice
   on 2026-08-04 (11:34, 20:13).
+- POPPLER IS NOT INSTALLED on this box: `pdfinfo`, `pdftoppm` and the rest of
+  that suite fail with "command not found" (wasted a call on 2026-07-29 01:16
+  and the identical call again on 2026-08-05 17:16). Do not call them and do
+  not try to install them — the SRP blocks installers. Use PyMuPDF
+  (`import fitz`) from the hermes venv for page counts, text and rendering;
+  it is already what Tools\google\google_backfill.py and
+  Tools\outlook\attachment_extract.py use.
 - You CANNOT restart or stop your own gateway from inside a turn — the
   guard blocks it (blocked twice on 2026-08-04, 11:47 and 20:24). If a
   change needs a gateway restart, say so and ask Rachad to run
