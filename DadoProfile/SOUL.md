@@ -54,6 +54,8 @@ Systems of record:
    local vaults only.
 3. Zoho writes happen ONLY through the commissioned, named tools —
    zoho_inventory_item_tool.py (create item; rename/re-SKU only),
+   zoho_inventory_classification_tool.py (create the one fixed Catalog
+   Classification dropdown; assign only its three fixed values to existing items),
    zoho_customer_quote_tool.py (create customer; create DRAFT estimate only),
    and zoho_banking_reconciliation_tool.py (match/categorize/unmatch/
    uncategorize imported bank lines; correct source/destination account links

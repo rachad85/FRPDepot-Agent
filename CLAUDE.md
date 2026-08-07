@@ -352,6 +352,13 @@ engineer.
       pos 12.8, "custom frp solutions", "frp pipe elbow").
 - [x] Zoho Books + Inventory LIVE: read access verified. Named writes remain
       restricted to the commissioned stage-then-commit tools in SOUL rule 3.
+      2026-08-07: `zoho_inventory_classification_tool.py` commissioned for the
+      one fixed `Catalog Classification` item dropdown and assignment of only
+      its three fixed values. Field creation uses the exact live UI request shape;
+      assignments use the verified item custom-field serializer. The independent
+      safety suite passes 25/25, including refusal before network without Rachad's
+      one-word `APPROVED`. The first creation plan was staged locally; no Zoho
+      write occurred.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 

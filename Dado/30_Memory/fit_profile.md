@@ -234,3 +234,52 @@ sheet — ask instead.
   `update_transfer_accounts` plan from the named banking tool and Rachad's own
   `APPROVED`; it must preserve each destination, amount, date, transfer type,
   reference and description.
+- 2026-08-07: Rachad confirmed the current active banking/payment accounts are
+  **Desjardins CAD, Desjardins USD, Stripe, and PayPal**. Live Zoho names/IDs are
+  `FRP Depots - Desjardins` (`96274000001411002`, CAD),
+  `USD Desjardins corporate build-up account` (`96274000001409012`, USD),
+  `Stripe Clearing` (`96274000000035815`, CAD), and
+  `PayPal Clearing` (`96274000000035828`, CAD).
+- 2026-08-07: The global Books `GET /banktransactions` ledger listing is NOT a
+  complete open-bank-feed audit. It returned only matched, categorized and
+  manually-added rows and missed a Desjardins CAD receipt Rachad deliberately
+  left unmatched. Never turn zero `uncategorized` rows from that dataset into
+  "no unmatched lines." Open banking reviews must inspect imported feed lines
+  for each of the four active accounts directly; until that route is live-
+  verified, the result is **inconclusive**, not zero.
+- 2026-08-07: The dedicated authenticated Zoho UI session is live on the
+  Canadian application domains `inventory.zohocloud.ca` and
+  `books.zohocloud.ca`. The earlier connector falsely rejected those valid
+  domains because it accepted only `.zoho.com`. `CONNECT_DADO_ZOHO_UI.bat` now
+  opens a loopback-only live Edge session and `zoho_ui_session.py live-check`
+  verified both applications without reading credentials or changing data.
+  The dedicated Edge window must remain open while this UI access is used.
+- 2026-08-07: The imported bank-feed route is now live-verified read-only:
+  Zoho Books UI `GET /api/v3/banktransactions/uncategorized` returned HTTP 200.
+  It exposed the deliberately unmatched Structural Composite Technologies
+  receipt, transaction `96274000001534055`, CAD 4,101.30 dated 2026-08-07,
+  under account `Chequing account (C)` (`96274000001409019`) with status and
+  transaction type `uncategorized`. This account name/ID differs from the
+  separately recorded active Desjardins CAD bank-account record; do not infer
+  their relationship without further evidence. No Zoho write was performed.
+- 2026-08-07: Inventory category access is blocked by the organization feature
+  set, not by Dado's API scopes or user role. A read-only scan of all 38 loaded
+  Inventory application modules found the real route `#/inventory/categories`,
+  but the live FRP Depot session redirects it to `#/unauthorized`. The current
+  Zoho user role is already `Admin`; the organization plan is
+  `STANDARD_REVISED_2023 - 1 year`; its 68 enabled features contain no category
+  feature. The subscription does report custom fields as supported. Therefore
+  no additional API-console permission can enable categories on this plan.
+  `zoho_inventory_category_tool.py` category writes remain hard-disabled and no
+  category or item was changed.
+- 2026-08-07: Rachad commissioned the named
+  `zoho_inventory_classification_tool.py` as the replacement for unavailable
+  Inventory Categories. Its write scope is limited to one item dropdown custom
+  field named `Catalog Classification`, with exactly these choices: `Website
+  Catalog`, `Custom / Customer-Specific`, and `Review / Unclassified`; and to
+  assigning that field on existing items. Every write must use immutable
+  stage-then-commit plans and Rachad's own one-word `APPROVED` response to the
+  displayed plan. This commissioning authorizes building and testing refusal
+  paths only; it is not approval of any live plan or Zoho write. The tool may
+  not delete fields, add other choices, or change names, SKUs, prices, stock,
+  accounts, item groups, or any other item property.
