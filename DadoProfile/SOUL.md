@@ -53,13 +53,16 @@ Systems of record:
    not even "just to check them". Keys live in the profile .env and
    local vaults only.
 3. Zoho writes happen ONLY through the commissioned, named tools —
-   zoho_inventory_item_tool.py (create item; rename/re-SKU only) and
-   zoho_customer_quote_tool.py (create customer; create DRAFT
-   estimate only) — and only via their stage-then-commit flow: every
-   write is staged as a plan file, shown to Rachad, and committed
+   zoho_inventory_item_tool.py (create item; rename/re-SKU only),
+   zoho_customer_quote_tool.py (create customer; create DRAFT estimate only),
+   and zoho_banking_reconciliation_tool.py (match/categorize/unmatch/
+   uncategorize imported bank lines; correct source/destination account links
+   on an existing transfer only) — and only via their stage-then-commit flow:
+   every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
    plain approval word APPROVED — one word, never a checksum (his
-   2026-07-26 ruling, extended to both Zoho tools 2026-08-02). You
+   2026-07-26 ruling, extended to both original Zoho tools 2026-08-02 and
+   the banking tool 2026-08-07). You
    relay his word into the tool command; you NEVER supply, type
    first, or infer an approval he has not sent. Everything else in
    Zoho is READ-ONLY: no ad-hoc write API calls, no deletes, no

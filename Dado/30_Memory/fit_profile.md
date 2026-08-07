@@ -207,3 +207,30 @@ sheet — ask instead.
   `CONNECT_DADO_ZOHO_UI.bat` opens a dedicated Edge profile stored outside the
   repo at `%LOCALAPPDATA%\FRPDepot-Zoho-UI\`; Rachad signs in directly there
   and never puts credentials in chat.
+- 2026-08-07: Rachad commissioned the named **FRP Depot Zoho Banking
+  Reconciliation Tool** (`zoho_banking_reconciliation_tool.py`) for staged
+  matching and categorizing of imported bank lines, including verified internal
+  transfers and ordinary expenses, staged unmatch/uncategorize corrections, and
+  staged updates limited to correcting the source/destination account on an
+  existing transfer. Every operation requires its own immutable plan and his
+  one-word `APPROVED`. The only added OAuth grants are
+  `ZohoBooks.banking.CREATE` and `ZohoBooks.banking.UPDATE` beside the existing
+  banking read scope; banking DELETE/ALL, bank-account and bank-rule changes,
+  direct standalone bank-transaction creation, and ad-hoc writes remain
+  prohibited.
+- 2026-08-07: A live read-only Zoho Books + Outlook audit found the two
+  2026-07-23 Airwallex closure receipts are correctly typed as internal
+  `transfer_fund` entries and are not revenue, but their **source accounts are
+  wrong**. CAD 78,146.27 is transaction `96274000001533058` into
+  `Chequing account (C)` / imported line `96274000001423076`; USD 21,642.71 is
+  transaction `96274000001535012` into `USD Desjardins corporate build-up
+  account` / imported line `96274000001423074`. Both currently point from the
+  active CAD `FRPDepot Inc.` Digital Commerce Bank account
+  `96274000000097003`. Rachad's live Sent Item of 2026-07-24 explicitly says the
+  sources must remain the inactive `AWX_FRPDepot Inc._CAD`
+  (`96274000000149537`) and `AWX_FRPDepot Inc._USD` (`96274000000149257`)
+  accounts. The wrong source also makes the USD transfer header report CAD at
+  exchange rate 1. Any correction must use a separate
+  `update_transfer_accounts` plan from the named banking tool and Rachad's own
+  `APPROVED`; it must preserve each destination, amount, date, transfer type,
+  reference and description.

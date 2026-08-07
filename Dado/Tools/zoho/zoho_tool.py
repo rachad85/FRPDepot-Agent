@@ -2,9 +2,10 @@
 """FRP Depot Zoho Books and Inventory restricted connector.
 
 This tool exchanges a Zoho self-client grant for an encrypted refresh token and
-provides GET-only verification/report commands. The separately named customer
-and quote tool may use the two commissioned Books CREATE scopes. This connector
-contains no service-API write endpoint itself.
+provides GET-only verification/report commands. Separately named tools may use
+the commissioned customer, draft-estimate, and tightly restricted banking-
+reconciliation Books CREATE/UPDATE scopes. This connector contains no service-
+API write endpoint itself.
 """
 
 from __future__ import annotations
@@ -80,6 +81,8 @@ READ_SCOPES = (
 ALLOWED_WRITE_SCOPES = (
     "ZohoBooks.contacts.CREATE",
     "ZohoBooks.estimates.CREATE",
+    "ZohoBooks.banking.CREATE",
+    "ZohoBooks.banking.UPDATE",
     "ZohoInventory.items.CREATE",
     "ZohoInventory.items.UPDATE",
 )
@@ -348,7 +351,7 @@ def command_connect(_: argparse.Namespace) -> None:
     append_receipt("zoho_connected_restricted_named_write_tools", str(VAULT_PATH))
     print("Zoho Books: CONNECTED AND VERIFIED")
     print("Zoho Inventory: CONNECTED AND VERIFIED RESTRICTED")
-    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE ONLY")
+    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
 
@@ -460,7 +463,7 @@ def command_check(_: argparse.Namespace) -> None:
     print(f"Inventory item read: VERIFIED ({len(inventory_items.get('items') or [])} sample row)")
     for label, count in probe_results:
         print(f"{label}: VERIFIED ({count} sample row(s))")
-    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE ONLY")
+    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
 

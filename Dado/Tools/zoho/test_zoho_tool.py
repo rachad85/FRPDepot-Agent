@@ -34,6 +34,8 @@ class ZohoToolTests(unittest.TestCase):
             {
                 "ZohoBooks.contacts.CREATE",
                 "ZohoBooks.estimates.CREATE",
+                "ZohoBooks.banking.CREATE",
+                "ZohoBooks.banking.UPDATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
             },
@@ -79,6 +81,11 @@ class ZohoToolTests(unittest.TestCase):
             ["ZohoBooks.fullaccess.all"],
             ["ZohoInventory.inventoryadjustments.CREATE"],
             ["ZohoBooks.invoices.CREATE"],
+            ["ZohoBooks.contacts.UPDATE"],
+            ["ZohoBooks.estimates.UPDATE"],
+            ["ZohoBooks.banking.rules.UPDATE"],
+            ["ZohoBooks.banking.DELETE"],
+            ["ZohoBooks.banking.ALL"],
         ):
             with self.assertRaises(tool.ZohoError):
                 tool.validate_scopes(scopes)
