@@ -184,7 +184,7 @@ class StageCommitTests(unittest.TestCase):
         saved = plan.pop("sha256")
         self.assertEqual(saved, change.digest_for(plan))
         self.assertEqual(len(saved), 64)
-        self.assertTrue(result["approval"].endswith(saved))
+        self.assertEqual(result["approval"], "APPROVED")
         self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
         self.assertEqual(plan["origin"], change.EXACT_ORIGIN)
         self.assertTrue(plan["nonce"])
@@ -225,7 +225,7 @@ class StageCommitTests(unittest.TestCase):
                 change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
             write.assert_not_called()
 
-    def test_exact_approval_commits_once_reads_back_and_locks(self):
+    def test_approved_commits_once_reads_back_and_locks(self):
         plan_path, result = self._stage_update()
         with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
              mock.patch.object(change.wc, "api_get", side_effect=[(self.old, {}), (self.new, {})]), \
@@ -244,6 +244,15 @@ class StageCommitTests(unittest.TestCase):
             with self.assertRaises(change.ChangeError):
                 change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
             second_write.assert_not_called()
+
+    def test_case_insensitive_approved_is_accepted(self):
+        plan_path, _ = self._stage_update()
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(self.old, {}), (self.new, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(self.new, {})) as write:
+            with contextlib.redirect_stdout(io.StringIO()):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval="  Approved  "))
+            write.assert_called_once()
 
     def test_create_stage_payload_is_draft(self):
         path = self._input({

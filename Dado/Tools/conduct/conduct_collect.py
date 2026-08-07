@@ -82,6 +82,16 @@ def tail_jsonl(path: Path, day: str, limit: int = 60) -> list[str]:
     batch = [l for l in today if BATCH_RECEIPT.search(l)]
     real = [l for l in today if not BATCH_RECEIPT.search(l)]
     out = real[-limit:]
+    if len(real) > limit:
+        # NEVER TRUNCATE IN SILENCE. This review's core check is "durable action
+        # with no receipt", and a receipt hidden by the cap reads exactly like a
+        # receipt that was never written. On 2026-08-06 the cap dropped 21 of 81
+        # real receipts -- including all four live Zoho write commits (2 items,
+        # 1 customer, 1 draft estimate) -- with nothing in the bundle to say so.
+        out.insert(0, f'(NOTE: {len(real) - limit} EARLIER real receipts for '
+                      f'this day were cut to fit the {limit}-line cap; '
+                      f'{len(real)} real receipts total. Read {path} directly '
+                      f'before concluding any action lacked a receipt.)')
     if batch:
         out.append(
             f'(plus {len(batch)} per-batch progress receipts collapsed -- '

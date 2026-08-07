@@ -178,3 +178,32 @@ sheet — ask instead.
   at 08:00 (Hermes cron `96e29b6507b1`) and the order candidates go to Rachad.
   Confirm it actually fired on the next 1st; if it did not, tell him and fix the
   schedule rather than re-running it by hand and staying silent.
+- 2026-08-06: Rachad wants Dado to serve as FRP Depot's executive operations
+  manager because he runs multiple companies and needs proactive help. He intends
+  to grant the required access; expansions remain implemented through named,
+  approval-gated tools rather than credentials shared in chat.
+- 2026-08-06: After a live Zoho/Woo comparison, Rachad decided to retain Zoho
+  item groups. Catalog corrections will proceed one issue at a time: Dado shows
+  the evidence and staged plan, then commits only after Rachad replies to that
+  plan with the one-word approval `APPROVED`.
+- 2026-08-06: Rachad authorized a paired SKU-correction workflow using the
+  existing named Zoho item and Woo catalog tools. It must use one combined
+  staged plan, his one-word `APPROVED`, and live read-back verification in both
+  systems; authorization to build the workflow is not approval of a SKU change.
+- 2026-08-07: Rachad commissioned `zoho_inventory_category_tool.py`. Its write
+  scope is limited to creating item categories and assigning existing items to
+  a category, with assignments staged in batches of about 20. Every category
+  creation or assignment batch requires its own staged plan, Rachad's one-word
+  `APPROVED`, and live read-back verification. It may not change item groups,
+  names, SKUs, prices, stock, accounting, or any other item field, and it may
+  not delete categories. Authorization to build the tool is not approval of a
+  category creation or assignment plan.
+- 2026-08-07: Category-tool discovery confirmed live read-only
+  `GET /inventory/v1/categories`, but Zoho's published Inventory OpenAPI does
+  not document category creation or `category_id` on item-update requests.
+  Both category commit commands are therefore hard-disabled; 33 safety tests
+  pass and a real commit invocation refuses before plan, token or service
+  access. The safe next route is an authenticated UI-backed implementation.
+  `CONNECT_DADO_ZOHO_UI.bat` opens a dedicated Edge profile stored outside the
+  repo at `%LOCALAPPDATA%\FRPDepot-Zoho-UI\`; Rachad signs in directly there
+  and never puts credentials in chat.

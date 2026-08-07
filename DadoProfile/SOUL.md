@@ -174,9 +174,17 @@ Systems of record:
   google_auth (`get_access_token`, `creds()`) both failed; the real
   names are `get_token()` and `get_creds()`.
 - `search_files` patterns are rg REGEX, not plain text. Search a literal
-  string first and add regex only if you need it — and if you do, balance
-  every parenthesis. The same unclosed-group mistake wasted a step twice
-  on 2026-08-04 (11:34, 20:13).
+  string first and add regex only if you need it. THE EXACT MISTAKE you keep
+  repeating is typing a FORWARD slash where a parenthesis needed escaping —
+  `build/(`, `get_creds/(`, `approval_phrase/(` — which leaves the group
+  unclosed and rg dies with "regex parse error: unclosed group". A literal
+  paren is `\(`; and if you are reaching for `(` inside a `|` alternation you
+  almost always wanted a plain-text search instead. Five wasted calls so far:
+  2026-08-04 (11:34, 20:13) and 2026-08-06 (10:17, 10:20, 23:30).
+- Do not guess a tool's FILENAME either. `woocommerce_tool.py` does not exist
+  (the real files are `woocommerce_audit_tool.py` and
+  `woocommerce_change_tool.py`); guessing it cost a call on 2026-08-06 22:58,
+  as did a guessed folder path at 23:18. List the directory first.
 - POPPLER IS NOT INSTALLED on this box: `pdfinfo`, `pdftoppm` and the rest of
   that suite fail with "command not found" (wasted a call on 2026-07-29 01:16
   and the identical call again on 2026-08-05 17:16). Do not call them and do

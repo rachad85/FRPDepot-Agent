@@ -30,12 +30,11 @@ ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "woocommerce_plans"
 PLAN_LIFETIME_HOURS = 24
 ACTIONS = {"product_create", "product_update", "variation_create", "variation_update"}
-ACTION_LABEL = {
-    "product_create": "PRODUCT CREATE",
-    "product_update": "PRODUCT UPDATE",
-    "variation_create": "VARIATION CREATE",
-    "variation_update": "VARIATION UPDATE",
-}
+# Rachad's explicit workflow authorization (2026-08-06): approval of a staged
+# WooCommerce plan is his own one-word reply.  The full plan digest remains an
+# internal integrity control and is never part of the approval text.  Building
+# this workflow is not approval of any catalog change.
+APPROVAL_WORD = "APPROVED"
 PRODUCT_FIELDS = {
     "name", "type", "sku", "description", "short_description", "regular_price",
     "categories", "attributes",
@@ -291,8 +290,12 @@ def assert_sku_unique(action: str, sku: str, resource_id: int | None,
         raise ChangeError(f"SKU already belongs to another WooCommerce resource: {conflicts[:10]}")
 
 
-def approval_phrase(action: str, digest: str) -> str:
-    return f"APPROVE WOO {ACTION_LABEL[action]} {digest}"
+def require_rachad_approval(approval: str) -> None:
+    if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
+        raise ChangeError(
+            f"Rachad must answer this staged plan with the one-word approval: {APPROVAL_WORD}. "
+            "It must come from his own message; workflow authorization is not change approval."
+        )
 
 
 def lock_path(plan_path: Path) -> Path:
@@ -386,7 +389,7 @@ def command_stage(args: argparse.Namespace) -> None:
         "method": plan["method"], "endpoint": plan["endpoint"],
         "resource_id": resource_id, "parent_id": parent_id,
         "before": before, "payload": payload, "sources": sources,
-        "approval": approval_phrase(action, plan["sha256"]),
+        "approval": APPROVAL_WORD,
     }, indent=2, ensure_ascii=False))
 
 
@@ -438,9 +441,7 @@ def command_commit(args: argparse.Namespace) -> None:
     if PLAN_DIR.resolve() not in plan_path.parents:
         raise ChangeError("Plan must be inside Dado's WooCommerce plan folder.")
     plan = load_plan(str(plan_path))
-    expected = approval_phrase(str(plan["action"]), str(plan["sha256"]))
-    if not secrets.compare_digest(str(args.approval), expected):
-        raise ChangeError(f"Exact Rachad approval required: {expected}")
+    require_rachad_approval(args.approval)
     if lock_path(plan_path).exists():
         raise ChangeError("This plan has already entered commit and cannot be replayed.")
     vault = wc.load_vault()
