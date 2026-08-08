@@ -126,6 +126,38 @@ class WatchAnnouncementTests(unittest.TestCase):
                             "the held jobs must be announced on the next tick")
         self.assertTrue(second.strip())
 
+    def test_a_service_job_is_never_reported_as_stalled(self):
+        """zoho-ui-live holds an authenticated Edge/CDP session that eight
+        scripts attach to. It produces no log output for days BY DESIGN. On
+        2026-08-07 it was tracked as an ordinary job, so it looked stuck after
+        30 minutes and sent Rachad a false stall alert."""
+        self.write_job("svc", name="zoho-ui-live", kind=job_runner.SERVICE_JOB)
+        with (patch.object(job_runner, "pid_alive", return_value=True),
+              patch.object(job_runner, "heartbeat_age_minutes", return_value=1200)):
+            output = self.watch()
+        self.assertNotIn("zoho-ui-live", output,
+                         "a service job that is quiet is healthy, not stuck")
+        self.assertFalse(self.read_job("svc").get("stall_reported"))
+
+    def test_a_service_job_that_DIES_is_still_reported(self):
+        """The exemption is from the stall alert, not from supervision. A
+        session other tools depend on going away is exactly what must be said."""
+        self.write_job("svc", name="zoho-ui-live", kind=job_runner.SERVICE_JOB)
+        with patch.object(job_runner, "pid_alive", return_value=False):
+            output = self.watch()
+        self.assertIn("zoho-ui-live", output)
+        self.assertIn("died", output)
+
+    def test_a_timed_out_job_is_announced_as_killed_not_as_failed(self):
+        """`timeout` and `failed` need different responses: one ran and
+        returned non-zero, the other never finished at all."""
+        self.write_job("t1", name="stuck-scrape", status="timeout", exit_code=1)
+        with patch.object(job_runner, "summarize_output", return_value=""):
+            output = self.watch()
+        self.assertIn("stuck-scrape", output)
+        self.assertIn("KILLED", output)
+        self.assertTrue(self.read_job("t1")["reported"])
+
     def test_unreadable_files_do_not_starve_real_job_results(self):
         for i in range(5):
             (self.jobs_dir / f"broken{i}.json").write_text("{not json", encoding="utf-8")

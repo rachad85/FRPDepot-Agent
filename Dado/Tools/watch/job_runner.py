@@ -39,6 +39,26 @@ STALE_HEARTBEAT_MINUTES = 30    # job alive but its log has not moved
 MAX_WATCH_MESSAGES = 5          # per tick; the remainder is HELD, never dropped
 OUTPUT_TAIL_CHARS = 400
 
+# A finite job that never ends is a leak. `proc.wait()` had no timeout at all,
+# so a job that hung held its supervisor, its log handle and its "running"
+# record forever. Six hours is far longer than any real Dado job (the 16-hour
+# Google index in the docstring above was the reason this tool exists, and it
+# is started with an explicit --timeout-hours).
+DEFAULT_TIMEOUT_HOURS = 6.0
+
+# ...but SOME jobs are supposed to run forever, and killing those is the more
+# expensive mistake. `zoho-ui-live` is an authenticated Edge session holding a
+# CDP endpoint on 127.0.0.1:9228; eight scripts under Dado\20_Working attach to
+# it with playwright's connect_over_cdp instead of logging in again, including
+# the SCT payment status check. On 2026-08-07 it was tracked as an ordinary
+# finite job, so it looked "stuck" after 30 minutes, fired a false stall alert
+# to Rachad, and sat "running" for 20 hours looking like a leak.
+#
+# A service job is exempt from BOTH the timeout and the stall alert. It is
+# still watched for death, which is the thing that actually matters for a
+# session other tools depend on.
+SERVICE_JOB = "service"
+
 # Windows detached-launch flags: the child must survive its parent, and must not
 # die when the launching console (or Dado's turn) goes away.
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
@@ -221,6 +241,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         "exit_code": None,
         "reported": False,
         "note": args.note or "",
+        # A service job runs until something stops it: no timeout, no stall
+        # alert. Everything else is finite and gets a ceiling.
+        "kind": SERVICE_JOB if args.service else "job",
+        "timeout_hours": None if args.service else float(args.timeout_hours),
     }
     save(job)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -254,6 +278,17 @@ def cmd_run(args: argparse.Namespace) -> int:
     job.update(status="running", pid=os.getpid())
     save(job)
     code = -1
+    timed_out = False
+    # A service job is meant to outlive its start; everything else gets a
+    # ceiling so a hang cannot hold the supervisor forever (see DEFAULT_TIMEOUT_HOURS).
+    if job.get("kind") == SERVICE_JOB:
+        wait_seconds = None
+    else:
+        try:
+            hours = float(job.get("timeout_hours") or DEFAULT_TIMEOUT_HOURS)
+        except (TypeError, ValueError):
+            hours = DEFAULT_TIMEOUT_HOURS
+        wait_seconds = hours * 3600 if hours > 0 else None
     try:
         with log_path(job_id).open("w", encoding="utf-8", errors="replace") as out:
             proc = subprocess.Popen(
@@ -261,7 +296,30 @@ def cmd_run(args: argparse.Namespace) -> int:
                 stdout=out, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL,
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
-            code = proc.wait()
+            try:
+                code = proc.wait(timeout=wait_seconds)
+            except subprocess.TimeoutExpired:
+                timed_out = True
+                # Kill the TREE. These jobs launch browsers and interpreters
+                # that spawn their own children; terminating only the direct
+                # child leaves the grandchildren running and the port held.
+                try:
+                    subprocess.run(
+                        ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                        capture_output=True, timeout=30,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                    )
+                except Exception:
+                    proc.kill()
+                try:
+                    code = proc.wait(timeout=30)
+                except Exception:
+                    code = -1
+                out.write(
+                    f"\nSUPERVISOR: killed after the {wait_seconds / 3600:.1f} h "
+                    f"timeout. If this job is supposed to run indefinitely, start "
+                    f"it with --service so it is never timed out.\n"
+                )
     except Exception as exc:
         try:
             with log_path(job_id).open("a", encoding="utf-8") as out:
@@ -270,8 +328,11 @@ def cmd_run(args: argparse.Namespace) -> int:
             pass
         code = -1
     job = load(job_id)
+    # "timeout" is its own outcome, not a plain failure. A job we killed on the
+    # clock and a job that ran and returned non-zero need different responses,
+    # and flattening them into "failed" hides which one happened.
     job.update(
-        status="done" if code == 0 else "failed",
+        status="timeout" if timed_out else ("done" if code == 0 else "failed"),
         exit_code=code,
         finished=stamp(),
     )
@@ -315,8 +376,13 @@ def cmd_watch(_: argparse.Namespace) -> int:
     for job in jobs:
         status = job.get("status")
 
-        if status in {"done", "failed"} and not job.get("reported"):
-            verdict = "finished" if status == "done" else f"FAILED (exit {job['exit_code']})"
+        if status in {"done", "failed", "timeout"} and not job.get("reported"):
+            if status == "done":
+                verdict = "finished"
+            elif status == "timeout":
+                verdict = "was KILLED on its timeout (it never finished)"
+            else:
+                verdict = f"FAILED (exit {job['exit_code']})"
             summary = summarize_output(job["id"])
             detail = f" {summary}" if summary else ""
             pending.append((f"Background job '{job['name']}' {verdict}.{detail}",
@@ -350,6 +416,7 @@ def cmd_watch(_: argparse.Namespace) -> int:
                 continue
             age = heartbeat_age_minutes(job["id"])
             if (age is not None and age >= STALE_HEARTBEAT_MINUTES
+                    and job.get("kind") != SERVICE_JOB
                     and not job.get("stall_reported")):
                 # A SEPARATE flag from `reported`. Sharing one meant the stall
                 # warning consumed the completion notice: a long OCR job that
@@ -389,6 +456,15 @@ def build_parser() -> argparse.ArgumentParser:
     start = sub.add_parser("start", help="launch a job detached and return at once")
     start.add_argument("--name", required=True)
     start.add_argument("--note", default="")
+    start.add_argument(
+        "--timeout-hours", type=float, default=DEFAULT_TIMEOUT_HOURS,
+        help=f"kill the job after this many hours (default {DEFAULT_TIMEOUT_HOURS}); "
+             "0 means no limit")
+    start.add_argument(
+        "--service", action="store_true",
+        help="this job is SUPPOSED to run indefinitely (e.g. an authenticated "
+             "browser session other tools attach to). Never timed out, never "
+             "reported as stalled; still watched for death.")
     start.add_argument("command", nargs=argparse.REMAINDER)
     start.set_defaults(func=cmd_start)
 
