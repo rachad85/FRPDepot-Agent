@@ -40,20 +40,20 @@ auxiliary:
     provider: nous
     model: deepseek/deepseek-v4-pro
   title_generation:
-    provider: nous
-    model: deepseek/deepseek-v4-pro
+    provider: openai-codex
+    model: gpt-5.6-sol
   compression:
-    provider: nous
-    model: deepseek/deepseek-v4-pro
+    provider: openai-codex
+    model: gpt-5.6-sol
   summary:
-    provider: nous
-    model: deepseek/deepseek-v4-pro
+    provider: openai-codex
+    model: gpt-5.6-sol
   web_extract:
-    provider: nous
-    model: deepseek/deepseek-v4-pro
+    provider: openai-codex
+    model: gpt-5.6-sol
   approval:
-    provider: nous
-    model: deepseek/deepseek-v4-pro
+    provider: openai-codex
+    model: gpt-5.6-sol
 display:
   compact: false
   busy_input_mode: queue
