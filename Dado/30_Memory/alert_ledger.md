@@ -71,6 +71,19 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-06 RE: / Les Plastiques P.V. 8-inch pipe estimate — Roland has not responded to the estimate after 130 working days; chase draft prepared in the original Outlook thread.
 - 2026-08-06 Payment of CAD4,101.30 is outstanding for INV-000040 — New SCT reply adds Dilza to the invoice trail and asks her to confirm whether payment was made; live Zoho Books still shows the full CAD 4,101.30 overdue balance, so wait for Dilza's confirmation before replying.
 - 2026-08-06 Fwd: 1538833 Account Changes_Merchants & Partners — Forte rejected the submitted bank-change form because Anh is not the authorized signer; its different attached form must be completed by the authorized signer and returned from info@frpdepots.com.
+- 2026-08-07 Payment from Structural Composite Technologies Ltd. was successfully completed — New Plooto notice says CAD 4,101.30 for INV-000040 was sent to FRP Depot's bank on August 6 and is estimated available by August 10; live Zoho Books still shows the full invoice overdue balance, so bank receipt and Zoho allocation require verification.
+- 2026-08-07 Q26-1436 — Permatech has not replied to the additional project information after 125 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 Update — Northnet Media has not provided the requested FRP Depots progress update after 117 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 Re: DOUHAA INFO — Anh has not confirmed whether Douhaa's payroll setup was completed after 110 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 FW: Action required: Provide more information to release your transaction(s) — Anh has not confirmed whether the Airwallex information was submitted and the USD 3,255.29 payment released after 85 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 RE: PO5120 For SO-00032 — Troy Dualam has not confirmed the requested cancellation after 78 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 RE: Email Marketing — Northnet Media has not confirmed the Mailchimp verification or campaign launch after 72 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 FW: Troy Dualam Services Announces Key Leadership Appointments — Northnet Media has not confirmed correction of the campaign reply-to address after 67 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 Re: El Paso Projects — Ian and Paul have not provided the requested Q26-1483 quote comments after 46 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-07 Fwd: 1538833 Account Changes_Merchants & Partners — New Forte reply says the returned document is still the wrong form and the completed attached form must come from info@frpdepots.com; authorized-signer completion requires verification.
+- 2026-08-07 Re: Garage door — Draper Doors has the ordered door and needs confirmation for Monday installation plus whether to include the operator; decision is needed before Monday.
+- 2026-08-07 D470 Couplings — New SCT RFQ requests 2 × 3/4-inch D470 couplings in 6-inch or 8-inch length; live Zoho Inventory shows exactly 2 of the 6-inch item physically available at a $50.20 item rate and 0 of the 8-inch item, so approval requested to prepare pricing.
+- 2026-08-07 Debit Return FRP DEPOTS - MID 426988 — New Forte update says the CAD 1,148.23 failed debit was resubmitted and the account remains on funding hold for 5 business days; live Zoho's latest same-amount wage record is July 30 and the current imported debit could not be confirmed there, so bank verification is needed.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

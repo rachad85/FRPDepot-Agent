@@ -43,10 +43,14 @@ UPDATE_SCOPE = "ZohoInventory.items.UPDATE"
 CDP_ENDPOINT = "http://127.0.0.1:9228"
 UI_HOST = "inventory.zohocloud.ca"
 FIELD_PATH = "/api/v1/settings/fields"
+FIELD_SETTINGS_URL = (
+    f"https://{UI_HOST}/app#/settings/preferences/item/customfields"
+)
 ITEM_PATH_RE = re.compile(r"^/inventory/v1/items/([1-9][0-9]*)$")
 HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
 FIELD_LABEL = "Catalog Classification"
+FIELD_API_NAME = "cf_catalog_classification"
 CLASSIFICATIONS = (
     "Website Catalog",
     "Custom / Customer-Specific",
@@ -92,7 +96,14 @@ ITEM_EVIDENCE_FIELDS = {
     "current_state", "current_state_sha256", "current_custom_fields",
     "assignment_custom_fields", "protected_state", "protected_state_sha256",
 }
-ITEM_READBACK_EXCLUSIONS = {"custom_fields", "last_modified_time"}
+# Zoho rebuilds custom_field_hash from custom_fields after a custom-field PUT.
+# It includes the intended target value under API-name-derived keys, so comparing
+# the raw derived hash creates a false positive.  The authoritative custom_fields
+# rows are handled separately below: the target is verified exactly and every
+# non-target custom-field id/value remains protected.
+ITEM_READBACK_EXCLUSIONS = {
+    "custom_fields", "custom_field_hash", "last_modified_time",
+}
 
 
 class ClassificationToolError(RuntimeError):
@@ -310,11 +321,33 @@ def _field_id(row: dict[str, Any]) -> str:
     return positive_id(row[present[0]], "Catalog Classification customfield_id")
 
 
+def _is_target_field_row(row: dict[str, Any]) -> bool:
+    """Recognize built-in-style and Zoho custom-field metadata fail-closed."""
+    label = row.get("label")
+    if isinstance(label, str) and label.strip().casefold() == FIELD_LABEL.casefold():
+        return True
+    if label not in (None, ""):
+        return False
+    formatted = row.get("field_name_formatted")
+    return (
+        isinstance(formatted, str)
+        and formatted.strip().casefold() == FIELD_LABEL.casefold()
+        and row.get("is_custom_field") is True
+        and row.get("field_name") == FIELD_API_NAME
+        and row.get("api_name") == FIELD_API_NAME
+    )
+
+
 def project_field_metadata(row: dict[str, Any]) -> dict[str, Any]:
     if not isinstance(row, dict):
         raise ClassificationToolError("Zoho returned a non-object field row.")
+    if not _is_target_field_row(row):
+        raise ClassificationToolError("Catalog Classification field label is invalid.")
     label = row.get("label")
-    if not isinstance(label, str):
+    projected_label = (
+        label if isinstance(label, str) else row.get("field_name_formatted")
+    )
+    if not isinstance(projected_label, str):
         raise ClassificationToolError("Catalog Classification field label is invalid.")
     values = row.get("values")
     if not isinstance(values, list):
@@ -332,7 +365,7 @@ def project_field_metadata(row: dict[str, Any]) -> dict[str, Any]:
         })
     return {
         "customfield_id": _field_id(row),
-        "label": label,
+        "label": projected_label,
         "data_type": row.get("data_type"),
         "is_active": row.get("is_active"),
         "values": projected_values,
@@ -344,8 +377,7 @@ def target_field_candidates(response: dict[str, Any]) -> list[dict[str, Any]]:
     for row in _field_rows(response):
         if not isinstance(row, dict):
             continue
-        label = row.get("label")
-        if isinstance(label, str) and label.strip().casefold() == FIELD_LABEL.casefold():
+        if _is_target_field_row(row):
             candidates.append(project_field_metadata(row))
     return candidates
 
@@ -433,13 +465,8 @@ def _decode_ui_result(raw: Any, *, write: bool) -> dict[str, Any]:
     return payload
 
 
-def _execute_ui_request(
-    url: str,
-    method: str,
-    content_type: str | None,
-    body: str | None,
-) -> dict[str, Any]:
-    """Execute one same-origin request in an authenticated local Inventory page.
+def _execute_ui_request(url: str) -> dict[str, Any]:
+    """Execute one same-origin GET in an authenticated local Inventory page.
 
     Only status, success, and response text cross the CDP boundary. Cookies,
     storage, request headers, and credentials are never read or returned.
@@ -471,22 +498,250 @@ def _execute_ui_request(
                     "Run CONNECT_DADO_ZOHO_UI.bat."
                 )
             return page.evaluate(
-                """async ({url, method, contentType, body}) => {
+                """async (url) => {
                     const headers = {"Accept": "application/json"};
-                    if (contentType !== null) headers["Content-Type"] = contentType;
-                    const options = {method, headers, credentials: "include"};
-                    if (body !== null) options.body = body;
+                    const options = {method: "GET", headers, credentials: "include"};
                     const response = await fetch(url, options);
                     const text = await response.text();
                     return {status: response.status, ok: response.ok, text};
                 }""",
-                {
-                    "url": url,
-                    "method": method,
-                    "contentType": content_type,
-                    "body": body,
-                },
+                url,
             )
+    except ClassificationToolError:
+        raise
+    except Exception as exc:
+        raise ClassificationToolError(
+            "No authenticated live Zoho Inventory page is available. "
+            "Run CONNECT_DADO_ZOHO_UI.bat."
+        ) from exc
+
+
+def _validate_native_field_post(
+    url: str,
+    method: str,
+    post_data: str | None,
+    organization_id: str,
+    expected_body: str,
+) -> None:
+    """Fail closed unless a browser-generated request is the one fixed field POST.
+
+    This intentionally does not read request-header values. Zoho's own browser
+    code supplies its role/source/CSRF headers; the tool only validates the
+    public destination and the non-secret fixed form payload.
+    """
+    org_id = positive_id(organization_id, "organization_id")
+    parsed = urlsplit(str(url or ""))
+    if (
+        method != "POST"
+        or parsed.scheme != "https"
+        or parsed.hostname != UI_HOST
+        or parsed.path != FIELD_PATH
+        or parsed.query
+        or parsed.fragment
+    ):
+        raise ClassificationToolError(
+            "REFUSED: native field Save attempted an unsupported request."
+        )
+    if not isinstance(post_data, str):
+        raise ClassificationToolError(
+            "REFUSED: native field Save did not produce a form body."
+        )
+    try:
+        actual = parse_qs(post_data, strict_parsing=True, keep_blank_values=True)
+        expected = parse_qs(expected_body, strict_parsing=True, keep_blank_values=True)
+    except ValueError as exc:
+        raise ClassificationToolError(
+            "REFUSED: native field Save produced an invalid form body."
+        ) from exc
+    if actual != expected or set(actual) != {"JSONString", "organization_id"}:
+        raise ClassificationToolError(
+            "REFUSED: native field Save payload differs from the approved fixed payload."
+        )
+    if actual["organization_id"] != [org_id] or len(actual["JSONString"]) != 1:
+        raise ClassificationToolError(
+            "REFUSED: native field Save organization or JSONString is invalid."
+        )
+    try:
+        decoded = json.loads(actual["JSONString"][0])
+    except json.JSONDecodeError as exc:
+        raise ClassificationToolError(
+            "REFUSED: native field Save JSONString is invalid JSON."
+        ) from exc
+    if decoded != FIXED_FIELD_DEFINITION:
+        raise ClassificationToolError(
+            "REFUSED: native field Save JSONString differs from the fixed definition."
+        )
+
+
+def _validate_dropdown_slots(values: list[str], *, filled: bool) -> None:
+    """Accept Zoho's extra blank row without widening the three fixed values."""
+    if len(values) < len(CLASSIFICATIONS) or any(
+        not isinstance(value, str) for value in values
+    ):
+        raise ClassificationToolError(
+            "Zoho dropdown option inputs changed; no field Save was attempted."
+        )
+    if not filled:
+        if any(value != "" for value in values):
+            raise ClassificationToolError(
+                "Zoho dropdown option inputs were not blank; no field Save was attempted."
+            )
+        return
+    if tuple(values[:len(CLASSIFICATIONS)]) != CLASSIFICATIONS or any(
+        value != "" for value in values[len(CLASSIFICATIONS):]
+    ):
+        raise ClassificationToolError(
+            "Zoho dropdown option values differ from the fixed definition; "
+            "no field Save was attempted."
+        )
+
+
+def _execute_native_field_create(
+    organization_id: str,
+    expected_body: str,
+) -> dict[str, Any]:
+    """Submit the fixed field through Zoho's native UI Save path.
+
+    Exactly one validated field-create POST may leave the browser. Every other
+    non-read request is aborted. Header values, cookies, and credentials never
+    cross the CDP boundary or enter this function.
+    """
+    org_id = positive_id(organization_id, "organization_id")
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise ClassificationToolError(
+            "No authenticated live Zoho Inventory page is available. Run CONNECT_DADO_ZOHO_UI.bat."
+        ) from exc
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(CDP_ENDPOINT, timeout=10_000)
+            pages = [page for context in browser.contexts for page in context.pages]
+            page = next((
+                candidate for candidate in pages
+                if (
+                    urlsplit(candidate.url).scheme == "https"
+                    and urlsplit(candidate.url).hostname == UI_HOST
+                    and (
+                        urlsplit(candidate.url).path == "/app"
+                        or urlsplit(candidate.url).path.startswith("/app/")
+                    )
+                )
+            ), None)
+            if page is None:
+                raise ClassificationToolError(
+                    "No authenticated live Zoho Inventory page is available. "
+                    "Run CONNECT_DADO_ZOHO_UI.bat."
+                )
+
+            page.goto(FIELD_SETTINGS_URL, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(1_500)
+            cancel = page.get_by_role("button", name="Cancel", exact=True)
+            if cancel.count() and cancel.first.is_visible():
+                cancel.first.click(timeout=10_000)
+                page.wait_for_timeout(500)
+            page.get_by_role("button", name="New Field", exact=True).click(timeout=10_000)
+            label_input = page.locator(
+                'input[data-auto-gen-binding-key="model.label"]:visible'
+            )
+            label_input.wait_for(state="visible", timeout=10_000)
+            if label_input.count() != 1:
+                raise ClassificationToolError(
+                    "Zoho field-label input was not found uniquely."
+                )
+            label_input.fill(FIELD_LABEL)
+
+            combos = page.locator('[role="combobox"]:visible')
+            if combos.count() < 2:
+                raise ClassificationToolError("Zoho Data Type selector was not found.")
+            combos.last.click(timeout=10_000)
+            page.get_by_role("option", name="Dropdown", exact=True).click(timeout=10_000)
+            option_inputs = page.locator(
+                'input[data-auto-gen-binding-key="name"]:visible'
+            )
+            option_inputs.first.wait_for(state="visible", timeout=10_000)
+            option_count = option_inputs.count()
+            _validate_dropdown_slots(
+                [option_inputs.nth(index).input_value() for index in range(option_count)],
+                filled=False,
+            )
+            for index, value in enumerate(CLASSIFICATIONS):
+                option_inputs.nth(index).fill(value)
+            option_count = option_inputs.count()
+            _validate_dropdown_slots(
+                [option_inputs.nth(index).input_value() for index in range(option_count)],
+                filled=True,
+            )
+
+            allowed_count = 0
+            refused_target_requests: list[str] = []
+
+            def intercept(route: Any, request: Any) -> None:
+                nonlocal allowed_count
+                if request.method in {"GET", "HEAD"}:
+                    route.continue_()
+                    return
+                parsed_request = urlsplit(request.url)
+                is_target = (
+                    parsed_request.hostname == UI_HOST
+                    and parsed_request.path == FIELD_PATH
+                )
+                if is_target and allowed_count == 0:
+                    try:
+                        _validate_native_field_post(
+                            request.url,
+                            request.method,
+                            request.post_data,
+                            org_id,
+                            expected_body,
+                        )
+                    except ClassificationToolError as exc:
+                        refused_target_requests.append(str(exc))
+                        route.abort("blockedbyclient")
+                        return
+                    allowed_count = 1
+                    route.continue_()
+                    return
+                if is_target:
+                    refused_target_requests.append(
+                        "REFUSED: more than one native field-create POST was attempted."
+                    )
+                route.abort("blockedbyclient")
+
+            page.route("**/*", intercept)
+            try:
+                with page.expect_response(
+                    lambda response: (
+                        response.request.method == "POST"
+                        and urlsplit(response.url).hostname == UI_HOST
+                        and urlsplit(response.url).path == FIELD_PATH
+                    ),
+                    timeout=30_000,
+                ) as pending_response:
+                    page.get_by_role("button", name="Save", exact=True).click(
+                        timeout=10_000
+                    )
+                response = pending_response.value
+                raw = {
+                    "status": response.status,
+                    "ok": response.ok,
+                    "text": response.text(),
+                }
+            except Exception as exc:
+                if refused_target_requests:
+                    raise ClassificationToolError(refused_target_requests[0]) from exc
+                raise ClassificationToolError(
+                    "Zoho native field Save did not return a response; write outcome is indeterminate."
+                ) from exc
+            finally:
+                page.unroute("**/*", intercept)
+            if refused_target_requests or allowed_count != 1:
+                raise ClassificationToolError(
+                    refused_target_requests[0]
+                    if refused_target_requests
+                    else "Zoho native field Save did not issue exactly one approved POST."
+                )
+            return raw
     except ClassificationToolError:
         raise
     except Exception as exc:
@@ -512,7 +767,7 @@ def ui_transport_allowed(
                 "REFUSED: field metadata read is only the exact commissioned GET."
             )
         url = FIELD_PATH + "?" + urlencode({"entity": "item", "organization_id": org_id})
-        raw = _execute_ui_request(url, "GET", None, None)
+        raw = _execute_ui_request(url)
         payload = _decode_ui_result(raw, write=False)
         _field_rows(payload)
         return payload
@@ -559,7 +814,7 @@ def ui_transport_allowed(
         or json.loads(decoded_form["JSONString"][0]) != FIXED_FIELD_DEFINITION
     ):
         raise ClassificationToolError("REFUSED: encoded field-create form failed equality checks.")
-    raw = _execute_ui_request(FIELD_PATH, "POST", UI_CONTENT_TYPE, body)
+    raw = _execute_native_field_create(org_id, body)
     return _decode_ui_result(raw, write=True)
 
 

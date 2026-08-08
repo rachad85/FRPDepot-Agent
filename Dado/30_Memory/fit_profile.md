@@ -31,6 +31,10 @@ sheet — ask instead.
 
 ## Commercial rules
 - Currency: Verified transactions use CAD and USD. No single default currency is confirmed.
+- Pricing currency (Rachad, 2026-08-07, approving the SCT coupling draft): "Prices
+  are all in CAD". Stated over the stocked-coupling price comparison, so it governs
+  the prices Dado presents and quotes. It does NOT restate the currency of a Zoho
+  record or a supplier invoice — read those from the record itself.
 - Payment terms default: No global default confirmed. Customer terms are account/order-specific; supplier terms are negotiated per PO/invoice.
 - Shipping terms default: No global default confirmed. Observed orders use Ex Works, FCA, or customer-account collect arrangements.
 - Quote validity default: No general default found in the mailbox; Rachad must confirm.
@@ -283,3 +287,33 @@ sheet — ask instead.
   paths only; it is not approval of any live plan or Zoho write. The tool may
   not delete fields, add other choices, or change names, SKUs, prices, stock,
   accounts, item groups, or any other item property.
+- 2026-08-08: Rachad commissioned a daily approval-gated Zoho banking review at
+  08:15 Eastern/server time. It reads the imported feeds for the four logical
+  accounts Desjardins CAD, Desjardins USD, Stripe, and PayPal; the CAD review
+  checks both `Chequing account (C)` (`96274000001409019`) and `FRP Depots -
+  Desjardins` (`96274000001411002`) so the differing live feed/account records
+  cannot hide an open line. Clean runs are silent. Open lines are classified as
+  customer receipt, payroll, expense, transfer, or unknown and reported with
+  Zoho's current best candidate. The daily job performs no Zoho write and does
+  not stage or commit. Every match/categorization still requires an exact named-
+  tool plan shown to Rachad and his fresh one-word `APPROVED` reply.
+
+## 2026-08-08 — Airwallex USD transfer API blocker (durable)
+- Transfer `96274000001535012` remains live as source `FRPDepot Inc.` CAD
+  (`96274000000097003`) to `USD Desjardins corporate build-up account` USD
+  (`96274000001409012`), amount 21,642.71, currency CAD, exchange rate 1.
+- The approved historical source should be `AWX_FRPDepot Inc._USD`
+  (`96274000000149257`, USD, inactive). CAD transfer `96274000001533058`
+  is already corrected separately.
+- Zoho Books API rejects the USD source-account correction with HTTP 400,
+  code 17004: "From and To accounts are in the same foreign currency. Please
+  transfer funds in the same currency." This was live-proven both while
+  preserving the stale CAD currency ID and while omitting currency/exchange-rate
+  metadata. The live settings IDs are CAD `96274000000000087` and USD
+  `96274000000000081`.
+- The remaining likely API fix requires explicitly changing the transfer's
+  currency to USD. That is outside the commissioned banking tool's account-link-
+  only correction scope, so Dado must not stage or commit another API variant.
+  Resolution requires Rachad to edit the transfer manually in Zoho, or a separate
+  explicit expansion of the commissioned write scope. All failed plans are
+  permanently replay-locked; the live transaction was verified unchanged.

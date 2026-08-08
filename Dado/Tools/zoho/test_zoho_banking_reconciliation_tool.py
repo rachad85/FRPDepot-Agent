@@ -9,6 +9,7 @@ from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
+from urllib.error import HTTPError
 
 import zoho_banking_reconciliation_tool as banking
 
@@ -105,6 +106,28 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             "reference_number": "EXISTING-200",
             "transaction_type": "owner_drawings",
             "description": "Existing outgoing transaction",
+        }
+        value.update(changes)
+        return value
+
+    @staticmethod
+    def invoice_target(transaction_id: str = "96274000001115023", **changes) -> dict:
+        value = {
+            "transaction_id": transaction_id,
+            "account_id": "96274000000186533",
+            "account_name": "Structural Composites Technologies Ltd",
+            "date": "2026-06-02",
+            "amount": 4101.30,
+            "currency_code": "CAD",
+            "status": "overdue",
+            "payee": "Structural Composites Technologies Ltd",
+            "reference_number": "SO-00041",
+            "transaction_type": "invoice",
+            "description": "Invoice INV-000040",
+            "transaction_number": "INV-000040",
+            "match_source_transaction_id": "96274000001534055",
+            "candidate_is_best_match": True,
+            "candidate_is_exact_match": False,
         }
         value.update(changes)
         return value
@@ -252,6 +275,252 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             "sources": self.update_sources(statement_line or "Reviewed existing transfer account links"),
             "evidence": {"basis": "Live transfer and account records reviewed"},
         }, {source["transaction_id"]: source}, accounts)
+
+    def test_bank_get_falls_back_to_exact_ui_feed_only_on_api_404(self) -> None:
+        source = self.source("96274000001534055", amount=4101.30)
+
+        def api_404(*_args):
+            cause = HTTPError("https://www.zohoapis.ca", 404, "Not Found", None, None)
+            raise banking.zoho_tool.ZohoError("Transaction does not exist") from cause
+
+        with mock.patch.object(
+            banking.zoho_tool, "api_get", side_effect=api_404
+        ), mock.patch.object(
+            banking, "get_uncategorized_ui_transaction", return_value=source
+        ) as ui_get:
+            result = banking.get_bank_transaction(
+                "token", self.vault, "96274000001534055", "regular"
+            )
+        self.assertEqual(result, source)
+        ui_get.assert_called_once_with(self.vault, "96274000001534055")
+
+        def api_403(*_args):
+            cause = HTTPError("https://www.zohoapis.ca", 403, "Forbidden", None, None)
+            raise banking.zoho_tool.ZohoError("Forbidden") from cause
+
+        with mock.patch.object(
+            banking.zoho_tool, "api_get", side_effect=api_403
+        ), mock.patch.object(banking, "get_uncategorized_ui_transaction") as ui_get:
+            with self.assertRaises(banking.zoho_tool.ZohoError):
+                banking.get_bank_transaction(
+                    "token", self.vault, "96274000001534055", "regular"
+                )
+        ui_get.assert_not_called()
+
+    def test_uncategorized_ui_reader_requires_one_exact_row_and_projects_fields(self) -> None:
+        row = self.source("96274000001534055", amount=4101.30)
+        row["unexpected_server_field"] = "must not enter the immutable plan"
+        response = {
+            "transactions": [row],
+            "page_context": {"page": 1, "has_more_page": False},
+        }
+        with mock.patch.object(banking, "books_ui_get", return_value=response):
+            result = banking.get_uncategorized_ui_transaction(
+                self.vault, "96274000001534055"
+            )
+        self.assertNotIn("unexpected_server_field", result)
+        self.assertEqual(result["transaction_id"], "96274000001534055")
+        with mock.patch.object(banking, "books_ui_get", return_value={
+            "transactions": [row, dict(row)],
+            "page_context": {"page": 1, "has_more_page": False},
+        }), self.assertRaisesRegex(banking.BankingToolError, "duplicate transaction IDs"):
+            banking.get_uncategorized_ui_transaction(self.vault, "96274000001534055")
+
+    def test_invoice_is_allowlisted_for_match_but_not_categorize(self) -> None:
+        self.assertEqual(
+            banking.validate_match_targets([
+                {"transaction_id": "96274000001115023", "transaction_type": "invoice"}
+            ])[0]["transaction_type"],
+            "invoice",
+        )
+        with self.assertRaisesRegex(banking.BankingToolError, "generic banking"):
+            banking.validate_categorize_input_payload({
+                "from_account_id": "10",
+                "to_account_id": "30",
+                "transaction_type": "invoice",
+            })
+
+    def test_invoice_match_target_joins_best_candidate_to_open_live_invoice(self) -> None:
+        candidate = {
+            "transaction_id": "96274000001115023",
+            "date": "2026-06-02",
+            "transaction_type": "invoice",
+            "reference_number": "SO-00041",
+            "amount": 4101.30,
+            "transaction_number": "INV-000040",
+            "contact_name": "Structural Composites Technologies Ltd",
+            "is_best_match": True,
+            "is_exact_match": False,
+        }
+        invoice = {
+            "invoice_id": "96274000001115023",
+            "invoice_number": "INV-000040",
+            "customer_id": "96274000000186533",
+            "customer_name": "Structural Composites Technologies Ltd",
+            "date": "2026-06-02",
+            "currency_code": "CAD",
+            "balance": 4101.30,
+            "status": "overdue",
+            "reference_number": "SO-00041",
+        }
+        with mock.patch.object(
+            banking, "books_ui_get", return_value={"matching_transactions": [candidate]}
+        ), mock.patch.object(
+            banking.zoho_tool, "api_get", return_value={"invoice": invoice}
+        ):
+            result = banking.get_match_target(
+                "token", self.vault, "96274000001534055",
+                "96274000001115023", "invoice",
+            )
+        self.assertEqual(result, self.invoice_target())
+        banking.transaction_before(result, "96274000001115023")
+
+        candidate["is_best_match"] = False
+        with mock.patch.object(
+            banking, "books_ui_get", return_value={"matching_transactions": [candidate]}
+        ), self.assertRaisesRegex(banking.BankingToolError, "not Zoho's current best match"):
+            banking.get_match_target(
+                "token", self.vault, "96274000001534055",
+                "96274000001115023", "invoice",
+            )
+
+    def test_invoice_match_stages_and_refetches_protected_invoice_without_post(self) -> None:
+        source_id = "96274000001534055"
+        target_id = "96274000001115023"
+        source = self.source(
+            source_id,
+            account_id="96274000001409019",
+            account_name="Chequing account (C)",
+            amount=4101.30,
+            transaction_type="uncategorized",
+        )
+        target = self.invoice_target()
+        input_value = {
+            "source_transaction_id": source_id,
+            "transactions_to_be_matched": [
+                {"transaction_id": target_id, "transaction_type": "invoice"}
+            ],
+            "sources": self.sources("Live Desjardins CAD imported-feed line"),
+            "evidence": self.evidence(),
+        }
+        with mock.patch.object(
+            banking, "get_bank_transaction", return_value=source
+        ), mock.patch.object(
+            banking, "get_match_target", return_value=target
+        ) as get_target, mock.patch.object(
+            banking, "api_post_allowed"
+        ) as post, mock.patch.object(
+            banking, "api_put_transfer_accounts_allowed"
+        ) as put, contextlib.redirect_stdout(io.StringIO()) as stdout:
+            banking.command_stage(
+                argparse.Namespace(input=str(self.input_path(input_value))), "match"
+            )
+        post.assert_not_called()
+        put.assert_not_called()
+        get_target.assert_called_once_with(
+            "token", self.vault, source_id, target_id, "invoice"
+        )
+        plan_path = Path(json.loads(stdout.getvalue())["plan"])
+        plan = banking.load_plan(plan_path, "match")
+        self.assertEqual(plan["payload"]["transactions_to_be_matched"], [
+            {"transaction_id": target_id, "transaction_type": "invoice"}
+        ])
+        snapshot = plan["target_snapshots"][0]
+        with mock.patch.object(
+            banking, "get_match_target", return_value=target
+        ) as get_target, mock.patch.object(banking, "get_bank_transaction") as bank_get:
+            refreshed = banking.refetch_snapshot("token", self.vault, snapshot)
+        bank_get.assert_not_called()
+        get_target.assert_called_once_with(
+            "token", self.vault, source_id, target_id, "invoice"
+        )
+        self.assertEqual(refreshed["current_state"], target)
+
+    def test_invoice_match_readback_requires_exact_payment_allocation_and_paid_invoice(self) -> None:
+        source_id = "96274000001534055"
+        target_id = "96274000001115023"
+        source = self.source(
+            source_id,
+            account_id="96274000001409019",
+            account_name="Chequing account (C)",
+            amount=4101.30,
+            date="2026-08-07",
+            transaction_type="uncategorized",
+            description="Direct deposit /Structural Composite Technolog",
+        )
+        target = self.invoice_target()
+        plan = {
+            "source_snapshot": banking.transaction_snapshot(
+                source, source_id, "source", "regular"
+            ),
+            "target_snapshots": [banking.transaction_snapshot(
+                target, target_id, "match_target", "regular"
+            )],
+            "payload": {"transactions_to_be_matched": [
+                {"transaction_id": target_id, "transaction_type": "invoice"}
+            ]},
+        }
+        payment_summary = {
+            "payment_id": "96274000001542003",
+            "date": "2026-08-07",
+            "amount": 4101.30,
+            "account_id": "96274000001409019",
+        }
+        payment = {
+            **payment_summary,
+            "unused_amount": 0.0,
+            "description": "Direct deposit /Structural Composite Technolog",
+            "invoices": [{
+                "invoice_id": target_id,
+                "amount_applied": 4101.30,
+                "balance": 0.0,
+            }],
+        }
+        invoice = {
+            "invoice_id": target_id,
+            "invoice_number": "INV-000040",
+            "customer_id": "96274000000186533",
+            "customer_name": "Structural Composites Technologies Ltd",
+            "date": "2026-06-02",
+            "currency_code": "CAD",
+            "reference_number": "SO-00041",
+            "status": "paid",
+            "balance": 0.0,
+        }
+
+        def api_get(_token, _domain, path):
+            if path.startswith("/books/v3/customerpayments?"):
+                return {"customerpayments": [payment_summary], "page_context": {"has_more_page": False}}
+            if path.startswith("/books/v3/customerpayments/96274000001542003?"):
+                return {"payment": payment}
+            if path.startswith(f"/books/v3/invoices/{target_id}?"):
+                return {"invoice": invoice}
+            self.fail(f"Unexpected GET: {path}")
+
+        with mock.patch.object(
+            banking, "list_uncategorized_ui_transactions", return_value=[]
+        ), mock.patch.object(
+            banking.zoho_tool, "api_get", side_effect=api_get
+        ):
+            result = banking.verify_invoice_match_readback(plan, "token", self.vault)
+        self.assertEqual(result, {
+            "status": "matched", "payment_id": "96274000001542003"
+        })
+
+        with mock.patch.object(
+            banking, "list_uncategorized_ui_transactions", return_value=[source]
+        ), mock.patch.object(banking.zoho_tool, "api_get") as get:
+            with self.assertRaisesRegex(banking.BankingToolError, "still shows"):
+                banking.verify_invoice_match_readback(plan, "token", self.vault)
+        get.assert_not_called()
+
+        payment["invoices"][0]["invoice_id"] = "96274000009999999"
+        with mock.patch.object(
+            banking, "list_uncategorized_ui_transactions", return_value=[]
+        ), mock.patch.object(
+            banking.zoho_tool, "api_get", side_effect=api_get
+        ), self.assertRaisesRegex(banking.BankingToolError, "approved invoice allocations"):
+            banking.verify_invoice_match_readback(plan, "token", self.vault)
 
     def test_detail_missing_status_is_joined_to_exact_source_account_list_row(self) -> None:
         detail = self.transfer()
@@ -877,6 +1146,23 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 self.assertEqual(plan["evidence"]["airwallex_mapping"]["transaction_id"], row["transaction_id"])
                 self.assertEqual(plan["payload"]["from_account_id"], row["new_from"])
                 self.assertEqual(plan["payload"]["to_account_id"], row["to"])
+                if row["currency"] == "USD":
+                    self.assertNotIn("currency_id", plan["payload"])
+                    self.assertNotIn("exchange_rate", plan["payload"])
+                    readback = {
+                        **source,
+                        "from_account_id": row["new_from"],
+                        "to_account_id": row["to"],
+                        "currency_code": "USD",
+                        "currency_id": "USD-CURRENCY-ID",
+                        "exchange_rate": 1.0,
+                    }
+                    verified = banking.verify_readback(plan, readback)
+                    self.assertEqual(verified["currency"], "USD")
+                    with self.assertRaisesRegex(
+                        banking.BankingToolError, "did not derive currency USD"
+                    ):
+                        banking.verify_readback(plan, {**readback, "currency_code": "CAD"})
                 self.assertFalse(any(
                     snapshot["record_type"] == "transaction"
                     for snapshot in plan["target_snapshots"]

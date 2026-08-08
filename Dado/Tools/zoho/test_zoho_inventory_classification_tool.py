@@ -4,11 +4,12 @@ import argparse
 import contextlib
 from datetime import timedelta
 import io
+import inspect
 import json
 import os
 from pathlib import Path
 from urllib.error import URLError
-from urllib.parse import parse_qs, urlsplit
+from urllib.parse import parse_qs, urlencode, urlsplit
 import tempfile
 import unittest
 from unittest import mock
@@ -33,6 +34,7 @@ class FakeResponse:
 class ZohoInventoryClassificationToolTests(unittest.TestCase):
     def setUp(self) -> None:
         here = Path(__file__).resolve().parent
+        self.real_execute_ui = classification._execute_ui_request
         self.temp = tempfile.TemporaryDirectory(dir=here)
         self.root = Path(self.temp.name)
         self.plan_dir = self.root / "plans"
@@ -61,6 +63,16 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
             ),
             mock.patch.object(
                 classification,
+                "_execute_native_field_create",
+                side_effect=AssertionError("live native UI write is forbidden in tests"),
+            ),
+            mock.patch.object(
+                classification.zoho_tool,
+                "api_get",
+                side_effect=AssertionError("live Zoho item GET is forbidden in tests"),
+            ),
+            mock.patch.object(
+                classification,
                 "urlopen",
                 side_effect=AssertionError("live OAuth/network is forbidden in tests"),
             ),
@@ -71,7 +83,9 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         self.save_vault = started[3]
         self.append_receipt = started[4]
         self.execute_ui = started[5]
-        self.urlopen = started[6]
+        self.execute_native = started[6]
+        self.api_get = started[7]
+        self.urlopen = started[8]
 
     def tearDown(self) -> None:
         for patcher in reversed(self.patchers):
@@ -161,6 +175,13 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         result = {
             **original,
             "custom_fields": rows,
+            # Live Zoho derives these keys from the intended target custom
+            # field after a PUT. They are not an independent business field.
+            "custom_field_hash": {
+                **original.get("custom_field_hash", {}),
+                "cf_catalog_classification": value,
+                "cf_catalog_classification_unformatted": value,
+            },
             "last_modified_time": "2026-08-07T01:00:00-0400",
         }
         result.update(changes)
@@ -234,6 +255,10 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         }
         self.assertEqual(classification.FIXED_FIELD_DEFINITION, expected)
         self.assertFalse(hasattr(classification, "WRITE_SHAPES_VERIFIED"))
+        self.assertEqual(
+            list(inspect.signature(self.real_execute_ui).parameters),
+            ["url"],
+        )
         self.assertEqual(
             classification.PLAN_DIR,
             self.plan_dir,
@@ -488,37 +513,137 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
                 )))
 
     def test_ui_transport_get_and_post_have_exact_shapes(self) -> None:
-        captured = []
+        captured_get = []
+        captured_post = []
 
-        def fake_execute(url, method, content_type, body):
-            captured.append((url, method, content_type, body))
-            payload = self.fields_response() if method == "GET" else {"code": 0}
-            return {"status": 200, "ok": True, "text": json.dumps(payload)}
+        def fake_execute(url):
+            captured_get.append(url)
+            return {
+                "status": 200,
+                "ok": True,
+                "text": json.dumps(self.fields_response()),
+            }
 
-        with mock.patch.object(classification, "_execute_ui_request", side_effect=fake_execute):
+        def fake_native(org_id, body):
+            captured_post.append((org_id, body))
+            return {"status": 200, "ok": True, "text": json.dumps({"code": 0})}
+
+        with mock.patch.object(
+            classification, "_execute_ui_request", side_effect=fake_execute
+        ), mock.patch.object(
+            classification, "_execute_native_field_create", side_effect=fake_native
+        ):
             self.assertEqual(
                 classification.ui_list_fields("99"), self.fields_response()
             )
             self.assertEqual(classification.ui_create_fixed_field("99"), {"code": 0})
-        get_url, get_method, get_type, get_body = captured[0]
-        self.assertEqual(get_method, "GET")
-        self.assertEqual(get_type, None)
-        self.assertEqual(get_body, None)
+        get_url = captured_get[0]
         parsed_get = urlsplit(get_url)
         self.assertEqual(parsed_get.path, classification.FIELD_PATH)
         self.assertEqual(
             parse_qs(parsed_get.query), {"entity": ["item"], "organization_id": ["99"]}
         )
-        post_url, post_method, post_type, post_body = captured[1]
-        self.assertEqual(post_url, "/api/v1/settings/fields")
-        self.assertEqual(post_method, "POST")
-        self.assertEqual(
-            post_type, "application/x-www-form-urlencoded; charset=UTF-8"
-        )
+        post_org_id, post_body = captured_post[0]
+        self.assertEqual(post_org_id, "99")
         outer = parse_qs(post_body, strict_parsing=True, keep_blank_values=True)
         self.assertEqual(set(outer), {"JSONString", "organization_id"})
         self.assertEqual(outer["organization_id"], ["99"])
         self.assertEqual(json.loads(outer["JSONString"][0]), classification.FIXED_FIELD_DEFINITION)
+
+    def test_native_field_post_validator_accepts_only_exact_fixed_request(self) -> None:
+        fixed_json = json.dumps(
+            classification.FIXED_FIELD_DEFINITION,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        body = urlencode([
+            ("JSONString", fixed_json),
+            ("organization_id", "99"),
+        ])
+        classification._validate_native_field_post(
+            "https://inventory.zohocloud.ca/api/v1/settings/fields",
+            "POST",
+            body,
+            "99",
+            body,
+        )
+        cases = [
+            ("http://inventory.zohocloud.ca/api/v1/settings/fields", "POST", body),
+            ("https://example.com/api/v1/settings/fields", "POST", body),
+            ("https://inventory.zohocloud.ca/api/v1/settings/other", "POST", body),
+            ("https://inventory.zohocloud.ca/api/v1/settings/fields?extra=1", "POST", body),
+            ("https://inventory.zohocloud.ca/api/v1/settings/fields", "PUT", body),
+            ("https://inventory.zohocloud.ca/api/v1/settings/fields", "POST", None),
+            ("https://inventory.zohocloud.ca/api/v1/settings/fields", "POST", body + "&extra=x"),
+            ("https://inventory.zohocloud.ca/api/v1/settings/fields", "POST", body.replace("organization_id=99", "organization_id=100")),
+        ]
+        for url, method, post_data in cases:
+            with self.subTest(url=url, method=method), self.assertRaisesRegex(
+                classification.ClassificationToolError, "REFUSED"
+            ):
+                classification._validate_native_field_post(
+                    url, method, post_data, "99", body
+                )
+
+    def test_dropdown_slots_allow_only_three_fixed_values_plus_blank_extras(self) -> None:
+        for count in (3, 4, 7):
+            classification._validate_dropdown_slots([""] * count, filled=False)
+            classification._validate_dropdown_slots(
+                list(classification.CLASSIFICATIONS) + ([""] * (count - 3)),
+                filled=True,
+            )
+        invalid = [
+            (["", ""], False),
+            (["", "", "prefilled", ""], False),
+            (["Website Catalog", "Custom / Customer-Specific", ""], True),
+            ([
+                "Custom / Customer-Specific",
+                "Website Catalog",
+                "Review / Unclassified",
+                "",
+            ], True),
+            (list(classification.CLASSIFICATIONS) + ["unexpected"], True),
+            (["", "", "", None], False),
+        ]
+        for values, filled in invalid:
+            with self.subTest(values=values, filled=filled), self.assertRaises(
+                classification.ClassificationToolError
+            ):
+                classification._validate_dropdown_slots(values, filled=filled)
+
+    def test_real_custom_field_metadata_shape_is_recognized_fail_closed(self) -> None:
+        row = self.field(customfield_id="96274000001547006")
+        field_id = row.pop("customfield_id")
+        row.pop("label")
+        row.update({
+            "field_id": field_id,
+            "field_name": "cf_catalog_classification",
+            "api_name": "cf_catalog_classification",
+            "field_name_formatted": "Catalog Classification",
+            "is_custom_field": True,
+        })
+        expected = {
+            **self.target,
+            "customfield_id": field_id,
+        }
+        self.assertEqual(
+            classification.require_exact_target_field(self.fields_response(row)),
+            expected,
+        )
+        for key, value in (
+            ("field_name", "cf_other"),
+            ("api_name", "cf_other"),
+            ("field_name_formatted", "Other"),
+            ("is_custom_field", False),
+        ):
+            changed = dict(row)
+            changed[key] = value
+            with self.subTest(key=key), self.assertRaises(
+                classification.ClassificationToolError
+            ):
+                classification.require_exact_target_field(
+                    self.fields_response(changed)
+                )
 
     def test_ui_write_allowlist_rejects_verbs_paths_content_outer_extras_and_org_mismatch(self) -> None:
         fixed_json = json.dumps(classification.FIXED_FIELD_DEFINITION)
@@ -827,6 +952,26 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
                 ).read_text())
                 self.assertEqual(lock["status"], "indeterminate")
                 self.assertEqual(lock["write_in_flight_item_id"], str(30 + index))
+
+    def test_protected_state_ignores_derived_hash_but_keeps_other_custom_values(self) -> None:
+        original = self.item("39", custom_field_hash={})
+        assigned = self.assigned_item(original, "Website Catalog")
+        before = classification.protected_item_state(original, "900")
+        after = classification.protected_item_state(assigned, "900")
+        self.assertEqual(before, after)
+
+        changed_other = {
+            **assigned,
+            "custom_fields": [
+                {"customfield_id": "800", "label": "Protected Other Field", "value": "changed"},
+                {"customfield_id": "900", "label": classification.FIELD_LABEL,
+                 "value": "Website Catalog"},
+            ],
+        }
+        self.assertNotEqual(
+            before,
+            classification.protected_item_state(changed_other, "900"),
+        )
 
     def test_partial_and_indeterminate_failures_are_permanently_locked_no_retry(self) -> None:
         originals = [self.item("41"), self.item("42")]

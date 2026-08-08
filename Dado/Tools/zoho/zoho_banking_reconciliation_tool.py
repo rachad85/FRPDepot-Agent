@@ -30,7 +30,7 @@ import secrets
 import sys
 from typing import Any
 from urllib.error import HTTPError, URLError
-from urllib.parse import urlencode
+from urllib.parse import parse_qs, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 import zoho_tool
@@ -46,6 +46,8 @@ CREATE_SCOPE = "ZohoBooks.banking.CREATE"
 UPDATE_SCOPE = "ZohoBooks.banking.UPDATE"
 AIRWALLEX_AMOUNTS = {Decimal("78146.27"), Decimal("21642.71")}
 AIRWALLEX_DATE_TOLERANCE_DAYS = 7
+CDP_ENDPOINT = "http://127.0.0.1:9228"
+BOOKS_UI_ORIGIN = "https://books.zohocloud.ca"
 HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
 NONCE_RE = re.compile(r"^[0-9a-f]{32}$")
 POSITIVE_ID_RE = re.compile(r"^[1-9][0-9]*$")
@@ -55,6 +57,7 @@ GENERIC_TRANSACTION_TYPES = {
     "sales_without_invoices", "expense_refund", "owner_contribution",
     "interest_income", "other_income", "owner_drawings", "sales_return",
 }
+MATCH_TRANSACTION_TYPES = GENERIC_TRANSACTION_TYPES | {"invoice"}
 ACTIONS = {"match", "categorize", "unmatch", "uncategorize", "update_transfer_accounts"}
 POST_ACTIONS = {"match", "categorize", "unmatch", "uncategorize"}
 SOURCE_MODES = {
@@ -255,6 +258,16 @@ def transaction_type(value: Any, label: str) -> str:
         raise BankingToolError(
             f"{label} must be one of the generic banking transaction types: "
             + ", ".join(sorted(GENERIC_TRANSACTION_TYPES))
+        )
+    return text
+
+
+def match_transaction_type(value: Any, label: str) -> str:
+    text = clean_text(value, label, 64).casefold()
+    if not TRANSACTION_TYPE_RE.fullmatch(text) or text not in MATCH_TRANSACTION_TYPES:
+        raise BankingToolError(
+            f"{label} must be one of the allowlisted match transaction types: "
+            + ", ".join(sorted(MATCH_TRANSACTION_TYPES))
         )
     return text
 
@@ -532,6 +545,121 @@ def enrich_missing_transaction_status(
     return enriched
 
 
+def books_ui_get(path: str, organization_id: str) -> dict[str, Any]:
+    """GET one of the two allowlisted Books imported-feed routes via the live UI session."""
+    organization_id = positive_id(organization_id, "organization_id")
+    parsed = urlparse(path)
+    allowed_paths = {
+        "/api/v3/banktransactions/uncategorized",
+        "/api/v3/banktransactions/uncategorized/match",
+    }
+    if parsed.scheme or parsed.netloc or parsed.path not in allowed_paths:
+        raise BankingToolError("REFUSED: Books UI GET path is outside the imported-feed allowlist.")
+    organizations = parse_qs(parsed.query).get("organization_id", [])
+    if organizations != [organization_id]:
+        raise BankingToolError("REFUSED: Books UI GET is not locked to the saved FRP Depot organization.")
+    try:
+        from playwright.sync_api import Error as PlaywrightError
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise BankingToolError("Playwright is unavailable for the commissioned Books UI read path.") from exc
+    try:
+        with sync_playwright() as playwright:
+            browser = playwright.chromium.connect_over_cdp(CDP_ENDPOINT, timeout=10_000)
+            pages = [
+                page for context in browser.contexts for page in context.pages
+                if page.url.startswith(BOOKS_UI_ORIGIN + "/app")
+            ]
+            if len(pages) != 1:
+                raise BankingToolError(
+                    "Exactly one authenticated Canadian Zoho Books app page must be open for imported-feed reads."
+                )
+            result = pages[0].evaluate(
+                """async path => {
+                    const response = await fetch(path, {
+                        method: 'GET', credentials: 'same-origin',
+                        headers: {Accept: 'application/json'}
+                    });
+                    let body;
+                    try { body = await response.json(); }
+                    catch (_) { body = null; }
+                    return {http_status: response.status, body};
+                }""",
+                path,
+            )
+            browser.close()
+    except BankingToolError:
+        raise
+    except (PlaywrightError, PlaywrightTimeoutError) as exc:
+        raise BankingToolError(f"Zoho Books imported-feed GET failed: {exc}") from exc
+    if not isinstance(result, dict) or result.get("http_status") != 200:
+        status = result.get("http_status") if isinstance(result, dict) else "invalid response"
+        raise BankingToolError(f"Zoho Books imported-feed GET returned HTTP {status}.")
+    body = result.get("body")
+    if not isinstance(body, dict) or body.get("code") not in (None, 0):
+        raise BankingToolError("Zoho Books imported-feed GET returned an invalid or unsuccessful body.")
+    return json_copy(body)
+
+
+def list_uncategorized_ui_transactions(vault: dict[str, Any]) -> list[dict[str, Any]]:
+    organization_id = positive_id(vault["books_organization_id"], "organization_id")
+    rows_out: list[dict[str, Any]] = []
+    allowed = {
+        "transaction_id", "date", "transaction_type", "status", "amount",
+        "bank_charges", "gross_amount", "source", "account_id", "account_name",
+        "account_type", "payee", "description", "currency_id", "currency_code",
+        "currency_symbol", "price_precision", "debit_or_credit", "reference_number",
+    }
+    for page_number in range(1, 51):
+        query = urlencode({
+            "page": page_number,
+            "per_page": 200,
+            "response_option": 1,
+            "organization_id": organization_id,
+        })
+        result = books_ui_get(f"/api/v3/banktransactions/uncategorized?{query}", organization_id)
+        rows = result.get("transactions")
+        if not isinstance(rows, list):
+            raise BankingToolError("Zoho Books imported-feed GET omitted its transactions list.")
+        for row in rows:
+            if not isinstance(row, dict):
+                raise BankingToolError("Zoho Books imported-feed GET returned a non-object transaction.")
+            projected = {key: value for key, value in row.items() if key in allowed}
+            transaction_id = positive_id(
+                first_value(projected, ("transaction_id", "bank_transaction_id")),
+                "live imported-feed transaction_id",
+            )
+            transaction_before(projected, transaction_id)
+            rows_out.append(projected)
+        page_context = result.get("page_context") or {}
+        if not isinstance(page_context, dict):
+            raise BankingToolError("Zoho Books imported-feed GET returned invalid page context.")
+        if not page_context.get("has_more_page"):
+            break
+    else:
+        raise BankingToolError("Zoho Books imported-feed GET exceeded the 50-page safety limit.")
+    ids = [row["transaction_id"] for row in rows_out]
+    if len(set(ids)) != len(ids):
+        raise BankingToolError("Zoho Books imported feed returned duplicate transaction IDs.")
+    return rows_out
+
+
+def get_uncategorized_ui_transaction(
+    vault: dict[str, Any], transaction_id: str
+) -> dict[str, Any]:
+    transaction_id = positive_id(transaction_id, "transaction_id")
+    found = [
+        row for row in list_uncategorized_ui_transactions(vault)
+        if row["transaction_id"] == transaction_id
+    ]
+    if len(found) != 1:
+        raise BankingToolError(
+            f"Zoho Books imported feed did not return exactly one transaction {transaction_id}."
+        )
+    return found[0]
+
+
 def get_bank_transaction(
     access_token: str, vault: dict[str, Any], transaction_id: str, mode: str
 ) -> dict[str, Any]:
@@ -539,11 +667,17 @@ def get_bank_transaction(
     if mode != "regular":
         raise BankingToolError("Unsupported banking GET mode.")
     query = urlencode({"organization_id": positive_id(vault["books_organization_id"], "organization_id")})
-    result = zoho_tool.api_get(
-        access_token,
-        str(vault["api_domain"]),
-        f"/books/v3/banktransactions/{transaction_id}?{query}",
-    )
+    try:
+        result = zoho_tool.api_get(
+            access_token,
+            str(vault["api_domain"]),
+            f"/books/v3/banktransactions/{transaction_id}?{query}",
+        )
+    except zoho_tool.ZohoError as exc:
+        cause = exc.__cause__
+        if not isinstance(cause, HTTPError) or cause.code != 404:
+            raise
+        return get_uncategorized_ui_transaction(vault, transaction_id)
     for key in ("banktransaction", "bank_transaction", "transaction", "uncategorized_transaction"):
         row = result.get(key)
         if isinstance(row, dict):
@@ -551,6 +685,90 @@ def get_bank_transaction(
             transaction_before(row, transaction_id)
             return json_copy(row)
     raise BankingToolError(f"Zoho did not return bank transaction {transaction_id}.")
+
+
+def get_match_target(
+    access_token: str,
+    vault: dict[str, Any],
+    source_transaction_id: str,
+    target_transaction_id: str,
+    target_transaction_type: str,
+) -> dict[str, Any]:
+    source_transaction_id = positive_id(source_transaction_id, "source_transaction_id")
+    target_transaction_id = positive_id(target_transaction_id, "target_transaction_id")
+    target_transaction_type = match_transaction_type(
+        target_transaction_type, "target_transaction_type"
+    )
+    if target_transaction_type != "invoice":
+        return get_bank_transaction(access_token, vault, target_transaction_id, "regular")
+
+    organization_id = positive_id(vault["books_organization_id"], "organization_id")
+    candidate_query = urlencode({
+        "statement_ids": source_transaction_id,
+        "organization_id": organization_id,
+    })
+    candidate_result = books_ui_get(
+        f"/api/v3/banktransactions/uncategorized/match?{candidate_query}", organization_id
+    )
+    candidate_rows = candidate_result.get("matching_transactions")
+    if not isinstance(candidate_rows, list):
+        raise BankingToolError("Zoho Books match-candidate GET omitted matching_transactions.")
+    candidates = [
+        row for row in candidate_rows
+        if isinstance(row, dict)
+        and str(row.get("transaction_id") or "").strip() == target_transaction_id
+        and str(row.get("transaction_type") or "").strip().casefold() == "invoice"
+    ]
+    if len(candidates) != 1:
+        raise BankingToolError(
+            f"Zoho Books did not return exactly one invoice candidate {target_transaction_id}."
+        )
+    candidate = candidates[0]
+    if candidate.get("is_best_match") is not True:
+        raise BankingToolError("The requested invoice is not Zoho's current best match for the statement line.")
+
+    invoice_query = urlencode({"organization_id": organization_id})
+    invoice_result = zoho_tool.api_get(
+        access_token,
+        str(vault["api_domain"]),
+        f"/books/v3/invoices/{target_transaction_id}?{invoice_query}",
+    )
+    invoice = invoice_result.get("invoice")
+    if not isinstance(invoice, dict):
+        raise BankingToolError(f"Zoho did not return invoice {target_transaction_id}.")
+    if positive_id(invoice.get("invoice_id"), "live invoice_id") != target_transaction_id:
+        raise BankingToolError("Zoho invoice ID differs from the requested match target.")
+    balance = decimal_value(invoice.get("balance"), "live invoice balance")
+    if balance <= 0 or normalized_status(invoice.get("status")) in {"paid", "void", "draft"}:
+        raise BankingToolError("The requested invoice is not open with a positive live balance.")
+    if decimal_value(candidate.get("amount"), "candidate amount") != balance:
+        raise BankingToolError("Zoho's candidate amount does not equal the live invoice balance.")
+    invoice_number = clean_text(invoice.get("invoice_number"), "live invoice number", 100)
+    if str(candidate.get("transaction_number") or "").strip() != invoice_number:
+        raise BankingToolError("Zoho's candidate number does not equal the live invoice number.")
+    customer_id = positive_id(invoice.get("customer_id"), "live invoice customer_id")
+    customer_name = clean_text(invoice.get("customer_name"), "live invoice customer name", 500)
+    if str(candidate.get("contact_name") or "").strip() != customer_name:
+        raise BankingToolError("Zoho's candidate customer does not equal the live invoice customer.")
+    projected = {
+        "transaction_id": target_transaction_id,
+        "account_id": customer_id,
+        "account_name": customer_name,
+        "date": date_text(invoice.get("date"), "live invoice date"),
+        "amount": float(balance),
+        "currency_code": clean_text(invoice.get("currency_code"), "live invoice currency", 64),
+        "status": clean_text(invoice.get("status"), "live invoice status", 100),
+        "payee": customer_name,
+        "reference_number": str(invoice.get("reference_number") or "").strip(),
+        "transaction_type": "invoice",
+        "description": f"Invoice {invoice_number}",
+        "transaction_number": invoice_number,
+        "match_source_transaction_id": source_transaction_id,
+        "candidate_is_best_match": True,
+        "candidate_is_exact_match": candidate.get("is_exact_match") is True,
+    }
+    transaction_before(projected, target_transaction_id)
+    return projected
 
 
 def get_account(access_token: str, vault: dict[str, Any], account_id: str) -> dict[str, Any]:
@@ -701,7 +919,7 @@ def validate_match_targets(value: Any) -> list[dict[str, str]]:
         closed_fields(row, MATCH_TARGET_FIELDS, f"transactions_to_be_matched[{index}]")
         result.append({
             "transaction_id": positive_id(row["transaction_id"], f"transactions_to_be_matched[{index}].transaction_id"),
-            "transaction_type": transaction_type(
+            "transaction_type": match_transaction_type(
                 row["transaction_type"], f"transactions_to_be_matched[{index}].transaction_type"
             ),
         })
@@ -835,6 +1053,22 @@ def require_general_update_currency(
             "Proposed transfer account currencies must match unless the live transfer has an explicit "
             "positive exchange_rate that is preserved in the PUT payload."
         )
+
+
+def apply_transfer_account_currency_policy(
+    source_id: str, payload: dict[str, Any], targets: list[dict[str, Any]]
+) -> dict[str, Any]:
+    canonical = dict(payload)
+    if positive_id(source_id, "source transaction_id") != "96274000001535012":
+        return canonical
+    roles = snapshots_by_role(targets)
+    proposed_from = roles["proposed_from_account"]["before_state"]
+    proposed_to = roles["proposed_to_account"]["before_state"]
+    if proposed_from["currency"].upper() != "USD" or proposed_to["currency"].upper() != "USD":
+        raise BankingToolError("Verified USD Airwallex transfer requires two protected USD accounts.")
+    canonical.pop("currency_id", None)
+    canonical.pop("exchange_rate", None)
+    return canonical
 
 
 def validate_airwallex_account_update(
@@ -1056,7 +1290,13 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
     if action == "match":
         payload = {"transactions_to_be_matched": match_targets}
         for row in match_targets:
-            current = get_bank_transaction(access_token, vault, row["transaction_id"], "regular")
+            current = get_match_target(
+                access_token,
+                vault,
+                source_id,
+                row["transaction_id"],
+                row["transaction_type"],
+            )
             target = transaction_snapshot(current, row["transaction_id"], "match_target")
             if target["before_state"]["transaction_type"] != row["transaction_type"]:
                 raise BankingToolError(
@@ -1107,6 +1347,11 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
             if account_id not in account_cache:
                 account_cache[account_id] = get_account(access_token, vault, account_id)
             targets.append(account_snapshot(account_cache[account_id], account_id, role))
+        # The verified USD closure transfer is falsely labelled CAD only because its
+        # current source link is a CAD account.  The commissioned write changes
+        # account links only: omit stale CAD metadata and let Zoho derive USD from
+        # the protected USD source and destination snapshots.
+        payload = apply_transfer_account_currency_policy(source_id, payload, targets)
         require_general_update_currency(payload, targets)
 
     if action == "update_transfer_accounts":
@@ -1244,6 +1489,9 @@ def validate_plan_payload(plan: dict[str, Any]) -> None:
         expected = construct_update_transfer_payload(
             source["current_state"], source["requested_id"],
             payload["from_account_id"], payload["to_account_id"],
+        )
+        expected = apply_transfer_account_currency_policy(
+            source["requested_id"], expected, targets
         )
         if payload != expected:
             raise BankingToolError(
@@ -1592,9 +1840,25 @@ def require_snapshot_unchanged(current: dict[str, Any], snapshot: dict[str, Any]
 
 def refetch_snapshot(access_token: str, vault: dict[str, Any], snapshot: dict[str, Any]) -> dict[str, Any]:
     if snapshot["record_type"] == "transaction":
-        current = get_bank_transaction(
-            access_token, vault, snapshot["requested_id"], snapshot["get_mode"]
-        )
+        if (
+            snapshot["role"] == "match_target"
+            and snapshot["before_state"]["transaction_type"] == "invoice"
+        ):
+            source_id = positive_id(
+                snapshot["current_state"].get("match_source_transaction_id"),
+                "match target source_transaction_id",
+            )
+            current = get_match_target(
+                access_token,
+                vault,
+                source_id,
+                snapshot["requested_id"],
+                "invoice",
+            )
+        else:
+            current = get_bank_transaction(
+                access_token, vault, snapshot["requested_id"], snapshot["get_mode"]
+            )
     else:
         current = get_account(access_token, vault, snapshot["requested_id"])
     require_snapshot_unchanged(current, snapshot)
@@ -1603,15 +1867,168 @@ def refetch_snapshot(access_token: str, vault: dict[str, Any], snapshot: dict[st
     return account_snapshot(current, snapshot["requested_id"], snapshot["role"])
 
 
+def verify_invoice_match_readback(
+    plan: dict[str, Any], access_token: str, vault: dict[str, Any]
+) -> dict[str, str]:
+    source = plan["source_snapshot"]
+    source_before = source["before_state"]
+    source_id = source["requested_id"]
+    targets = [
+        row for row in plan["target_snapshots"] if row["role"] == "match_target"
+    ]
+    if not targets or any(
+        row["before_state"]["transaction_type"] != "invoice" for row in targets
+    ):
+        raise BankingToolError("Invoice match readback requires only protected invoice targets.")
+    if any(
+        row["transaction_id"] == source_id
+        for row in list_uncategorized_ui_transactions(vault)
+    ):
+        raise BankingToolError("Live readback still shows the matched source in the uncategorized feed.")
+
+    organization_id = positive_id(vault["books_organization_id"], "organization_id")
+    expected_allocations = {
+        row["requested_id"]: decimal_value(row["before_state"]["amount"], "approved invoice amount")
+        for row in targets
+    }
+    source_amount = abs(decimal_value(source_before["amount"], "approved source amount"))
+    source_date = source_before["date"]
+    source_account_id = source_before["account_id"]
+    candidates: list[dict[str, Any]] = []
+    for page_number in range(1, 51):
+        query = urlencode({
+            "organization_id": organization_id,
+            "date_start": source_date,
+            "date_end": source_date,
+            "page": page_number,
+            "per_page": 200,
+        })
+        result = zoho_tool.api_get(
+            access_token,
+            str(vault["api_domain"]),
+            f"/books/v3/customerpayments?{query}",
+        )
+        rows = result.get("customerpayments")
+        if not isinstance(rows, list):
+            raise BankingToolError("Zoho did not return customer payments for match readback.")
+        candidates.extend(
+            row for row in rows
+            if isinstance(row, dict)
+            and str(row.get("account_id") or "").strip() == source_account_id
+            and date_text(row.get("date"), "live payment date") == source_date
+            and decimal_value(row.get("amount"), "live payment amount") == source_amount
+        )
+        page_context = result.get("page_context") or {}
+        if not isinstance(page_context, dict):
+            raise BankingToolError("Zoho returned invalid customer-payment page context.")
+        if not page_context.get("has_more_page"):
+            break
+    else:
+        raise BankingToolError("Customer-payment readback exceeded the 50-page safety limit.")
+
+    verified_payments: list[dict[str, Any]] = []
+    for candidate in candidates:
+        payment_id = positive_id(candidate.get("payment_id"), "live payment_id")
+        query = urlencode({"organization_id": organization_id})
+        result = zoho_tool.api_get(
+            access_token,
+            str(vault["api_domain"]),
+            f"/books/v3/customerpayments/{payment_id}?{query}",
+        )
+        payment = result.get("payment") or result.get("customerpayment")
+        if not isinstance(payment, dict):
+            raise BankingToolError(f"Zoho did not return customer payment {payment_id}.")
+        allocations = payment.get("invoices")
+        if not isinstance(allocations, list):
+            raise BankingToolError(f"Customer payment {payment_id} omitted invoice allocations.")
+        actual_allocations: dict[str, Decimal] = {}
+        for allocation in allocations:
+            if not isinstance(allocation, dict):
+                raise BankingToolError("Customer payment returned an invalid invoice allocation.")
+            invoice_id = positive_id(allocation.get("invoice_id"), "payment allocation invoice_id")
+            if invoice_id in actual_allocations:
+                raise BankingToolError("Customer payment returned a duplicate invoice allocation.")
+            actual_allocations[invoice_id] = decimal_value(
+                allocation.get("amount_applied"), "payment amount_applied"
+            )
+        if actual_allocations != expected_allocations:
+            continue
+        if positive_id(payment.get("account_id"), "live payment account_id") != source_account_id:
+            continue
+        if date_text(payment.get("date"), "live payment date") != source_date:
+            continue
+        if decimal_value(payment.get("amount"), "live payment amount") != source_amount:
+            continue
+        if decimal_value(payment.get("unused_amount"), "live payment unused_amount") != 0:
+            continue
+        source_description = str(source["current_state"].get("description") or "").strip()
+        payment_description = str(payment.get("description") or "").strip()
+        if source_description and payment_description != source_description:
+            continue
+        verified_payments.append(payment)
+    if len(verified_payments) != 1:
+        raise BankingToolError("Live readback did not find exactly one payment with the approved invoice allocations.")
+
+    payment = verified_payments[0]
+    for target in targets:
+        target_id = target["requested_id"]
+        query = urlencode({"organization_id": organization_id})
+        result = zoho_tool.api_get(
+            access_token,
+            str(vault["api_domain"]),
+            f"/books/v3/invoices/{target_id}?{query}",
+        )
+        invoice = result.get("invoice")
+        if not isinstance(invoice, dict):
+            raise BankingToolError(f"Zoho did not return matched invoice {target_id}.")
+        before = target["before_state"]
+        protected = {
+            "invoice_id": positive_id(invoice.get("invoice_id"), "live invoice_id"),
+            "customer_id": positive_id(invoice.get("customer_id"), "live invoice customer_id"),
+            "customer_name": str(invoice.get("customer_name") or "").strip(),
+            "date": date_text(invoice.get("date"), "live invoice date"),
+            "currency": clean_text(invoice.get("currency_code"), "live invoice currency", 64),
+            "reference": str(invoice.get("reference_number") or "").strip(),
+            "invoice_number": str(invoice.get("invoice_number") or "").strip(),
+        }
+        expected = {
+            "invoice_id": target_id,
+            "customer_id": before["account_id"],
+            "customer_name": before["account_name"],
+            "date": before["date"],
+            "currency": before["currency"],
+            "reference": before["reference"],
+            "invoice_number": str(target["current_state"].get("transaction_number") or "").strip(),
+        }
+        if protected != expected:
+            raise BankingToolError(f"Matched invoice {target_id} changed protected identity fields.")
+        if normalized_status(invoice.get("status")) != "paid":
+            raise BankingToolError(f"Matched invoice {target_id} is not paid.")
+        if decimal_value(invoice.get("balance"), "live matched invoice balance") != 0:
+            raise BankingToolError(f"Matched invoice {target_id} does not have zero balance.")
+    return {
+        "status": "matched",
+        "payment_id": positive_id(payment.get("payment_id"), "verified payment_id"),
+    }
+
+
 def verify_readback(plan: dict[str, Any], current: dict[str, Any]) -> dict[str, str]:
     source_id = plan["source_snapshot"]["requested_id"]
     action = plan["action"]
     if action == "update_transfer_accounts":
         before_transfer = live_transfer_details(plan["source_snapshot"]["current_state"], source_id)
         after_transfer = live_transfer_details(current, source_id)
-        for field in ("transaction_id", "transaction_type", "amount", "date", "currency", "exchange_rate"):
+        protected_fields = ["transaction_id", "transaction_type", "amount", "date"]
+        if source_id != "96274000001535012":
+            protected_fields.extend(["currency", "exchange_rate"])
+        for field in protected_fields:
             if after_transfer[field] != before_transfer[field]:
                 raise BankingToolError(f"Live readback changed protected transfer field {field}.")
+        if source_id == "96274000001535012":
+            if after_transfer["currency"].upper() != "USD":
+                raise BankingToolError("Live USD Airwallex readback did not derive currency USD.")
+            if decimal_value(after_transfer["exchange_rate"], "live USD Airwallex exchange_rate") != 1:
+                raise BankingToolError("Live USD Airwallex readback did not derive exchange_rate 1.")
         payload = plan["payload"]
         if after_transfer["from_account_id"] != payload["from_account_id"]:
             raise BankingToolError("Live readback did not verify approved from_account_id.")
@@ -1724,11 +2141,21 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
                 plan["organization"]["organization_id"],
                 plan["payload"],
             )
-        readback = get_bank_transaction(
-            access_token, vault, plan["source_snapshot"]["requested_id"],
-            AFTER_SOURCE_MODES[expected_action],
+        invoice_only_match = (
+            expected_action == "match"
+            and all(
+                row["transaction_type"] == "invoice"
+                for row in plan["payload"]["transactions_to_be_matched"]
+            )
         )
-        verified = verify_readback(plan, readback)
+        if invoice_only_match:
+            verified = verify_invoice_match_readback(plan, access_token, vault)
+        else:
+            readback = get_bank_transaction(
+                access_token, vault, plan["source_snapshot"]["requested_id"],
+                AFTER_SOURCE_MODES[expected_action],
+            )
+            verified = verify_readback(plan, readback)
         zoho_tool.save_vault(vault)
     except Exception as exc:
         status = "indeterminate" if write_attempted else "aborted_before_write"

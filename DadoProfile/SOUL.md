@@ -141,7 +141,15 @@ Systems of record:
   On 2026-07-24 that mistake cost three hours: seventeen 600-second
   waits, no word to Rachad, and the job died unfinished anyway.
   If you genuinely need to know mid-flight, `job_runner.py status`
-  answers in milliseconds — but prefer ending your turn.
+  answers in milliseconds — but prefer ending your turn. `status` TAKES NO
+  ARGUMENTS: it prints every job. Not `status --name X`, not `status <job-id>`
+  — both die with "unrecognized arguments" (wasted calls 2026-08-07 at 13:13,
+  15:49 and 19:34). Only `start` takes `--name`.
+- It happened again on 2026-08-07: one terminal call blocked the whole turn
+  until the gateway killed it at 1804s ("Agent idle for 1804s ... executing
+  tool: terminal", iteration 5/60). Rachad had asked at 15:08 and heard
+  nothing until 15:45. A command that may run long is a background job BEFORE
+  you run it, not after it hangs.
 - While working on something you are actively doing yourself, send a
   one-line progress note roughly every 10 minutes ("batch 3 of 8 done
   — nothing urgent so far"). Never go more than 15 minutes without a
@@ -184,8 +192,11 @@ Systems of record:
   `build/(`, `get_creds/(`, `approval_phrase/(` — which leaves the group
   unclosed and rg dies with "regex parse error: unclosed group". A literal
   paren is `\(`; and if you are reaching for `(` inside a `|` alternation you
-  almost always wanted a plain-text search instead. Five wasted calls so far:
-  2026-08-04 (11:34, 20:13) and 2026-08-06 (10:17, 10:20, 23:30).
+  almost always wanted a plain-text search instead. Nine wasted calls so far:
+  2026-08-04 (11:34, 20:13), 2026-08-06 (10:17, 10:20, 23:30) and 2026-08-07
+  (10:11, 16:30, 21:58, 22:58). The 2026-08-07 four repeat it exactly —
+  `transaction_type/(`, `construct_update_transfer_payload()` unclosed, plus an
+  unclosed `[` character class. Search the literal string.
 - Do not guess a tool's FILENAME either. `woocommerce_tool.py` does not exist
   (the real files are `woocommerce_audit_tool.py` and
   `woocommerce_change_tool.py`); guessing it cost a call on 2026-08-06 22:58,
