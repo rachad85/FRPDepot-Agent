@@ -37,7 +37,7 @@ ACTIONS = {"product_create", "product_update", "variation_create", "variation_up
 APPROVAL_WORD = "APPROVED"
 PRODUCT_FIELDS = {
     "name", "type", "sku", "description", "short_description", "regular_price",
-    "categories", "attributes",
+    "categories", "attributes", "images",
 }
 VARIATION_FIELDS = {"sku", "description", "regular_price", "attributes"}
 DECIMAL_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
@@ -115,15 +115,64 @@ def clean_categories(value: Any) -> list[dict[str, int]]:
     return output
 
 
+def clean_product_images(value: Any) -> list[dict[str, Any]]:
+    """Accept only an ordered, complete list of existing image IDs and plain alt text."""
+    if not isinstance(value, list) or not value or len(value) > 100:
+        raise ChangeError("images must be a list of 1 to 100 existing image IDs and alt values.")
+    output = []
+    seen: set[int] = set()
+    for index, row in enumerate(value):
+        if not isinstance(row, dict) or set(row) != {"id", "alt"}:
+            raise ChangeError(f"images[{index}] must contain exactly id and alt.")
+        image_id = int(clean_id(row["id"], f"images[{index}].id"))
+        if image_id in seen:
+            raise ChangeError(f"images[{index}] duplicates an earlier image ID.")
+        alt = clean_text(row["alt"], f"images[{index}].alt", required=True, maximum=250).strip()
+        if "<" in alt or ">" in alt or any(char in alt for char in "\r\n\t"):
+            raise ChangeError(f"images[{index}].alt must be single-line plain text.")
+        seen.add(image_id)
+        output.append({"id": image_id, "alt": alt})
+    return output
+
+
+def assert_image_gallery_exact(record: dict[str, Any], desired: list[dict[str, Any]],
+                               *, require_alt_match: bool) -> None:
+    """Prevent image creation, removal, replacement or reordering around an alt-only edit."""
+    live = record.get("images")
+    if not isinstance(live, list) or len(live) != len(desired):
+        raise ChangeError("Image-alt plans must preserve the complete existing image gallery.")
+    live_ids = []
+    for index, row in enumerate(live):
+        if not isinstance(row, dict):
+            raise ChangeError("The live image gallery contains an invalid record.")
+        live_ids.append(int(clean_id(row.get("id"), f"live images[{index}].id")))
+    if live_ids != [row["id"] for row in desired]:
+        raise ChangeError("Image-alt plans must preserve every image ID and the exact gallery order.")
+    if require_alt_match:
+        live_projection = [
+            {"id": image_id, "alt": str(row.get("alt") or "").strip()}
+            for image_id, row in zip(live_ids, live)
+        ]
+        if live_projection != desired:
+            raise ChangeError("Live image IDs, order, or alt values did not match the approved gallery.")
+
+
 def clean_product_attributes(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or len(value) > 100:
-        raise ChangeError("attributes must be a list of at most 100 global attributes.")
+        raise ChangeError("attributes must be a list of at most 100 global or named custom attributes.")
     output = []
-    required = {"id", "position", "visible", "variation", "options"}
+    seen: set[tuple[str, Any]] = set()
+    global_keys = {"id", "position", "visible", "variation", "options"}
+    custom_keys = {"id", "name", "position", "visible", "variation", "options"}
     for index, row in enumerate(value):
-        if not isinstance(row, dict) or set(row) != required:
+        if not isinstance(row, dict):
+            raise ChangeError(f"attributes[{index}] must be an object.")
+        keys = set(row)
+        if keys != global_keys and keys != custom_keys:
             raise ChangeError(
-                f"attributes[{index}] must contain exactly id, position, visible, variation, options."
+                f"attributes[{index}] must use the exact global shape "
+                "id, position, visible, variation, options or the exact custom shape "
+                "id, name, position, visible, variation, options."
             )
         position = row["position"]
         if isinstance(position, bool) or not isinstance(position, int) or position < 0:
@@ -133,27 +182,80 @@ def clean_product_attributes(value: Any) -> list[dict[str, Any]]:
         options = row["options"]
         if not isinstance(options, list) or not options or len(options) > 100:
             raise ChangeError(f"attributes[{index}].options must have 1 to 100 values.")
-        cleaned_options = [clean_text(item, f"attributes[{index}].options", required=True, maximum=200)
-                           for item in options]
-        output.append({
-            "id": int(clean_id(row["id"], f"attributes[{index}].id")),
-            "position": position, "visible": row["visible"],
-            "variation": row["variation"], "options": cleaned_options,
+        cleaned_options = [
+            clean_text(item, f"attributes[{index}].options", required=True, maximum=200)
+            for item in options
+        ]
+        if len({item.casefold() for item in cleaned_options}) != len(cleaned_options):
+            raise ChangeError(f"attributes[{index}].options contains duplicate values.")
+
+        if keys == global_keys:
+            attribute_id = int(clean_id(row["id"], f"attributes[{index}].id"))
+            identity = ("id", attribute_id)
+            cleaned: dict[str, Any] = {"id": attribute_id}
+        else:
+            raw_id = row["id"]
+            if isinstance(raw_id, bool) or str(raw_id).strip() != "0":
+                raise ChangeError(
+                    f"attributes[{index}] may include name only for a custom attribute with id 0."
+                )
+            name = clean_text(
+                row["name"], f"attributes[{index}].name", required=True, maximum=200
+            ).strip()
+            identity = ("name", name.casefold())
+            cleaned = {"id": 0, "name": name}
+
+        if identity in seen:
+            raise ChangeError(f"attributes[{index}] duplicates another attribute.")
+        seen.add(identity)
+        cleaned.update({
+            "position": position,
+            "visible": row["visible"],
+            "variation": row["variation"],
+            "options": cleaned_options,
         })
+        output.append(cleaned)
     return output
 
 
 def clean_variation_attributes(value: Any) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not value or len(value) > 100:
-        raise ChangeError("attributes must be a list of 1 to 100 global attribute selections.")
+        raise ChangeError(
+            "attributes must be a list of 1 to 100 global or named custom attribute selections."
+        )
     output = []
+    seen: set[tuple[str, Any]] = set()
     for index, row in enumerate(value):
-        if not isinstance(row, dict) or set(row) != {"id", "option"}:
-            raise ChangeError(f"attributes[{index}] must contain exactly id and option.")
-        output.append({
-            "id": int(clean_id(row["id"], f"attributes[{index}].id")),
-            "option": clean_text(row["option"], f"attributes[{index}].option", required=True, maximum=200),
-        })
+        if not isinstance(row, dict):
+            raise ChangeError(f"attributes[{index}] must be an object.")
+        keys = set(row)
+        option = clean_text(
+            row.get("option"), f"attributes[{index}].option", required=True, maximum=200
+        )
+        if keys == {"id", "option"}:
+            attribute_id = int(clean_id(row["id"], f"attributes[{index}].id"))
+            identity = ("id", attribute_id)
+            cleaned = {"id": attribute_id, "option": option}
+        elif keys == {"id", "name", "option"}:
+            raw_id = row["id"]
+            if isinstance(raw_id, bool) or str(raw_id).strip() != "0":
+                raise ChangeError(
+                    f"attributes[{index}] may include name only for a custom attribute with id 0."
+                )
+            name = clean_text(
+                row["name"], f"attributes[{index}].name", required=True, maximum=200
+            ).strip()
+            identity = ("name", name.casefold())
+            cleaned = {"id": 0, "name": name, "option": option}
+        else:
+            raise ChangeError(
+                f"attributes[{index}] must contain exactly id and option for a global attribute, "
+                "or id, name, and option for a custom attribute."
+            )
+        if identity in seen:
+            raise ChangeError(f"attributes[{index}] duplicates an earlier attribute selection.")
+        seen.add(identity)
+        output.append(cleaned)
     return output
 
 
@@ -184,6 +286,10 @@ def clean_changes(action: str, raw: Any) -> dict[str, Any]:
         elif field == "attributes":
             output[field] = (clean_product_attributes(value) if action.startswith("product_")
                              else clean_variation_attributes(value))
+        elif field == "images":
+            if action != "product_update":
+                raise ChangeError("images are allowed only for alt-only updates to existing products.")
+            output[field] = clean_product_images(value)
         else:  # pragma: no cover - closed allowlist makes this unreachable
             raise ChangeError(f"Unsupported change field: {field}")
     if action == "product_create":
@@ -259,6 +365,11 @@ def _project_response(value: Any, template: Any) -> Any:
         return {key: _project_response(source.get(key), child) for key, child in template.items()}
     if isinstance(template, list):
         source = value if isinstance(value, list) else []
+        # Scalar option lists must preserve the full live response. Otherwise
+        # removing trailing parent options can look like a no-op at staging and
+        # a failed removal can look verified after commit.
+        if template and all(not isinstance(child, (dict, list)) for child in template):
+            return list(source)
         return [_project_response(source[index] if index < len(source) else None, child)
                 for index, child in enumerate(template)]
     return value
@@ -372,6 +483,8 @@ def command_stage(args: argparse.Namespace) -> None:
         record, _ = wc.api_get(existing)
         if not isinstance(record, dict) or int(record.get("id") or 0) != resource_id:
             raise ChangeError("The existing WooCommerce resource could not be verified.")
+        if "images" in payload:
+            assert_image_gallery_exact(record, payload["images"], require_alt_match=False)
         before = selected_state(record, payload)
         if before == payload:
             raise ChangeError("No change was detected.")
@@ -460,6 +573,8 @@ def command_commit(args: argparse.Namespace) -> None:
         if (safe_resource_fingerprint(current, action) != plan.get("before_fingerprint")
                 or str(current.get("date_modified_gmt") or "") != plan.get("before_date_modified_gmt")):
             raise ChangeError("The WooCommerce resource changed after review. Stage a new plan.")
+        if "images" in plan["payload"]:
+            assert_image_gallery_exact(current, plan["payload"]["images"], require_alt_match=False)
     assert_sku_unique(action, str(plan["payload"].get("sku") or ""), resource_id, parent_id, vault)
     method, endpoint = endpoint_for(action, resource_id, parent_id)
     validate_write_route(method, endpoint)
@@ -480,6 +595,8 @@ def command_commit(args: argparse.Namespace) -> None:
         after = selected_state(readback, plan["payload"])
         if after != plan["payload"]:
             raise ChangeError("Live readback did not match every approved field.")
+        if "images" in plan["payload"]:
+            assert_image_gallery_exact(readback, plan["payload"]["images"], require_alt_match=True)
     except Exception as exc:
         write_lock(lock, {
             "plan_sha256": plan["sha256"], "status": "indeterminate",

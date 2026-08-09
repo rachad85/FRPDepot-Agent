@@ -1,14 +1,18 @@
 #!/usr/bin/env python
 """FRP Depot Zoho Inventory Item Catalog Tool.
 
-Commissioned by Rachad Homsi on 2026-07-23.
+Commissioned by Rachad Homsi on 2026-07-23. Existing item-group option
+renames were narrowly added by Rachad on 2026-08-08.
 
 Allowed service writes:
 - POST /inventory/v1/items: create one approved item.
 - PUT /inventory/v1/items/{item_id}: change only approved item name/SKU.
+- PUT /inventory/v1/itemgroups/{group_id}: rename one existing attribute
+  option while preserving every group, attribute, option, and item ID.
 
 Forbidden: delete, stock/opening quantity, stock rate, adjustments, prices on
-existing items, status changes, grouping, transfers, orders, invoices, and mail.
+existing items, status changes, group creation/deletion/restructuring, transfers,
+orders, invoices, and mail.
 """
 
 from __future__ import annotations
@@ -34,6 +38,56 @@ CREATE_SCOPE = "ZohoInventory.items.CREATE"
 UPDATE_SCOPE = "ZohoInventory.items.UPDATE"
 CREATE_PATH = "/inventory/v1/items"
 UPDATE_PATH_RE = re.compile(r"^/inventory/v1/items/[0-9]+$")
+GROUP_UPDATE_PATH_RE = re.compile(r"^/inventory/v1/itemgroups/[0-9]+$")
+GROUP_OPTION_TARGET = {
+    "group_id": "96274000000034779",
+    "group_name": "FRP FW PIPE",
+    "attribute_id": "96274000000023957",
+    "attribute_name": "SIZE",
+    "option_id": "96274000000034781",
+    "before_name": "30",
+    "after_name": "30\"",
+    "linked_item_ids": ["96274000000034771", "96274000000034773"],
+    "linked_skus": ["PIDN750150PSI411", "PIDN750150PSI470"],
+}
+GROUP_OPTION_BASELINE_ATTRIBUTES = [
+    {
+        "id": "96274000000023957",
+        "name": "SIZE",
+        "options": [
+            {"id": "96274000000023965", "name": "1/2\""},
+            {"id": "96274000000023989", "name": "1\""},
+            {"id": "96274000000023991", "name": "1-1/2\""},
+            {"id": "96274000000023993", "name": "2\""},
+            {"id": "96274000000023997", "name": "3\""},
+            {"id": "96274000000023999", "name": "4\""},
+            {"id": "96274000000024001", "name": "6\""},
+            {"id": "96274000000024003", "name": "8\""},
+            {"id": "96274000000024005", "name": "10\""},
+            {"id": "96274000000024007", "name": "12\""},
+            {"id": "96274000000024009", "name": "14\""},
+            {"id": "96274000000024011", "name": "16\""},
+            {"id": "96274000000024013", "name": "18\""},
+            {"id": "96274000000030165", "name": "20\""},
+            {"id": "96274000000030171", "name": "24\""},
+            {"id": "96274000000034781", "name": "30"},
+            {"id": "96274000000034783", "name": "36\""},
+        ],
+    },
+    {
+        "id": "96274000000020153",
+        "name": "PRESSURE RATING",
+        "options": [{"id": "96274000000023279", "name": "150PSI"}],
+    },
+    {
+        "id": "96274000000020151",
+        "name": "RESIN TYPE",
+        "options": [
+            {"id": "96274000000019033", "name": "D411"},
+            {"id": "96274000000019035", "name": "D470"},
+        ],
+    },
+]
 # Rachad's ruling (2026-07-26, extended to this tool 2026-08-02): his approval
 # is ONE PLAIN WORD, never a checksum — the plan digest stays internal and is
 # validated by load_plan. The word must come FROM RACHAD'S OWN MESSAGE
@@ -120,7 +174,13 @@ def verify_sources(payload: dict[str, Any], sources: Any) -> dict[str, str]:
     return clean
 
 
-def stage_plan(kind: str, payload: dict[str, Any], sources: dict[str, str], summary: dict[str, Any]) -> Path:
+def stage_plan(
+    kind: str,
+    payload: dict[str, Any],
+    sources: dict[str, str],
+    summary: dict[str, Any],
+    live_evidence: dict[str, Any] | None = None,
+) -> Path:
     core = {
         "tool": TOOL_NAME,
         "kind": kind,
@@ -129,6 +189,8 @@ def stage_plan(kind: str, payload: dict[str, Any], sources: dict[str, str], summ
         "sources": sources,
         "summary": summary,
     }
+    if live_evidence is not None:
+        core["live_evidence"] = live_evidence
     digest = digest_for(core)
     plan = dict(core)
     plan["sha256"] = digest
@@ -196,6 +258,197 @@ def get_item(access_token: str, vault: dict[str, Any], item_id: str) -> dict[str
     if str(item.get("item_id") or "") != item_id:
         raise ItemToolError(f"Zoho item {item_id} was not found.")
     return item
+
+
+def get_item_group(access_token: str, vault: dict[str, Any], group_id: str) -> dict[str, Any]:
+    query = urlencode({"organization_id": vault["inventory_organization_id"]})
+    result = zoho_tool.api_get(
+        access_token,
+        str(vault["api_domain"]),
+        f"/inventory/v1/itemgroups/{group_id}?{query}",
+    )
+    group = result.get("item_group") or {}
+    if str(group.get("group_id") or "") != group_id:
+        raise ItemToolError(f"Zoho item group {group_id} was not found.")
+    return group
+
+
+def state_sha256(value: dict[str, Any]) -> str:
+    return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
+
+
+def find_group_option(
+    group: dict[str, Any],
+    attribute_id: str,
+    option_id: str,
+) -> tuple[dict[str, Any], dict[str, Any], int]:
+    attributes = group.get("attributes")
+    if not isinstance(attributes, list):
+        raise ItemToolError("Zoho item group attributes are missing or malformed.")
+    matches = [row for row in attributes if str((row or {}).get("id") or "") == attribute_id]
+    if len(matches) != 1:
+        raise ItemToolError(f"Expected one attribute {attribute_id}; found {len(matches)}.")
+    attribute = matches[0]
+    options = attribute.get("options")
+    if not isinstance(options, list):
+        raise ItemToolError(f"Zoho attribute {attribute_id} options are malformed.")
+    option_matches = [row for row in options if str((row or {}).get("id") or "") == option_id]
+    if len(option_matches) != 1:
+        raise ItemToolError(f"Expected one option {option_id}; found {len(option_matches)}.")
+    slots = [
+        index
+        for index in range(1, 4)
+        if str(group.get(f"attribute_id{index}") or "") == attribute_id
+    ]
+    if len(slots) != 1:
+        raise ItemToolError(f"Expected one attribute slot for {attribute_id}; found {len(slots)}.")
+    return attribute, option_matches[0], slots[0]
+
+
+def validate_group_update_payload(payload: dict[str, Any]) -> None:
+    if set(payload) != {"group_name", "unit", "attributes"}:
+        raise ItemToolError(
+            "REFUSED: item-group option rename payload must contain exactly "
+            "group_name, unit, and attributes."
+        )
+    clean_text(payload.get("group_name"), "group_name", required=True)
+    clean_text(payload.get("unit"), "unit", required=True)
+    attributes = payload.get("attributes")
+    if not isinstance(attributes, list) or not 1 <= len(attributes) <= 3:
+        raise ItemToolError("REFUSED: attributes must contain one to three preserved attributes.")
+    attribute_ids: set[str] = set()
+    for index, attribute in enumerate(attributes):
+        if not isinstance(attribute, dict) or set(attribute) != {"id", "name", "options"}:
+            raise ItemToolError(
+                f"REFUSED: attributes[{index}] must contain exactly id, name, and options."
+            )
+        attribute_id = clean_text(attribute.get("id"), f"attributes[{index}].id", required=True)
+        if not attribute_id.isdigit() or attribute_id in attribute_ids:
+            raise ItemToolError(f"REFUSED: attributes[{index}].id must be a unique numeric ID.")
+        attribute_ids.add(attribute_id)
+        clean_text(attribute.get("name"), f"attributes[{index}].name", required=True)
+        options = attribute.get("options")
+        if not isinstance(options, list) or not 1 <= len(options) <= 100:
+            raise ItemToolError(
+                f"REFUSED: attributes[{index}].options must contain one to 100 preserved options."
+            )
+        option_ids: set[str] = set()
+        option_names: set[str] = set()
+        for option_index, option in enumerate(options):
+            if not isinstance(option, dict) or set(option) != {"id", "name"}:
+                raise ItemToolError(
+                    f"REFUSED: attributes[{index}].options[{option_index}] must contain exactly id and name."
+                )
+            option_id = clean_text(
+                option.get("id"),
+                f"attributes[{index}].options[{option_index}].id",
+                required=True,
+            )
+            option_name = clean_text(
+                option.get("name"),
+                f"attributes[{index}].options[{option_index}].name",
+                required=True,
+            )
+            folded = option_name.casefold()
+            if not option_id.isdigit() or option_id in option_ids:
+                raise ItemToolError("REFUSED: item-group option IDs must be unique numeric IDs.")
+            if folded in option_names:
+                raise ItemToolError("REFUSED: item-group option names must be unique within an attribute.")
+            option_ids.add(option_id)
+            option_names.add(folded)
+
+
+def fixed_group_option_payload(option_name: str) -> dict[str, Any]:
+    attributes = json.loads(canonical(GROUP_OPTION_BASELINE_ATTRIBUTES))
+    matches = [
+        option
+        for attribute in attributes
+        if attribute["id"] == GROUP_OPTION_TARGET["attribute_id"]
+        for option in attribute["options"]
+        if option["id"] == GROUP_OPTION_TARGET["option_id"]
+    ]
+    if len(matches) != 1:
+        raise ItemToolError("Commissioned fixed option definition is invalid.")
+    matches[0]["name"] = option_name
+    payload = {
+        "group_name": GROUP_OPTION_TARGET["group_name"],
+        "unit": "ft",
+        "attributes": attributes,
+    }
+    validate_group_update_payload(payload)
+    return payload
+
+
+def build_group_option_payload(
+    group: dict[str, Any],
+    attribute_id: str,
+    option_id: str,
+    after_name: str,
+) -> dict[str, Any]:
+    find_group_option(group, attribute_id, option_id)
+    attributes: list[dict[str, Any]] = []
+    for raw_attribute in group["attributes"]:
+        current_attribute_id = clean_text(raw_attribute.get("id"), "attribute id", required=True)
+        options: list[dict[str, str]] = []
+        for raw_option in raw_attribute.get("options") or []:
+            current_option_id = clean_text(raw_option.get("id"), "option id", required=True)
+            current_name = clean_text(raw_option.get("name"), "option name", required=True)
+            if current_attribute_id == attribute_id and current_option_id == option_id:
+                current_name = after_name
+            options.append({"id": current_option_id, "name": current_name})
+        attributes.append({
+            "id": current_attribute_id,
+            "name": clean_text(raw_attribute.get("name"), "attribute name", required=True),
+            "options": options,
+        })
+    payload = {
+        "group_name": clean_text(group.get("group_name"), "group_name", required=True),
+        "unit": clean_text(group.get("unit"), "unit", required=True),
+        "attributes": attributes,
+    }
+    validate_group_update_payload(payload)
+    return payload
+
+
+def expected_group_after_option_rename(
+    group: dict[str, Any],
+    attribute_id: str,
+    option_id: str,
+    after_name: str,
+) -> dict[str, Any]:
+    expected = json.loads(canonical(group))
+    _, option, slot = find_group_option(expected, attribute_id, option_id)
+    option["name"] = after_name
+    items = expected.get("items")
+    if not isinstance(items, list):
+        raise ItemToolError("Zoho item group items are missing or malformed.")
+    for item in items:
+        if str(item.get(f"attribute_option_id{slot}") or "") == option_id:
+            item[f"attribute_option_name{slot}"] = after_name
+    return expected
+
+
+def commit_lock_path(plan_path: str) -> Path:
+    return Path(str(plan_path) + ".commit-lock.json")
+
+
+def create_commit_lock(plan_path: str, plan_sha256: str) -> Path:
+    path = commit_lock_path(plan_path)
+    record = {
+        "tool": TOOL_NAME,
+        "plan": str(Path(plan_path)),
+        "sha256": plan_sha256,
+        "write_started_utc": datetime.now(timezone.utc).isoformat(),
+    }
+    try:
+        with path.open("x", encoding="utf-8") as handle:
+            json.dump(record, handle, ensure_ascii=False, indent=2)
+            handle.write("\n")
+    except FileExistsError as exc:
+        raise ItemToolError(
+            "REFUSED: this item-group plan already has a write-attempt lock and cannot be replayed."
+        ) from exc
+    return path
 
 
 def command_stage_create(args: argparse.Namespace) -> None:
@@ -297,6 +550,121 @@ def command_stage_name_sku(args: argparse.Namespace) -> None:
     print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
 
 
+def command_stage_group_option_rename(args: argparse.Namespace) -> None:
+    raw = read_json(args.input)
+    if set(raw) != {"source"}:
+        raise ItemToolError(
+            "This commissioned group-option input must contain exactly one field: source."
+        )
+    source = clean_text(raw.get("source"), "source", required=True)
+    target = json.loads(canonical(GROUP_OPTION_TARGET))
+    vault = zoho_tool.load_vault()
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    current = get_item_group(access_token, vault, target["group_id"])
+    zoho_tool.save_vault(vault)
+    if clean_text(current.get("group_name"), "current group name", required=True) != target["group_name"]:
+        raise ItemToolError("The commissioned item group name no longer matches; no plan was staged.")
+    if clean_text(current.get("status"), "current group status", required=True).casefold() != "active":
+        raise ItemToolError("The commissioned item group is not active; no plan was staged.")
+    attribute, option, slot = find_group_option(
+        current,
+        target["attribute_id"],
+        target["option_id"],
+    )
+    if clean_text(attribute.get("name"), "current attribute name", required=True) != target["attribute_name"]:
+        raise ItemToolError("The commissioned SIZE attribute name no longer matches; no plan was staged.")
+    current_name = clean_text(option.get("name"), "current option name", required=True)
+    if current_name != target["before_name"]:
+        raise ItemToolError(
+            f"The commissioned option is {current_name!r}, not {target['before_name']!r}; no plan was staged."
+        )
+    sibling_names = {
+        clean_text(row.get("name"), "sibling option name", required=True).casefold()
+        for row in attribute.get("options") or []
+        if str(row.get("id") or "") != target["option_id"]
+    }
+    if target["after_name"].casefold() in sibling_names:
+        raise ItemToolError("The requested 30-inch label already exists on a different option ID.")
+    items = current.get("items")
+    if not isinstance(items, list):
+        raise ItemToolError("Zoho item group items are missing or malformed.")
+    linked = [
+        row
+        for row in items
+        if str(row.get(f"attribute_option_id{slot}") or "") == target["option_id"]
+    ]
+    linked_ids = sorted(str(row.get("item_id") or "") for row in linked)
+    linked_skus = sorted(clean_text(row.get("sku"), "linked item SKU", required=True) for row in linked)
+    if linked_ids != sorted(target["linked_item_ids"]) or linked_skus != sorted(target["linked_skus"]):
+        raise ItemToolError(
+            "The commissioned option is not linked to exactly the two approved 30-inch pipe items."
+        )
+    baseline_payload = build_group_option_payload(
+        current,
+        target["attribute_id"],
+        target["option_id"],
+        target["before_name"],
+    )
+    if baseline_payload != fixed_group_option_payload(target["before_name"]):
+        raise ItemToolError(
+            "The live group attributes/options differ from the commissioned fixed baseline."
+        )
+    payload = build_group_option_payload(
+        current,
+        target["attribute_id"],
+        target["option_id"],
+        target["after_name"],
+    )
+    if payload != fixed_group_option_payload(target["after_name"]):
+        raise ItemToolError("The generated group-option payload is outside the commissioned fixed shape.")
+    expected = expected_group_after_option_rename(
+        current,
+        target["attribute_id"],
+        target["option_id"],
+        target["after_name"],
+    )
+    linked_summary = [
+        {
+            "item_id": str(row.get("item_id") or ""),
+            "name": clean_text(row.get("name"), "linked item name", required=True),
+            "sku": clean_text(row.get("sku"), "linked item SKU", required=True),
+            "rate": row.get("rate"),
+            "purchase_rate": row.get("purchase_rate"),
+            "stock_on_hand": row.get("stock_on_hand"),
+            "available_stock": row.get("available_stock"),
+            "actual_available_stock": row.get("actual_available_stock"),
+        }
+        for row in sorted(linked, key=lambda value: str(value.get("item_id") or ""))
+    ]
+    summary = {
+        "target": target,
+        "before": target["before_name"],
+        "after": target["after_name"],
+        "changed_fields": ["attributes.SIZE.options[96274000000034781].name"],
+        "linked_items": linked_summary,
+        "preserved": [
+            "group ID and name",
+            "all attribute and option IDs",
+            "all other option names",
+            "all item IDs, names, SKUs, prices, stock, status, pressure, and resin",
+        ],
+    }
+    evidence = {
+        "before_state": current,
+        "before_state_sha256": state_sha256(current),
+        "expected_state": expected,
+        "expected_state_sha256": state_sha256(expected),
+    }
+    path = stage_plan(
+        "group_option_rename",
+        payload,
+        {"option_name": source},
+        summary,
+        live_evidence=evidence,
+    )
+    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
+
+
 def api_write_allowed(
     access_token: str,
     api_domain: str,
@@ -309,12 +677,20 @@ def api_write_allowed(
         if path != CREATE_PATH:
             raise ItemToolError("REFUSED: item-create endpoint is not allowlisted.")
     elif method == "PUT":
-        if not UPDATE_PATH_RE.fullmatch(path):
-            raise ItemToolError("REFUSED: item-update endpoint is not the exact item endpoint.")
-        if set(payload) - {"name", "sku"}:
-            raise ItemToolError("REFUSED: existing-item updates are limited to name and SKU.")
-        if "name" not in payload:
-            raise ItemToolError("REFUSED: Zoho item update requires the preserved or approved item name.")
+        if UPDATE_PATH_RE.fullmatch(path):
+            if set(payload) - {"name", "sku"}:
+                raise ItemToolError("REFUSED: existing-item updates are limited to name and SKU.")
+            if "name" not in payload:
+                raise ItemToolError("REFUSED: Zoho item update requires the preserved or approved item name.")
+        elif GROUP_UPDATE_PATH_RE.fullmatch(path):
+            expected_path = f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}"
+            if path != expected_path:
+                raise ItemToolError("REFUSED: only the commissioned FRP FW PIPE group endpoint is allowed.")
+            validate_group_update_payload(payload)
+            if payload != fixed_group_option_payload(GROUP_OPTION_TARGET["after_name"]):
+                raise ItemToolError("REFUSED: item-group payload is not the one fixed 30-inch label correction.")
+        else:
+            raise ItemToolError("REFUSED: PUT endpoint is not an exact commissioned item or item-group endpoint.")
     else:
         raise ItemToolError("REFUSED: only the named POST and PUT operations are allowed.")
     query = urlencode({"organization_id": organization_id})
@@ -423,6 +799,97 @@ def command_commit_name_sku(args: argparse.Namespace) -> None:
     print(json.dumps({"updated": "item_name_sku", "item_id": item_id, "name": updated_name, "sku": updated_sku}, indent=2))
 
 
+def command_commit_group_option_rename(args: argparse.Namespace) -> None:
+    plan = load_plan(args.plan, "group_option_rename")
+    require_rachad_approval(args.approval)
+    expected_plan_keys = {
+        "tool", "kind", "created_utc", "payload", "sources", "summary",
+        "live_evidence", "sha256",
+    }
+    if set(plan) != expected_plan_keys:
+        raise ItemToolError("The group-option plan has unsupported or missing top-level fields.")
+    sources = plan.get("sources")
+    if not isinstance(sources, dict) or set(sources) != {"option_name"}:
+        raise ItemToolError("The group-option plan sources are malformed.")
+    clean_text(sources.get("option_name"), "sources.option_name", required=True)
+    summary = plan.get("summary")
+    if not isinstance(summary, dict) or summary.get("target") != GROUP_OPTION_TARGET:
+        raise ItemToolError("The plan target is not the one commissioned FRP FW PIPE option.")
+    if summary.get("before") != GROUP_OPTION_TARGET["before_name"] or summary.get("after") != GROUP_OPTION_TARGET["after_name"]:
+        raise ItemToolError("The plan before/after labels are outside the commissioned correction.")
+    if plan.get("payload") != fixed_group_option_payload(GROUP_OPTION_TARGET["after_name"]):
+        raise ItemToolError("The plan payload is not the one fixed 30-inch label correction.")
+    evidence = plan.get("live_evidence")
+    if not isinstance(evidence, dict) or set(evidence) != {
+        "before_state", "before_state_sha256", "expected_state", "expected_state_sha256"
+    }:
+        raise ItemToolError("The group-option live evidence is missing or malformed.")
+    before_state = evidence.get("before_state")
+    expected_state = evidence.get("expected_state")
+    if not isinstance(before_state, dict) or not isinstance(expected_state, dict):
+        raise ItemToolError("The protected group states must be objects.")
+    if evidence.get("before_state_sha256") != state_sha256(before_state):
+        raise ItemToolError("The protected before-state fingerprint is invalid.")
+    recomputed_expected = expected_group_after_option_rename(
+        before_state,
+        GROUP_OPTION_TARGET["attribute_id"],
+        GROUP_OPTION_TARGET["option_id"],
+        GROUP_OPTION_TARGET["after_name"],
+    )
+    if expected_state != recomputed_expected:
+        raise ItemToolError("The protected expected state is not the one commissioned correction.")
+    if evidence.get("expected_state_sha256") != state_sha256(expected_state):
+        raise ItemToolError("The protected expected-state fingerprint is invalid.")
+    if commit_lock_path(args.plan).exists():
+        raise ItemToolError(
+            "REFUSED: this item-group plan already has a write-attempt lock and cannot be replayed."
+        )
+    vault = zoho_tool.load_vault()
+    if UPDATE_SCOPE not in (vault.get("scopes") or []):
+        raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    current = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
+    if current != before_state:
+        raise ItemToolError("The item group changed after review. A new plan is required.")
+    create_commit_lock(args.plan, plan["sha256"])
+    api_write_allowed(
+        access_token,
+        str(vault["api_domain"]),
+        "PUT",
+        f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}",
+        str(vault["inventory_organization_id"]),
+        plan["payload"],
+    )
+    zoho_tool.save_vault(vault)
+    fresh = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
+    if fresh != expected_state:
+        zoho_tool.append_receipt(
+            "zoho_inventory_group_option_unexpected_result",
+            f"group_id={GROUP_OPTION_TARGET['group_id']}; plan={args.plan}; sha256={plan['sha256']}; replay_locked=true",
+        )
+        raise ItemToolError(
+            "Zoho returned an unexpected group/item state after the one write attempt. "
+            "The plan is replay-locked; no retry is allowed."
+        )
+    zoho_tool.append_receipt(
+        "zoho_inventory_group_option_renamed_by_named_tool",
+        f"group_id={GROUP_OPTION_TARGET['group_id']}; option_id={GROUP_OPTION_TARGET['option_id']}; "
+        f"before={GROUP_OPTION_TARGET['before_name']}; after={GROUP_OPTION_TARGET['after_name']}; "
+        f"plan={args.plan}; sha256={plan['sha256']}",
+    )
+    print(json.dumps({
+        "updated": "item_group_option_name",
+        "group_id": GROUP_OPTION_TARGET["group_id"],
+        "group_name": GROUP_OPTION_TARGET["group_name"],
+        "attribute": GROUP_OPTION_TARGET["attribute_name"],
+        "option_id": GROUP_OPTION_TARGET["option_id"],
+        "before": GROUP_OPTION_TARGET["before_name"],
+        "after": GROUP_OPTION_TARGET["after_name"],
+        "linked_item_ids": GROUP_OPTION_TARGET["linked_item_ids"],
+        "replay_locked": True,
+    }, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=TOOL_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -432,6 +899,9 @@ def build_parser() -> argparse.ArgumentParser:
     stage_change = commands.add_parser("stage-name-sku")
     stage_change.add_argument("--input", required=True)
     stage_change.set_defaults(func=command_stage_name_sku)
+    stage_group_option = commands.add_parser("stage-group-option-rename")
+    stage_group_option.add_argument("--input", required=True)
+    stage_group_option.set_defaults(func=command_stage_group_option_rename)
     commit_create = commands.add_parser("commit-create")
     commit_create.add_argument("--plan", required=True)
     commit_create.add_argument("--approval", required=True)
@@ -440,6 +910,10 @@ def build_parser() -> argparse.ArgumentParser:
     commit_change.add_argument("--plan", required=True)
     commit_change.add_argument("--approval", required=True)
     commit_change.set_defaults(func=command_commit_name_sku)
+    commit_group_option = commands.add_parser("commit-group-option-rename")
+    commit_group_option.add_argument("--plan", required=True)
+    commit_group_option.add_argument("--approval", required=True)
+    commit_group_option.set_defaults(func=command_commit_group_option_rename)
     return parser
 
 

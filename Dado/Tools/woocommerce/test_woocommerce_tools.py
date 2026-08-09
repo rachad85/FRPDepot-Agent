@@ -90,7 +90,7 @@ class ChangeValidationTests(unittest.TestCase):
     def test_forbidden_fields_rejected(self):
         forbidden = (
             "status", "catalog_visibility", "sale_price", "stock_quantity", "backorders",
-            "meta_data", "images", "downloads", "external_url", "tax_status",
+            "meta_data", "downloads", "external_url", "tax_status",
             "shipping_class", "customer_id", "order_id",
         )
         for field in forbidden:
@@ -127,6 +127,136 @@ class ChangeValidationTests(unittest.TestCase):
         with self.assertRaises(change.ChangeError):
             change.clean_product_attributes([{"id": 2, "options": ["A"]}])
 
+    def test_image_alt_payload_accepts_only_existing_id_and_plain_alt_shape(self):
+        valid = [{"id": 62, "alt": "FRP stub flange product"},
+                 {"id": 1761, "alt": "Rows of FRP stub flanges"}]
+        self.assertEqual(
+            change.clean_changes("product_update", {"images": valid}),
+            {"images": valid},
+        )
+        invalid_values = (
+            [],
+            [{"id": 62}],
+            [{"id": 62, "alt": "Good", "src": "https://example.invalid/x.jpg"}],
+            [{"id": 62, "alt": ""}],
+            [{"id": 62, "alt": "<b>bad</b>"}],
+            [{"id": 62, "alt": "line one\nline two"}],
+            [{"id": 62, "alt": "A"}, {"id": 62, "alt": "B"}],
+        )
+        for value in invalid_values:
+            with self.subTest(value=value), self.assertRaises(change.ChangeError):
+                change.clean_changes("product_update", {"images": value})
+
+    def test_images_rejected_for_create_and_variations(self):
+        value = [{"id": 62, "alt": "FRP stub flange product"}]
+        for action in ("product_create", "variation_create", "variation_update"):
+            with self.subTest(action=action), self.assertRaises(change.ChangeError):
+                change.clean_changes(action, {"images": value})
+
+    def test_image_gallery_guard_checks_count_order_ids_and_readback_alt(self):
+        live = {"images": [
+            {"id": 62, "alt": "Existing A", "src": "https://example.invalid/a.jpg"},
+            {"id": 1761, "alt": "", "src": "https://example.invalid/b.jpg"},
+        ]}
+        desired = [{"id": 62, "alt": "Existing A"}, {"id": 1761, "alt": "New B"}]
+        change.assert_image_gallery_exact(live, desired, require_alt_match=False)
+        with self.assertRaises(change.ChangeError):
+            change.assert_image_gallery_exact(live, desired, require_alt_match=True)
+        readback = {"images": [
+            {"id": 62, "alt": "Existing A"}, {"id": 1761, "alt": "New B"},
+        ]}
+        change.assert_image_gallery_exact(readback, desired, require_alt_match=True)
+        for bad in (
+            {"images": live["images"][:1]},
+            {"images": list(reversed(live["images"]))},
+            {"images": [*live["images"], {"id": 2000, "alt": "Extra"}]},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(change.ChangeError):
+                change.assert_image_gallery_exact(bad, desired, require_alt_match=False)
+
+    def test_product_attributes_accept_global_and_named_custom_shapes(self):
+        global_value = [{
+            "id": 2,
+            "position": 0,
+            "visible": True,
+            "variation": True,
+            "options": ["A", "B"],
+        }]
+        custom_value = [{
+            "id": 0,
+            "name": "PRESSURE RATING",
+            "position": 1,
+            "visible": True,
+            "variation": True,
+            "options": ["50PSI", "75PSI", "150PSI"],
+        }]
+        self.assertEqual(change.clean_product_attributes(global_value), global_value)
+        self.assertEqual(change.clean_product_attributes(custom_value), custom_value)
+
+    def test_product_custom_attributes_refuse_open_or_malformed_shapes(self):
+        valid = {
+            "id": 0,
+            "name": "SIZE",
+            "position": 0,
+            "visible": True,
+            "variation": True,
+            "options": ["1 in"],
+        }
+        invalid_values = [
+            {**valid, "slug": "size"},
+            {**valid, "id": 7},
+            {**valid, "id": False},
+            {**valid, "name": "   "},
+            {key: value for key, value in valid.items() if key != "name"},
+            {**valid, "options": ["A", "a"]},
+        ]
+        for value in invalid_values:
+            with self.subTest(value=value):
+                with self.assertRaises(change.ChangeError):
+                    change.clean_product_attributes([value])
+
+    def test_product_custom_attributes_refuse_duplicate_names(self):
+        first = {
+            "id": 0,
+            "name": "SIZE",
+            "position": 0,
+            "visible": True,
+            "variation": True,
+            "options": ["1 in"],
+        }
+        second = {**first, "name": "size", "position": 1}
+        with self.assertRaises(change.ChangeError):
+            change.clean_product_attributes([first, second])
+
+    def test_variation_attributes_accept_global_and_named_custom_shapes(self):
+        global_value = [{"id": 3, "option": "2 in"}]
+        custom_value = [{"id": 0, "name": "RESIN TYPE", "option": "D411"}]
+        self.assertEqual(change.clean_variation_attributes(global_value), global_value)
+        self.assertEqual(change.clean_variation_attributes(custom_value), custom_value)
+
+    def test_variation_custom_attribute_schema_is_closed(self):
+        invalid = (
+            [{"id": 0, "option": "D411"}],
+            [{"id": 3, "name": "RESIN TYPE", "option": "D411"}],
+            [{"id": False, "name": "RESIN TYPE", "option": "D411"}],
+            [{"id": 0, "name": "", "option": "D411"}],
+            [{"id": 0, "name": "RESIN TYPE", "option": "D411", "slug": "resin-type"}],
+        )
+        for value in invalid:
+            with self.subTest(value=value), self.assertRaises(change.ChangeError):
+                change.clean_variation_attributes(value)
+
+    def test_variation_attributes_reject_duplicate_id_or_custom_name(self):
+        for value in (
+            [{"id": 3, "option": "A"}, {"id": 3, "option": "B"}],
+            [
+                {"id": 0, "name": "RESIN TYPE", "option": "D411"},
+                {"id": 0, "name": "resin type", "option": "D470"},
+            ],
+        ):
+            with self.subTest(value=value), self.assertRaises(change.ChangeError):
+                change.clean_variation_attributes(value)
+
     def test_sources_must_match_exactly(self):
         changes = {"name": "A"}
         with self.assertRaises(change.ChangeError):
@@ -138,6 +268,25 @@ class ChangeValidationTests(unittest.TestCase):
         response = {"categories": [{"id": 7, "name": "Pipe", "slug": "pipe"}]}
         template = {"categories": [{"id": 7}]}
         self.assertEqual(change.selected_state(response, template), template)
+
+    def test_scalar_option_projection_keeps_trailing_live_values(self):
+        desired_attribute = {
+            "id": 0, "name": "RESIN TYPE", "position": 0,
+            "visible": True, "variation": True, "options": ["D411", "D470"],
+        }
+        live_attribute = {
+            **desired_attribute,
+            "options": ["D411", "D470", "Derakane 411-350", "Derakane 470-300"],
+        }
+        projected = change.selected_state(
+            {"attributes": [live_attribute]},
+            {"attributes": [desired_attribute]},
+        )
+        self.assertEqual(
+            projected["attributes"][0]["options"],
+            ["D411", "D470", "Derakane 411-350", "Derakane 470-300"],
+        )
+        self.assertNotEqual(projected, {"attributes": [desired_attribute]})
 
 
 class StageCommitTests(unittest.TestCase):
@@ -177,6 +326,141 @@ class StageCommitTests(unittest.TestCase):
                 change.command_stage(argparse.Namespace(input=str(path)))
         result = json.loads(output.getvalue())
         return Path(result["plan"]), result
+
+    def _stage_parent_option_removal(self):
+        desired = {
+            "id": 0, "name": "RESIN TYPE", "position": 0,
+            "visible": True, "variation": True, "options": ["D411", "D470"],
+        }
+        live = {
+            **self.old,
+            "attributes": [{
+                **desired,
+                "options": ["D411", "D470", "Derakane 411-350", "Derakane 470-300"],
+            }],
+        }
+        path = self._input({
+            "action": "product_update", "resource_id": 7,
+            "changes": {"attributes": [desired]},
+            "sources": {"attributes": "Rachad's resin naming instruction"},
+        })
+        with mock.patch.object(change.wc, "api_get", return_value=(live, {})):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_stage(argparse.Namespace(input=str(path)))
+        result = json.loads(output.getvalue())
+        return Path(result["plan"]), result, live, desired
+
+    def _stage_image_alt_update(self):
+        live = {
+            **self.old,
+            "images": [
+                {"id": 62, "alt": "Existing A", "src": "https://example.invalid/a.jpg"},
+                {"id": 1761, "alt": "", "src": "https://example.invalid/b.jpg"},
+            ],
+        }
+        desired = [
+            {"id": 62, "alt": "Existing A"},
+            {"id": 1761, "alt": "Rows of FRP stub flanges"},
+        ]
+        path = self._input({
+            "action": "product_update", "resource_id": 7,
+            "changes": {"images": desired},
+            "sources": {"images": "Rachad commissioned image-alt-only support; pixels verified"},
+        })
+        with mock.patch.object(change.wc, "api_get", return_value=(live, {})):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_stage(argparse.Namespace(input=str(path)))
+        result = json.loads(output.getvalue())
+        return Path(result["plan"]), result, live, desired
+
+    def test_stage_image_alt_plan_contains_complete_ordered_gallery(self):
+        plan_path, result, live, desired = self._stage_image_alt_update()
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(plan["before"]["images"], [
+            {"id": 62, "alt": "Existing A"}, {"id": 1761, "alt": ""},
+        ])
+        self.assertEqual(plan["payload"], {"images": desired})
+        self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
+        self.assertEqual(
+            change.safe_resource_fingerprint(live, "product_update"),
+            plan["before_fingerprint"],
+        )
+
+    def test_stage_image_alt_refuses_omitted_or_reordered_gallery(self):
+        _, _, live, desired = self._stage_image_alt_update()
+        for bad in (desired[:1], list(reversed(desired))):
+            path = self._input({
+                "action": "product_update", "resource_id": 7,
+                "changes": {"images": bad}, "sources": {"images": "Rachad"},
+            })
+            with self.subTest(bad=bad), mock.patch.object(change.wc, "api_get", return_value=(live, {})):
+                with self.assertRaises(change.ChangeError):
+                    change.command_stage(argparse.Namespace(input=str(path)))
+
+    def test_image_alt_commit_writes_once_and_verifies_complete_gallery(self):
+        plan_path, result, live, desired = self._stage_image_alt_update()
+        updated = {
+            **live, "date_modified_gmt": "2026-07-24T12:01:00",
+            "images": [
+                {**live["images"][0], "alt": desired[0]["alt"]},
+                {**live["images"][1], "alt": desired[1]["alt"]},
+            ],
+        }
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(live, {}), (updated, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(updated, {})) as write:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
+            write.assert_called_once_with(
+                "PUT", "/products/7", payload={"images": desired}, vault=self._vault()
+            )
+            self.assertEqual(json.loads(output.getvalue())["status"], "COMMITTED_AND_VERIFIED")
+
+    def test_image_alt_commit_rejects_readback_with_extra_image(self):
+        plan_path, result, live, desired = self._stage_image_alt_update()
+        readback = {
+            **live, "date_modified_gmt": "2026-07-24T12:01:00",
+            "images": [
+                {**live["images"][0], "alt": desired[0]["alt"]},
+                {**live["images"][1], "alt": desired[1]["alt"]},
+                {"id": 2000, "alt": "Unexpected", "src": "https://example.invalid/c.jpg"},
+            ],
+        }
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(live, {}), (readback, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(readback, {})) as write:
+            with self.assertRaises(change.ChangeError):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
+            write.assert_called_once()
+        lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "indeterminate")
+
+    def test_stage_detects_trailing_parent_option_removal(self):
+        plan_path, result, live, desired = self._stage_parent_option_removal()
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            plan["before"]["attributes"][0]["options"],
+            live["attributes"][0]["options"],
+        )
+        self.assertEqual(plan["payload"], {"attributes": [desired]})
+        self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
+
+    def test_commit_rejects_readback_with_trailing_parent_options(self):
+        plan_path, result, live, _ = self._stage_parent_option_removal()
+        stubborn = {**live, "date_modified_gmt": "2026-07-24T12:01:00"}
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(live, {}), (stubborn, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(stubborn, {})) as write:
+            with self.assertRaises(change.ChangeError):
+                change.command_commit(argparse.Namespace(
+                    plan=str(plan_path), approval=result["approval"]
+                ))
+            write.assert_called_once()
+        lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "indeterminate")
 
     def test_stage_creates_full_hash_expiring_plan(self):
         plan_path, result = self._stage_update()

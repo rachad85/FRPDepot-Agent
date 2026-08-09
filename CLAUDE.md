@@ -359,6 +359,26 @@ engineer.
       safety suite passes 25/25, including refusal before network without Rachad's
       one-word `APPROVED`. The first creation plan was staged locally; no Zoho
       write occurred.
+      2026-08-08: `zoho_inventory_item_tool.py` received one fixed additional
+      operation for FRP FW PIPE group `96274000000034779`: rename SIZE option
+      `96274000000034781` from `30` to `30\"`, preserving every ID and every
+      other group/item field. The implementation is hard-coded to the two linked
+      30-inch items, full-state fingerprinted, replay-locked before its one PUT,
+      and independently tested with all 120 Zoho tests passing. Rachad approved
+      plan `20260808T164957Z_group_option_rename_9d6ba1d7.json` on 2026-08-08.
+      Zoho rejected the single PUT with HTTP 400, code 15: `Please ensure that
+      the "attributes" has less than 100 characters.` A separate live GET then
+      proved the complete group state unchanged and the option still `30`. The
+      plan remains permanently replay-locked; no retry and no dependent
+      WooCommerce Pipe plan were made.
+- [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
+      existing-product image-alt-only extension to `woocommerce_change_tool.py`.
+      Every plan must carry the complete gallery with unchanged IDs and order;
+      image entries contain only `id` and nonblank plain-text `alt`. Creation,
+      removal, replacement, reordering, URLs/files/metadata, product creation and
+      variation images are refused. Pre-write full-product fingerprinting,
+      one-attempt commit locking and complete-gallery readback remain mandatory.
+      Full WooCommerce discovery suite passes 48/48.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 

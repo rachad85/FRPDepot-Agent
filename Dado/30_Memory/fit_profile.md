@@ -9,7 +9,7 @@ sheet — ask instead.
 - What we sell: Catalog-based FRP products. Mailbox evidence includes FRP pipe,
   fittings, stub flanges, saddle tees, grating, profiles, and separately quoted
   coatings/unlisted items.
-- Resin standard (Rachad, 2026-07-30): use DK411 unless Rachad explicitly requests another resin. Stock availability does not authorize changing the resin.
+- Resin standard (Rachad, confirmed 2026-08-08): use D411 unless Rachad explicitly requests another resin. Use `D411` in customer-facing selectors, item names, quotes, and catalog labels. In technical/manufacturer documents, use `Derakane 411-350 (D411)` on first mention when the exact grade matters. D411 and Derakane 411-350 are the same catalog option and must not be listed separately. Stock availability does not authorize changing the resin.
 - Location / warehouse: Business/contact address repeatedly shown as 4507
   Ferguson Dr., Brockville, Ontario, Canada K6T 1A9. Warehouse status is not
   confirmed.
@@ -287,6 +287,21 @@ sheet — ask instead.
   paths only; it is not approval of any live plan or Zoho write. The tool may
   not delete fields, add other choices, or change names, SKUs, prices, stock,
   accounts, item groups, or any other item property.
+- 2026-08-08: Rachad commissioned one additional fixed operation in the named
+  `zoho_inventory_item_tool.py`: rename only option ID `96274000000034781` on
+  FRP FW PIPE group `96274000000034779`, attribute SIZE
+  `96274000000023957`, from `30` to `30\"`. It is linked to items
+  `96274000000034771` / `PIDN750150PSI411` and `96274000000034773` /
+  `PIDN750150PSI470`. All group, attribute, option and item IDs; all other
+  labels; and all names, SKUs, prices, stock, status, pressure and resin must be
+  preserved. The fixed stage-then-commit plan requires Rachad's later one-word
+  `APPROVED`; commissioning the capability is not approval of the staged plan.
+  Rachad approved plan `20260808T164957Z_group_option_rename_9d6ba1d7.json` on
+  2026-08-08. Zoho rejected its one PUT with HTTP 400 code 15: `Please ensure
+  that the "attributes" has less than 100 characters.` Independent live GET
+  verification proved the entire item-group state unchanged, including option
+  value `30` and both linked items. The plan is permanently replay-locked; no
+  retry or dependent WooCommerce Pipe staging occurred.
 - 2026-08-08: Rachad commissioned a daily approval-gated Zoho banking review at
   08:15 Eastern/server time. It reads the imported feeds for the four logical
   accounts Desjardins CAD, Desjardins USD, Stripe, and PayPal; the CAD review
@@ -317,3 +332,28 @@ sheet — ask instead.
   Resolution requires Rachad to edit the transfer manually in Zoho, or a separate
   explicit expansion of the commissioned write scope. All failed plans are
   permanently replay-locked; the live transaction was verified unchanged.
+
+- 2026-08-08: Rachad commissioned a narrowly restricted image-alt-only extension
+  to the named WooCommerce catalog-change tool. It applies only to existing
+  product updates and requires the complete live image gallery with the same IDs
+  and order; each payload image contains exactly `id` and nonblank plain-text
+  `alt`. The tool refuses image creation, removal, replacement, reordering,
+  URL/file/metadata changes, product creation, and variation images. Every alt
+  write remains an immutable staged plan shown to Rachad, his one-word
+  `APPROVED`, one commit attempt, replay locking, and complete-gallery live
+  readback. The complete safety suite passes 48/48.
+- 2026-08-09: Rachad chose the WooCommerce shipping-policy direction: all FRP
+  Pipe, Manway, Manway Cover, mixed shipments, and unknown/unverified items use
+  **Freight Quote Required**; UPS is allowed only for small items whose actual
+  one-piece packed dimensions and gross weight have been measured and
+  independently verified. Fresh live classification covers 136 variations:
+  58 freight-required now, and 78 Elbow/Stub Flange variations held from UPS
+  pending 37 physical packing groups. This decision does not itself commission
+  shipping-class or shipping-method writes. No such write may be staged until
+  a narrow capability is commissioned and tested, and no plan commits without
+  Rachad's one-word `APPROVED` after seeing its exact before/after scope.
+- 2026-08-08: Rachad said the standard sizes live in his Google Drive, in the
+  **FRP Depots** folder, in one of the Excel files there (Telegram 23:48; the
+  logged message is truncated mid-word at "in one of the exce"). This is the
+  pointer to search, NOT a confirmed filename or a size list — read the actual
+  workbook and cite it before stating any size.

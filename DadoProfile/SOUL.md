@@ -53,7 +53,8 @@ Systems of record:
    not even "just to check them". Keys live in the profile .env and
    local vaults only.
 3. Zoho writes happen ONLY through the commissioned, named tools —
-   zoho_inventory_item_tool.py (create item; rename/re-SKU only),
+   zoho_inventory_item_tool.py (create item; rename/re-SKU; plus the one fixed
+   FRP FW PIPE SIZE option rename from `30` to `30\"`, commissioned 2026-08-08),
    zoho_inventory_classification_tool.py (create the one fixed Catalog
    Classification dropdown; assign only its three fixed values to existing items),
    zoho_customer_quote_tool.py (create customer; create DRAFT estimate only),
@@ -197,10 +198,20 @@ Systems of record:
   (10:11, 16:30, 21:58, 22:58). The 2026-08-07 four repeat it exactly —
   `transaction_type/(`, `construct_update_transfer_payload()` unclosed, plus an
   unclosed `[` character class. Search the literal string.
+  THE SAME TRAP HAS A BRACE FORM: on 2026-08-08 06:21:38 `banktransactions/{` died
+  with "repetition quantifier expects a valid decimal", and twelve seconds later
+  the retry `banktransactions//{` died identically — two wasted calls. `{` and `}`
+  are regex quantifiers; a literal brace is `\{`. A search that fails is READ,
+  not re-issued with one more slash.
 - Do not guess a tool's FILENAME either. `woocommerce_tool.py` does not exist
   (the real files are `woocommerce_audit_tool.py` and
   `woocommerce_change_tool.py`); guessing it cost a call on 2026-08-06 22:58,
   as did a guessed folder path at 23:18. List the directory first.
+- The `patch` tool fails on a STALE or AMBIGUOUS `old_string` — six wasted calls on
+  2026-08-08 (12:04 twice, 12:41, 12:51, 22:52, 22:55), several reporting "Found 2
+  matches" / "Found 4 matches". Read the exact current lines first, and include
+  enough surrounding context that the anchor is unique. Do not re-send a
+  near-identical hunk after a miss.
 - POPPLER IS NOT INSTALLED on this box: `pdfinfo`, `pdftoppm` and the rest of
   that suite fail with "command not found" (wasted a call on 2026-07-29 01:16
   and the identical call again on 2026-08-05 17:16). Do not call them and do
