@@ -1,0 +1,9 @@
+{
+  "schema_version": 1,
+  "comment": "UPS parcel allowlist. An item ships by UPS ONLY if it appears here by exact product_id, variation_id and sku AND carries no shipping class. Empty items means every cart requires a freight quote. Add an entry only after that packing group's one-piece packed dimensions and gross weight are measured and independently verified, and only under a separately approved plan.",
+  "generated_utc": "2026-08-09T00:00:00+00:00",
+  "expires_utc": "2026-11-07T00:00:00+00:00",
+  "packing_measurement_source": "Dado/20_Working/catalog_shipping_policy/packing_measurement_sheet.csv",
+  "verified_packing_groups": 0,
+  "items": []
+}

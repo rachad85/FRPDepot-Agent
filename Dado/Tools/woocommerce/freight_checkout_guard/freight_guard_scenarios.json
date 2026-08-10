@@ -1,0 +1,252 @@
+{
+  "_comment": "Canonical checkout-guard decision scenarios. Both the PHP harness (tests/test-freight-guard.php) and the Python suite (test_woocommerce_shipping_policy.py) read THIS file, so the two can never drift apart. All product IDs and SKUs below are deliberately fictional test fixtures (9000xx / TEST-*): nothing here is a real FRP Depot item and nothing here verifies any packing group. The shipped ups-allowlist.json remains empty.",
+  "message": "Contact us for a freight quote.",
+  "freight_slug": "freight-quote-required",
+  "now_utc": "2026-08-09T12:00:00+00:00",
+
+  "allowlists": {
+    "current": {
+      "schema_version": 1,
+      "generated_utc": "2026-08-01T00:00:00+00:00",
+      "expires_utc": "2026-11-07T00:00:00+00:00",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1" }
+      ]
+    },
+    "stale": {
+      "schema_version": 1,
+      "generated_utc": "2026-01-01T00:00:00+00:00",
+      "expires_utc": "2026-08-09T11:59:59+00:00",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1" }
+      ]
+    },
+    "missing": null,
+    "not_an_array": "nope",
+    "missing_expiry": {
+      "schema_version": 1,
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1" }
+      ]
+    },
+    "invalid_expiry": {
+      "schema_version": 1,
+      "expires_utc": "not-a-date",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1" }
+      ]
+    },
+    "missing_items": {
+      "schema_version": 1,
+      "expires_utc": "2026-11-07T00:00:00+00:00"
+    },
+    "malformed_entry": {
+      "schema_version": 1,
+      "expires_utc": "2026-11-07T00:00:00+00:00",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1" },
+        { "product_id": 900003, "sku": "TEST-MISSING-VARIATION-KEY" }
+      ]
+    },
+    "blank_sku_entry": {
+      "schema_version": 1,
+      "expires_utc": "2026-11-07T00:00:00+00:00",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "   " }
+      ]
+    }
+  },
+
+  "cases": [
+    {
+      "name": "empty_cart_is_not_blocked",
+      "allowlist": "current",
+      "items": [],
+      "expect_freight": false,
+      "expect_reasons": []
+    },
+    {
+      "name": "verified_item_alone_allows_ups",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": false,
+      "expect_reasons": []
+    },
+    {
+      "name": "freight_classified_item_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 1423, "variation_id": 1424, "sku": "ANY-SKU", "shipping_class": "freight-quote-required" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:freight_shipping_class"]
+    },
+    {
+      "name": "blank_class_unknown_item_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 700001, "variation_id": 700002, "sku": "SOME-UNVERIFIED-SKU", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:not_ups_verified"]
+    },
+    {
+      "name": "missing_sku_blocks_even_when_ids_match",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:missing_sku"]
+    },
+    {
+      "name": "whitespace_sku_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "   ", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:missing_sku"]
+    },
+    {
+      "name": "sku_mismatch_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-2", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:sku_mismatch"]
+    },
+    {
+      "name": "mixed_cart_verified_plus_freight_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" },
+        { "product_id": 1423, "variation_id": 1424, "sku": "ANY-SKU", "shipping_class": "freight-quote-required" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["1:freight_shipping_class"]
+    },
+    {
+      "name": "mixed_cart_verified_plus_unknown_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" },
+        { "product_id": 700003, "variation_id": 0, "sku": "UNKNOWN", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["1:not_ups_verified"]
+    },
+    {
+      "name": "variation_inheriting_parent_freight_class_blocks",
+      "_note": "get_shipping_class() resolves a child's inherit state to the parent slug before the check.",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "freight-quote-required" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:freight_shipping_class"]
+    },
+    {
+      "name": "verified_item_with_other_shipping_class_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "oversized" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:unexpected_shipping_class"]
+    },
+    {
+      "name": "virtual_flag_does_not_exempt_a_freight_item",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 1423, "variation_id": 1424, "sku": "ANY-SKU", "shipping_class": "freight-quote-required", "virtual": true }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:freight_shipping_class"]
+    },
+    {
+      "name": "unresolvable_cart_line_blocks",
+      "allowlist": "current",
+      "items": [
+        { "product_id": 0, "variation_id": 0, "sku": "", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:unresolvable_product"]
+    },
+    {
+      "name": "stale_allowlist_blocks_previously_verified_item",
+      "allowlist": "stale",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_stale"]
+    },
+    {
+      "name": "missing_allowlist_blocks",
+      "allowlist": "missing",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_missing_or_unreadable"]
+    },
+    {
+      "name": "non_array_allowlist_blocks",
+      "allowlist": "not_an_array",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_missing_or_unreadable"]
+    },
+    {
+      "name": "allowlist_without_expiry_blocks",
+      "allowlist": "missing_expiry",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_missing_expiry"]
+    },
+    {
+      "name": "allowlist_with_invalid_expiry_blocks",
+      "allowlist": "invalid_expiry",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_invalid_expiry"]
+    },
+    {
+      "name": "allowlist_without_items_blocks",
+      "allowlist": "missing_items",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_missing_items"]
+    },
+    {
+      "name": "one_malformed_allowlist_entry_disables_the_whole_allowlist",
+      "allowlist": "malformed_entry",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_malformed_entry"]
+    },
+    {
+      "name": "blank_sku_allowlist_entry_disables_the_whole_allowlist",
+      "allowlist": "blank_sku_entry",
+      "items": [
+        { "product_id": 900001, "variation_id": 900002, "sku": "TEST-UPS-VERIFIED-1", "shipping_class": "" }
+      ],
+      "expect_freight": true,
+      "expect_reasons": ["0:allowlist_malformed_entry"]
+    }
+  ]
+}
