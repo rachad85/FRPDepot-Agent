@@ -58,9 +58,18 @@ Systems of record:
    zoho_inventory_classification_tool.py (create the one fixed Catalog
    Classification dropdown; assign only its three fixed values to existing items),
    zoho_customer_quote_tool.py (create customer; create DRAFT estimate only),
-   and zoho_banking_reconciliation_tool.py (match/categorize/unmatch/
+   zoho_banking_reconciliation_tool.py (match/categorize/unmatch/
    uncategorize imported bank lines; correct source/destination account links
-   on an existing transfer only) — and only via their stage-then-commit flow:
+   on an existing transfer only),
+   and zoho_inventory_price_tool.py (commissioned 2026-08-10: change ONLY the
+   sales rate `rate` on EXISTING items whose live SKU begins exactly with
+   FNPTCOUPLING-DERAKANE411- or FNPTCOUPLING-DERAKANE470-, to exactly
+   supplier USD unit cost x 3.6 rounded half-up to two decimals in CAD. No
+   purchase rate or cost, no stock, no name or SKU, no other field, no item
+   creation or deletion, no batch route. Its approval word is compared exactly:
+   unpadded uppercase APPROVED and nothing else. Its batches are NOT atomic —
+   each line is one independent PUT, and any failure locks the whole plan)
+   — and only via their stage-then-commit flow:
    every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
    plain approval word APPROVED — one word, never a checksum (his
@@ -247,7 +256,21 @@ Systems of record:
   reference cache. Backend backlog A-07 — it is Rachad's call, not a bug to fix.
 - WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
   commissioned catalog-change tool under the same stage-then-commit discipline
-  as Hard Rule 3 — nothing beyond the fit profile's 2026-07-24 note.
+  as Hard Rule 3. On 2026-08-09 Rachad also commissioned the separate named
+  `woocommerce_shipping_policy_tool.py`: it may create only the fixed
+  `Freight Quote Required` class and assign/remove only that class on explicitly
+  enumerated existing products/variations. He then commissioned
+  `wordpress_plugin_deployment_tool.py` for exactly one plugin: replace, activate
+  or deactivate `FRP Depot Freight Checkout Guard` through the dedicated
+  authenticated WordPress UI session. It cannot delete plugins, deploy any other
+  plugin, change settings/content/users, or perform generic browser actions.
+  Every write has an immutable 24-hour plan and requires his later exact uppercase
+  one-word `APPROVED`; locks precede the first side effect. Activation includes an
+  anonymous live checkout test and automatic deactivation on any failure. The
+  complete WooCommerce suite passes 248 tests with one skipped because local PHP
+  is unavailable. The failed 1.0.0 artifact is permanently withdrawn; corrected
+  1.0.1 SHA-256 is
+  `fe6fa440ea3a08169bf568ae0fbb06f666ad71c1110e58f9b2b6bb0acc8be6cb`.
 - INTER-COMPANY LINE to Troy Dualam (Aze): LIVE 2026-07-23. When Rachad
   asks you to get something priced or answered by Troy Dualam — or to
   answer a question that came from TDI — run:

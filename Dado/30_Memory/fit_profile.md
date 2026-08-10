@@ -30,11 +30,32 @@ sheet — ask instead.
   K6T 1A9
 
 ## Commercial rules
+- Competitor (Rachad, 2026-08-10): FRP Supply / frpsupply.com is an FRP Depot competitor. Competitor prices are public retail evidence only and must be matched by product type, size, length, pressure, resin and connection before comparison.
 - Currency: Verified transactions use CAD and USD. No single default currency is confirmed.
 - Pricing currency (Rachad, 2026-08-07, approving the SCT coupling draft): "Prices
   are all in CAD". Stated over the stocked-coupling price comparison, so it governs
   the prices Dado presents and quotes. It does NOT restate the currency of a Zoho
   record or a supplier invoice — read those from the record itself.
+- FNPT pricing rule (Rachad, 2026-08-10): for the current FNPT supplier quotation,
+  calculate the target CAD selling price as `supplier USD cost × 3.6`. The multiplier
+  includes currency conversion, shipping, handling, and margin. Flag every current
+  Zoho/Woo selling price below that target for review; do not change a price without
+  a separate approved write plan. This is scoped to FNPT until Rachad applies it
+  elsewhere.
+- FNPT rollout order (Rachad, 2026-08-10): hold all WooCommerce FNPT price changes
+  until every supplier price is available. Set the Zoho selling rates first, then
+  prepare the website push.
+- Existing Zoho sales-rate writes: NO LONGER BLOCKED for FNPT (Rachad commissioned
+  the named `zoho_inventory_price_tool.py` on 2026-08-10). It changes only the
+  sales rate `rate` on existing items whose live SKU begins exactly with
+  `FNPTCOUPLING-DERAKANE411-` or `FNPTCOUPLING-DERAKANE470-`, to exactly
+  supplier USD cost x 3.6 (decimal half-up, two decimals, CAD), through the same
+  stage-then-commit flow with Rachad's own exact uppercase one word `APPROVED`.
+  Its approval word is compared byte-exact — no trimming, no case folding. Its
+  batches are NOT atomic: one independent PUT per line, and any failed or
+  indeterminate line stops the run and permanently locks the whole plan. Sales
+  rates on every other item family, and every other Zoho field, remain blocked.
+  First 26-item plan staged 2026-08-10, NOT committed, awaiting Rachad's word.
 - Payment terms default: No global default confirmed. Customer terms are account/order-specific; supplier terms are negotiated per PO/invoice.
 - Shipping terms default: No global default confirmed. Observed orders use Ex Works, FCA, or customer-account collect arrangements.
 - Quote validity default: No general default found in the mailbox; Rachad must confirm.
@@ -348,10 +369,119 @@ sheet — ask instead.
   one-piece packed dimensions and gross weight have been measured and
   independently verified. Fresh live classification covers 136 variations:
   58 freight-required now, and 78 Elbow/Stub Flange variations held from UPS
-  pending 37 physical packing groups. This decision does not itself commission
-  shipping-class or shipping-method writes. No such write may be staged until
-  a narrow capability is commissioned and tested, and no plan commits without
-  Rachad's one-word `APPROVED` after seeing its exact before/after scope.
+  pending 37 physical packing groups.
+- 2026-08-10: Because FRP Depot is new and has no physical packaging records,
+  Rachad authorized online research to improve the 37 Elbow/Stub Flange planning
+  estimates. `packing_measurement_estimates_researched.csv` supersedes and
+  withdraws the nominal-size-only v1. It uses FRP Depot's published radius,
+  wall-thickness, stub-OD, 12-inch stub-length and OD-tolerance tables as primary
+  evidence, independently corroborated by Litek/FRP Supply/FRP Fittings sources;
+  all 78 WooCommerce variation identities and weights were live-confirmed
+  read-only. Component dimensions are MEDIUM or MEDIUM-HIGH, but assumed packing
+  material and unweighed packing allowance cap every row at MEDIUM overall.
+  Thirty groups fall below UPS's published generic size/weight maxima on an
+  estimate-only screen; seven exceed them (14–24-inch Elbows and 30/36-inch Stub
+  Flanges). None is UPS-approved: UPS requires the actual packed extreme
+  dimensions and a scale weight, so the active freight-only policy remains.
+- 2026-08-10: The packing-experience collector is LIVE for future Elbow/Stub
+  Flange orders. Its baseline is Woo order 2127; zero earlier orders were
+  queued. `packing-order-monitor` (`89d95c692495`) reads a privacy-projected
+  Woo order feed every 30 minutes and creates local opportunities only;
+  `packing-observation-weekly-reminder` (`fd8eee0f604f`) runs Mondays at 09:00.
+  Operational data stays outside the repo under
+  `%LOCALAPPDATA%\FRPDepot-Packing-Observations\`. The collector stores no
+  customer/address/payment/price data, cannot write WooCommerce or record a
+  measurement automatically, and never changes estimates, UPS status, shipping
+  classes or the checkout guard. Physical package data enters append-only only
+  from Rachad's own words. Three distinct single-piece orders are required
+  before an estimate recommendation is produced; every recommendation is
+  review-only.
+- 2026-08-09: Rachad commissioned the separate named
+  `woocommerce_shipping_policy_tool.py`. Its write scope is limited to creating
+  the one fixed class `Freight Quote Required` / `freight-quote-required`, and
+  assigning or removing only that class on explicitly enumerated existing
+  products/variations. Every immutable plan requires his later exact uppercase
+  one-word `APPROVED`, is replay-locked before writing, and receives fresh-read
+  and complete protected-field readback checks.
+- 2026-08-09: Rachad confirmed there is no staging site and chose direct
+  production testing. He approved and manually activated checkout-guard 1.0.0.
+  It blocked checkout but displayed WooCommerce's generic cart-error sentence
+  instead of `Contact us for a freight quote.`. Rachad immediately deactivated
+  it. Fresh readback proved the plugin inactive, UPS enabled, and the storefront
+  recovered. The failed plan and 1.0.0 ZIP SHA-256
+  `4d8396d95baf0907754730e578ad4c41b98908f77992718c41b293434e07fe25`
+  are permanently closed and cannot be reused.
+- 2026-08-09: The corrected checkout guard is version 1.0.1, with reproducible
+  ZIP SHA-256
+  `fe6fa440ea3a08169bf568ae0fbb06f666ad71c1110e58f9b2b6bb0acc8be6cb`.
+  The complete WooCommerce suite passes 248 tests with one skipped only because
+  PHP is unavailable locally. Rachad commissioned the named
+  `wordpress_plugin_deployment_tool.py` after requesting that Dado handle
+  WordPress work through mobile approvals. It attaches only to Dado's dedicated
+  authenticated WordPress UI session and may replace, activate, or deactivate
+  only `FRP Depot Freight Checkout Guard`. It cannot delete plugins, touch any
+  other plugin, change settings/content/users, or run generic browser actions.
+  Every write requires an immutable 24-hour plan and his later exact uppercase
+  one-word `APPROVED`; activation includes an anonymous live checkout test and
+  automatic emergency deactivation on any failure.
+- 2026-08-09: Live read-only inspection confirmed checkout-guard 1.0.0 installed
+  and inactive. Rachad approved replacement plan
+  `20260809T175228Z_plugin_replace_5431f3fc5a28e8a4.json`; the named deployment
+  tool positively identified the fixed plugin and uploaded version 1.0.1, replaced
+  it once, and fresh readback confirmed 1.0.1 installed and inactive. The plan is
+  replay-locked. An initial unapproved activation plan was permanently abandoned
+  before any write because its validation label said `1/2 inch` while the live
+  product selector proved the exact option is `1/2"`. After correction and a
+  fresh 248-test pass, activation plan
+  `20260809T180243Z_plugin_activate_4841d651c0e89698.json` was staged locally.
+  It targets the live `1/2"` / `150PSI` / `D411` variation, requires exactly one
+  `Contact us for a freight quote.` notice with checkout/payment blocked, and
+  automatically deactivates on any failure. That plan later failed closed and is
+  replay-locked.
+- 2026-08-09: Two repaired activation attempts were safely rolled back before
+  validation: the first timed out and the second proved the validator was forcing
+  hidden selects, leaving Add to cart disabled. Both plans are permanently closed.
+  `wordpress_plugin_deployment_tool.py` 1.2.0 now clicks the measured visible
+  `role=radio` customer controls and requires WooCommerce to resolve the variation
+  and enable Add to cart. The complete WooCommerce suite passed 388 tests with one
+  PHP-only skip. Three independent read-only preflights then passed with evidence
+  SHA-256 `c6027bd526f7f57c839f70f893372cf33f86e68573f0609e9064164e28da4346`.
+  Rachad approved activation plan
+  `20260809T193552Z_plugin_activate_1d238c626000dc39.json` (SHA-256
+  `1d238c626000dc397f31781ab0c60015f2c33bf213fd3eab680c1a14fe912fd2`).
+  The plan committed successfully: visible controls were selected, the variation
+  resolved, Add to cart enabled, exactly one `Contact us for a freight quote.`
+  notice appeared, checkout/payment were blocked, and no order was placed or UPS
+  setting touched. Independent WordPress readback confirmed version 1.0.1 active
+  with fingerprint `6699faaffa9d395f287c1bf0f8a52be5b10092a2130fcd66832fbb160e6ab129`.
+  The successful plan is replay-locked.
+- 2026-08-09: Rachad approved WooCommerce shipping-class creation plan
+  `20260809T194335Z_shipping_class_create_3ebdc6b9cc50e3fe.json` (SHA-256
+  `3ebdc6b9cc50e3fe735c3a1f822d4b820912a8b49e7014ff703649ca35967d34`).
+  The commissioned shipping-policy tool created and read back exactly one class:
+  ID 61, name `Freight Quote Required`, slug `freight-quote-required`. The plan is
+  replay-locked. No product/variation assignment or UPS change was included.
+- 2026-08-09: Rachad batch-approved three freight-class assignment plans. The
+  first Pipe plan stopped after its first target because WooCommerce changed a
+  protected field during the shipping-class update. The plan is permanently
+  indeterminate/replay-locked. Read-only reconciliation proved exactly one live
+  assignment landed: Pipe variation 1456 / SKU `PIDN25150PSI411` now has
+  `freight-quote-required`; its current protected state is stable across two fresh
+  reads but differs from the staging fingerprint. The remaining 33 Pipe targets
+  are blank. The 13 Manway and 11 Manway Cover plans were never started and no
+  targets from either family changed. The per-field verifier was then built and
+  passed the full WooCommerce suite (438 run, 437 passed, one PHP-only skip,
+  zero failed). Rachad approved one schema-2 diagnostic assignment for Pipe
+  variation 2056 / SKU `PIDN12150PSI411`. The intended freight class landed,
+  but the plan locked indeterminate because exactly one metadata value changed:
+  `_wc_gla_sync_status` (same entry ID/key/order; no add/remove), from `synced`
+  to `pending` immediately after the save. Two later fresh GETs proved it had
+  automatically returned to `synced` and was stable; no other protected field
+  changed. Current reconciled Pipe state: variations 1456 and 2056 assigned,
+  32 blank. The diagnostic plan remains permanently locked and is never replayed.
+  Before more assignments, add only a bounded read-only convergence check for
+  this exact Google Listings transition; never accept `pending` as the final
+  state and never relax any other protected-field check.
 - 2026-08-08: Rachad said the standard sizes live in his Google Drive, in the
   **FRP Depots** folder, in one of the Excel files there (Telegram 23:48; the
   logged message is truncated mid-word at "in one of the exce"). This is the

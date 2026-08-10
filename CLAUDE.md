@@ -371,6 +371,29 @@ engineer.
       proved the complete group state unchanged and the option still `30`. The
       plan remains permanently replay-locked; no retry and no dependent
       WooCommerce Pipe plan were made.
+      2026-08-10: `zoho_inventory_price_tool.py` commissioned for EXISTING-item
+      sales rates on the FNPT D411/D470 couplings only. It writes exactly one
+      field, `rate`, on items whose live SKU begins with
+      `FNPTCOUPLING-DERAKANE411-` or `FNPTCOUPLING-DERAKANE470-`, at exactly
+      supplier USD cost x 3.6 (Decimal ROUND_HALF_UP, two decimals, CAD). Cost/
+      purchase rate, stock, name, SKU, status, creation, deletion and every batch
+      route are unreachable. Its approval word is byte-exact `APPROVED` — no
+      `.strip()`, no case fold, deliberately stricter than its siblings. The PUT
+      payload is exactly `{name (preserved unchanged), rate}`; `name` is the one
+      preserved identifying field Zoho requires on an item PUT, proven by the
+      classification tool's 206 verified live item PUTs, and the read-back proves
+      it did not move. Protected fingerprint = every returned item field except
+      the rate family (rate/sales_rate/pricebook_rate/default_price_brackets/
+      sales_margin, which Zoho recomputes from rate and which are each verified by
+      explicit rule) and `last_modified_time`. BATCHES ARE NOT ATOMIC: one PUT per
+      line, no retry, and any failure or indeterminate result locks the whole plan.
+      Tests: 55 new + 175 across the whole Zoho suite, all passing; WooCommerce
+      suite 561 passed / 1 skipped. A 26-item plan
+      (`20260810T051851Z_fnpt_sales_rate_update_2fe8ea90ff05f294.json`, 20 increases,
+      6 decreases) was STAGED ONLY on 2026-08-10 — zero Zoho writes, zero Woo
+      writes, no commit lock — and awaits Rachad's own `APPROVED`. Six existing
+      8-inch D411/D470 variations are excluded because their supplier cells are
+      blank; no cost was inferred.
 - [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
       existing-product image-alt-only extension to `woocommerce_change_tool.py`.
       Every plan must carry the complete gallery with unchanged IDs and order;
@@ -379,6 +402,30 @@ engineer.
       variation images are refused. Pre-write full-product fingerprinting,
       one-attempt commit locking and complete-gallery readback remain mandatory.
       Full WooCommerce discovery suite passes 48/48.
+- [x] WOOCOMMERCE FREIGHT POLICY + WORDPRESS DEPLOYMENT (2026-08-09): Rachad
+      commissioned `woocommerce_shipping_policy_tool.py` for the one fixed class
+      `Freight Quote Required` / `freight-quote-required` and explicit existing
+      product/variation assignment/removal only. Checkout-guard 1.0.0 was
+      manually activated on production after approval; it blocked checkout but
+      showed only WooCommerce's generic error, so Rachad deactivated it. Fresh
+      readback proved the storefront recovered. That plan and ZIP hash
+      `4d8396d95baf0907754730e578ad4c41b98908f77992718c41b293434e07fe25`
+      are permanently closed. Corrected version 1.0.1 has reproducible ZIP hash
+      `fe6fa440ea3a08169bf568ae0fbb06f666ad71c1110e58f9b2b6bb0acc8be6cb`.
+      Rachad then commissioned `wordpress_plugin_deployment_tool.py` so Dado can
+      replace, activate or deactivate only this fixed plugin through the
+      dedicated authenticated WordPress UI session. No deletion, foreign plugin,
+      setting/content/user change or generic browser action is reachable. Every
+      write uses a 24-hour immutable plan, exact uppercase `APPROVED`, pre-write
+      fingerprint, lock-before-side-effect and post-write readback. Activation
+      performs an anonymous checkout validation and automatically deactivates on
+      any failure. Full WooCommerce suite: 248 run, 247 passed, one PHP-only skip, zero
+ failures. The approved replacement plan positively identified the fixed
+ WordPress plugin and uploaded version 1.0.1; fresh readback confirmed 1.0.1
+ installed inactive and the plan replay-locked. A first unapproved activation
+ plan was abandoned before any write after live evidence proved its `1/2 inch`
+ selector label was wrong. The corrected `1/2"` plan was staged only after a
+ fresh 248-test pass; activation still awaits its own exact `APPROVED`.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 
