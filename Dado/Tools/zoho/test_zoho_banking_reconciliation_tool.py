@@ -1369,6 +1369,573 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             "aborted_before_write",
         )
 
+    # ------------------------------------------------------------------
+    # The one hard-pinned Airwallex USD recovery of the statement line Rachad
+    # uncategorized himself on 2026-08-10. Nothing here may relax any other case.
+    # ------------------------------------------------------------------
+    SPEC = banking.AIRWALLEX_USD_RECOVERY
+
+    @classmethod
+    def recovery_source(cls, **changes) -> dict:
+        value = {
+            "transaction_id": cls.SPEC["source_transaction_id"],
+            "date": "2026-07-23",
+            "transaction_type": "uncategorized",
+            "status": "uncategorized",
+            "amount": 21642.71,
+            "bank_charges": 0,
+            "gross_amount": 21642.71,
+            "source": "bank_feeds",
+            "account_id": "96274000001409012",
+            "account_name": "USD Desjardins corporate build-up account",
+            "account_type": "bank",
+            "payee": "",
+            "description": "Funds transfer received /FRPDepot Inc. /",
+            "currency_id": "96274000000000081",
+            "currency_code": "USD",
+            "debit_or_credit": "debit",
+            "reference_number": "",
+        }
+        value.update(changes)
+        return value
+
+    @classmethod
+    def recovery_accounts(cls) -> dict:
+        return {
+            "96274000000149257": {
+                "account_id": "96274000000149257",
+                "account_name": "AWX_FRPDepot Inc._USD",
+                "currency_code": "USD",
+                "status": "inactive",
+            },
+            "96274000001409012": {
+                "account_id": "96274000001409012",
+                "account_name": "USD Desjardins corporate build-up account",
+                "currency_code": "USD",
+                "status": "active",
+            },
+        }
+
+    @classmethod
+    def recovery_payload(cls, **changes) -> dict:
+        value = {
+            "from_account_id": "96274000000149257",
+            "to_account_id": "96274000001409012",
+            "transaction_type": "transfer_fund",
+            "reference_number": "Closing Balance From Airwallex Account",
+            "description": "Funds transfer received /FRPDepot Inc. /",
+            "currency_id": "96274000000000081",
+        }
+        value.update(changes)
+        return value
+
+    def recovery_input(self, **changes) -> dict:
+        value = {
+            "mode": banking.AIRWALLEX_USD_RECOVERY_MODE,
+            "historical_plan": str(self.plan_dir / self.SPEC["historical_plan_name"]),
+            "historical_plan_sha256": self.SPEC["historical_plan_sha256"],
+            "superseded_transfer_transaction_id": self.SPEC["superseded_transfer_transaction_id"],
+        }
+        value.update(changes)
+        return value
+
+    def install_recovery_evidence(
+        self, *, plan_mutate=None, lock_mutate=None, install_plan=True, install_lock=True
+    ) -> Path:
+        """Copy the REAL immutable historical plan and its lock into the patched plan dir."""
+        real = (
+            banking.ROOT / "Dado" / "20_Working" / "zoho_banking_plans"
+            / self.SPEC["historical_plan_name"]
+        )
+        self.assertTrue(real.is_file(), f"pinned immutable recovery evidence is missing: {real}")
+        data = json.loads(real.read_text(encoding="utf-8"))
+        self.assertEqual(data["sha256"], self.SPEC["historical_plan_sha256"])
+        if plan_mutate is not None:
+            plan_mutate(data)
+        target = self.plan_dir / self.SPEC["historical_plan_name"]
+        if install_plan:
+            target.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+        if install_lock:
+            lock = banking.lock_path(self.SPEC["historical_plan_sha256"])
+            lock.parent.mkdir(parents=True, exist_ok=True)
+            state = {
+                "plan_sha256": self.SPEC["historical_plan_sha256"],
+                "action": "update_transfer_accounts",
+                "status": "indeterminate",
+                "updated_utc": "2026-08-08T03:15:28.399772+00:00",
+                "reason": "HTTP 400 17004 same foreign currency",
+                "no_retry": True,
+            }
+            if lock_mutate is not None:
+                lock_mutate(state)
+            lock.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+        return target
+
+    def recovery_reader(self, source: dict, superseded: dict | None = None):
+        def get_transaction(token, vault, transaction_id, mode):
+            self.assertEqual(mode, "regular")
+            if transaction_id == source["transaction_id"]:
+                return source
+            if transaction_id == self.SPEC["superseded_transfer_transaction_id"]:
+                if superseded is not None:
+                    return superseded
+                raise banking.BankingRecordAbsent(
+                    "Zoho Books imported feed did not return exactly one transaction "
+                    + transaction_id + "."
+                )
+            raise AssertionError(f"unexpected live read of {transaction_id}")
+
+        return get_transaction
+
+    def recovery_stage_call(
+        self, *, source=None, payload=None, accounts=None, recovery=None,
+        statement_line=None, superseded=None, drop_recovery=False, extra_evidence=None,
+        action="categorize",
+    ):
+        source = self.recovery_source() if source is None else source
+        accounts = self.recovery_accounts() if accounts is None else accounts
+        payload = self.recovery_payload() if payload is None else payload
+        evidence = self.evidence()
+        if extra_evidence:
+            evidence.update(extra_evidence)
+        input_value = {
+            "source_transaction_id": source["transaction_id"],
+            "payload": payload,
+            "sources": self.sources(
+                statement_line
+                or "2026-07-23 Airwallex USD 21,642.71 closure statement line, uncategorized by Rachad"
+            ),
+            "evidence": evidence,
+        }
+        if not drop_recovery:
+            input_value["recovery"] = self.recovery_input() if recovery is None else recovery
+        with mock.patch.object(
+            banking, "get_bank_transaction", side_effect=self.recovery_reader(source, superseded)
+        ), mock.patch.object(
+            banking, "get_account",
+            side_effect=lambda token, vault, account_id: accounts.get(
+                account_id, self.account(account_id, currency="USD")
+            ),
+        ), mock.patch.object(
+            banking, "api_post_allowed"
+        ) as post, mock.patch.object(
+            banking, "api_put_transfer_accounts_allowed"
+        ) as put, contextlib.redirect_stdout(io.StringIO()) as stdout:
+            banking.command_stage(
+                argparse.Namespace(input=str(self.input_path(input_value))), action
+            )
+        post.assert_not_called()
+        put.assert_not_called()
+        result = json.loads(stdout.getvalue())
+        return Path(result["plan"]), result
+
+    def assert_recovery_refused(self, message: str | None = None, **kwargs) -> None:
+        with mock.patch.object(banking, "api_post_allowed") as post, mock.patch.object(
+            banking, "api_put_transfer_accounts_allowed"
+        ) as put:
+            if message:
+                with self.assertRaisesRegex(banking.BankingToolError, message):
+                    self.recovery_stage_call(**kwargs)
+            else:
+                with self.assertRaises(banking.BankingToolError):
+                    self.recovery_stage_call(**kwargs)
+            post.assert_not_called()
+            put.assert_not_called()
+
+    def stage_recovery(self, **kwargs):
+        self.install_recovery_evidence()
+        return self.recovery_stage_call(**kwargs)
+
+    def test_recovery_stages_the_exact_uncategorized_usd_line_and_writes_nothing(self) -> None:
+        path, result = self.stage_recovery()
+        self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
+        self.assertEqual(result["approval"], "APPROVED")
+        plan = json.loads(path.read_text(encoding="utf-8"))
+        saved = plan.pop("sha256")
+        self.assertEqual(saved, banking.digest_for(plan))
+        self.assertEqual(plan["action"], "categorize")
+        self.assertEqual(plan["payload"], {
+            "from_account_id": "96274000000149257",
+            "to_account_id": "96274000001409012",
+            "transaction_type": "transfer_fund",
+            "reference_number": "Closing Balance From Airwallex Account",
+            "description": "Funds transfer received /FRPDepot Inc. /",
+            "currency_id": "96274000000000081",
+            "amount": 21642.71,
+            "date": "2026-07-23",
+        })
+        evidence = plan["evidence"]
+        self.assertTrue(evidence["airwallex_guarded"])
+        self.assertEqual(evidence["airwallex_outgoing_transaction_id"], "")
+        self.assertIsNone(evidence["airwallex_verification"])
+        recovery = evidence["airwallex_recovery"]
+        self.assertEqual(recovery["mode"], banking.AIRWALLEX_USD_RECOVERY_MODE)
+        self.assertEqual(recovery["source_transaction_id"], "96274000001423074")
+        self.assertEqual(recovery["superseded_transfer_transaction_id"], "96274000001535012")
+        self.assertTrue(recovery["superseded_transfer_verified_absent"])
+        self.assertFalse(recovery["live_outgoing_counterpart_required"])
+        self.assertEqual(recovery["historical_plan_sha256"], self.SPEC["historical_plan_sha256"])
+        self.assertEqual(recovery["historical_plan_lock_status"], "indeterminate")
+
+        summary = plan["human_summary"]["recovery"]
+        self.assertIn("uncategorized", summary["statement"].casefold())
+        self.assertIn("recovery", summary["statement"].casefold())
+        self.assertEqual(summary["transaction_type"], "transfer_fund")
+        self.assertEqual(summary["from_account"], {
+            "account_id": "96274000000149257", "name": "AWX_FRPDepot Inc._USD",
+            "currency": "USD", "status": "inactive",
+        })
+        self.assertEqual(summary["to_account"], {
+            "account_id": "96274000001409012",
+            "name": "USD Desjardins corporate build-up account",
+            "currency": "USD", "status": "active",
+        })
+        self.assertEqual(summary["amount"], "21642.71")
+        self.assertEqual(summary["currency"], "USD")
+        self.assertEqual(summary["currency_id"], "96274000000000081")
+        self.assertEqual(summary["date"], "2026-07-23")
+        self.assertEqual(summary["reference_number"], "Closing Balance From Airwallex Account")
+        self.assertEqual(summary["description"], "Funds transfer received /FRPDepot Inc. /")
+        self.assertEqual(summary["emails_sent"], 0)
+        self.assertFalse(summary["write_performed_yet"])
+        self.assertIn("transfer_fund only", summary["revenue_or_income_classification"])
+        self.assertIn("/uncategorized/96274000001423074/categorize", summary["write"])
+        self.assertEqual(
+            [call.args[0] for call in self.append_receipt.call_args_list],
+            ["zoho_banking_categorize_plan_staged_not_committed"],
+        )
+        self.assertFalse(banking.lock_path(saved).exists())
+
+    def test_recovery_refuses_one_changed_digit_in_any_pinned_fact(self) -> None:
+        self.install_recovery_evidence()
+        cases = {
+            "source id": {"source": self.recovery_source(transaction_id="96274000001423075")},
+            "amount": {"source": self.recovery_source(amount=21642.72)},
+            "gross amount": {"source": self.recovery_source(gross_amount=21642.72)},
+            "bank charges": {"source": self.recovery_source(bank_charges=0.01)},
+            "date": {"source": self.recovery_source(date="2026-07-24")},
+            "currency code": {"source": self.recovery_source(currency_code="CAD")},
+            "currency id": {"source": self.recovery_source(currency_id="96274000000000082")},
+            "description": {"source": self.recovery_source(
+                description="Funds transfer received /FRPDepot Inc./"
+            )},
+            "status": {"source": self.recovery_source(status="categorized")},
+            "statement account": {"source": self.recovery_source(account_id="96274000001409013")},
+            "payload source account": {"payload": self.recovery_payload(
+                from_account_id="96274000000149258"
+            )},
+            "payload destination account": {"payload": self.recovery_payload(
+                to_account_id="96274000001409013"
+            )},
+            "payload currency id": {"payload": self.recovery_payload(
+                currency_id="96274000000000082"
+            )},
+            "payload reference": {"payload": self.recovery_payload(
+                reference_number="Closing Balance From Airwallex Accounts"
+            )},
+            "payload description": {"payload": self.recovery_payload(
+                description="Funds transfer received /FRPDepot Inc /"
+            )},
+            "payload extra field": {"payload": self.recovery_payload(exchange_rate=1.0)},
+            "historical digest": {"recovery": self.recovery_input(
+                historical_plan_sha256=self.SPEC["historical_plan_sha256"][:-1] + "9"
+            )},
+            "superseded id": {"recovery": self.recovery_input(
+                superseded_transfer_transaction_id="96274000001535013"
+            )},
+            "recovery mode": {"recovery": self.recovery_input(mode="airwallex_usd_closure")},
+        }
+        for label, override in cases.items():
+            with self.subTest(changed=label):
+                self.assert_recovery_refused(**override)
+
+        renamed = self.recovery_accounts()
+        renamed["96274000000149257"]["account_name"] = "AWX_FRPDepot Inc._CAD"
+        self.assert_recovery_refused("new source account name", accounts=renamed)
+
+        cad_accounts = self.recovery_accounts()
+        cad_accounts["96274000001409012"]["currency_code"] = "CAD"
+        self.assert_recovery_refused("destination account currency", accounts=cad_accounts)
+
+        inactive_destination = self.recovery_accounts()
+        inactive_destination["96274000001409012"]["status"] = "inactive"
+        self.assert_recovery_refused(
+            "destination account status", accounts=inactive_destination
+        )
+
+    def test_recovery_refuses_missing_tampered_or_unlocked_historical_plan(self) -> None:
+        self.install_recovery_evidence(install_plan=False)
+        self.assert_recovery_refused("banking plan folder")
+
+        # A real, readable, correctly-digested plan under any other name is still refused:
+        # the evidence is pinned by NAME as well as by digest.
+        installed = self.install_recovery_evidence()
+        decoy = self.plan_dir / "20260808T031444Z_other_plan.json"
+        decoy.write_text(installed.read_text(encoding="utf-8"), encoding="utf-8")
+        self.assert_recovery_refused(
+            "pinned historical plan", recovery=self.recovery_input(historical_plan=str(decoy))
+        )
+
+        # One changed byte anywhere inside the immutable evidence breaks its own digest.
+        for label, mutate in (
+            ("approved source account", lambda plan: plan["payload"].update(
+                {"from_account_id": "96274000000149258"}
+            )),
+            ("imported line ID", lambda plan: plan["source_snapshot"]["current_state"][
+                "imported_transactions"
+            ][0].update({"imported_transaction_id": "96274000001423075"})),
+            ("historical amount", lambda plan: plan["payload"].update({"amount": 21642.72})),
+        ):
+            with self.subTest(tampered=label):
+                self.install_recovery_evidence(plan_mutate=mutate)
+                self.assert_recovery_refused("digest check")
+
+        self.install_recovery_evidence(install_lock=False)
+        banking.lock_path(self.SPEC["historical_plan_sha256"]).unlink(missing_ok=True)
+        self.assert_recovery_refused("no commit lock")
+
+        for label, mutate in (
+            ("retryable", lambda state: state.update({"no_retry": False})),
+            ("committed", lambda state: state.update({"status": "committed_verified"})),
+            ("foreign digest", lambda state: state.update({"plan_sha256": "0" * 64})),
+        ):
+            with self.subTest(lock=label):
+                self.install_recovery_evidence(lock_mutate=mutate)
+                self.assert_recovery_refused("permanently locked")
+
+    def test_recovery_refuses_when_the_superseded_transfer_reappears(self) -> None:
+        self.install_recovery_evidence()
+        revived = self.transfer(
+            transaction_id="96274000001535012",
+            from_account_id="96274000000097003",
+            to_account_id="96274000001409012",
+            amount=21642.71, date="2026-07-23", currency_code="USD",
+        )
+        self.assert_recovery_refused("is live again", superseded=revived)
+
+    def test_every_other_airwallex_case_still_requires_live_outgoing_evidence(self) -> None:
+        self.install_recovery_evidence()
+        # The other commissioned Airwallex amount cannot borrow this recovery.
+        self.assert_recovery_refused(
+            "reachable only for statement line",
+            source=self.recovery_source(
+                transaction_id="96274000001423099", amount=78146.27, gross_amount=78146.27,
+                currency_code="CAD", currency_id="96274000000000087",
+            ),
+        )
+        # Same line, recovery withheld: the ordinary guard is untouched.
+        self.assert_recovery_refused(
+            "outgoing transaction ID", drop_recovery=True
+        )
+        # A recovery request can never also carry an outgoing counterpart.
+        self.assert_recovery_refused(
+            "cannot also carry one",
+            extra_evidence={"airwallex_outgoing_transaction_id": "96274000001535012"},
+        )
+        # A non-Airwallex line cannot reach the recovery path at all.
+        self.assert_recovery_refused(
+            "only for the guarded Airwallex line",
+            source=self.recovery_source(
+                transaction_id="96274000001423074", amount=125.0, gross_amount=125.0,
+            ),
+            statement_line="Ordinary Desjardins deposit",
+        )
+        # The optional key is accepted for categorize alone.
+        for action in ("match", "unmatch", "uncategorize"):
+            with self.subTest(action=action):
+                self.assert_recovery_refused("unsupported: payload, recovery", action=action)
+
+    def test_recovery_can_never_classify_income_or_revenue(self) -> None:
+        self.install_recovery_evidence()
+        for kind in ("other_income", "interest_income", "sales_without_invoices", "deposit"):
+            with self.subTest(transaction_type=kind):
+                self.assert_recovery_refused(
+                    "transfer_fund", payload=self.recovery_payload(transaction_type=kind)
+                )
+
+    def test_recovery_commit_checks_exact_approval_before_any_network_or_lock(self) -> None:
+        path, _ = self.stage_recovery()
+        saved = json.loads(path.read_text(encoding="utf-8"))["sha256"]
+        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED NOW", ""):
+            with self.subTest(approval=approval):
+                self.load_vault.reset_mock()
+                with mock.patch.object(banking, "api_post_allowed") as post:
+                    with self.assertRaisesRegex(banking.BankingToolError, "case-sensitive"):
+                        banking.command_commit(
+                            argparse.Namespace(plan=str(path), approval=approval), "categorize"
+                        )
+                    post.assert_not_called()
+                self.load_vault.assert_not_called()
+                self.assertFalse(banking.lock_path(saved).exists())
+
+    def commit_recovery(
+        self, path: Path, *, reads, accounts=None, post=None, superseded=None, posted=None
+    ):
+        accounts = self.recovery_accounts() if accounts is None else accounts
+        posted = posted or mock.MagicMock(**(post or {"return_value": {"code": 0}}))
+        queue = list(reads)
+
+        def get_transaction(token, vault, transaction_id, mode):
+            if transaction_id == self.SPEC["superseded_transfer_transaction_id"]:
+                if superseded is not None:
+                    return superseded
+                raise banking.BankingRecordAbsent("absent")
+            return queue.pop(0)
+
+        with mock.patch.object(
+            banking, "get_bank_transaction", side_effect=get_transaction
+        ), mock.patch.object(
+            banking, "get_account",
+            side_effect=lambda token, vault, account_id: accounts[account_id],
+        ), mock.patch.object(
+            banking, "api_post_allowed", posted
+        ), contextlib.redirect_stdout(io.StringIO()) as stdout:
+            banking.command_commit(
+                argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+            )
+        return posted, stdout.getvalue()
+
+    def test_recovery_commit_issues_exactly_one_post_and_verifies_the_result(self) -> None:
+        source = self.recovery_source()
+        path, _ = self.stage_recovery(source=source)
+        readback = self.recovery_source(
+            status="categorized", transaction_type="transfer_fund",
+            from_account_id="96274000000149257", to_account_id="96274000001409012",
+        )
+        posted, output = self.commit_recovery(path, reads=[source, readback])
+        posted.assert_called_once()
+        self.assertEqual(posted.call_args.args[2], "categorize")
+        self.assertEqual(posted.call_args.args[3], "96274000001423074")
+        self.assertEqual(
+            posted.call_args.args[5], json.loads(path.read_text(encoding="utf-8"))["payload"]
+        )
+        result = json.loads(output)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(result["source_transaction_id"], "96274000001423074")
+        self.assertTrue(result["replay_locked"])
+        lock = json.loads(banking.lock_path(result["plan_sha256"]).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "committed_verified")
+        self.assertTrue(lock["no_retry"])
+        self.assertIn(
+            "zoho_banking_reconciliation_committed_verified",
+            [call.args[0] for call in self.append_receipt.call_args_list],
+        )
+        # Replay is impossible even with a correct approval.
+        with mock.patch.object(banking, "api_post_allowed") as retry:
+            with self.assertRaisesRegex(banking.BankingToolError, "cannot be replayed"):
+                banking.command_commit(
+                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                )
+            retry.assert_not_called()
+
+    def test_recovery_commit_fails_closed_on_every_drift_error_and_readback_mismatch(self) -> None:
+        source = self.recovery_source()
+        readback = self.recovery_source(
+            status="categorized", transaction_type="transfer_fund",
+            from_account_id="96274000000149257", to_account_id="96274000001409012",
+        )
+        drifted_accounts = self.recovery_accounts()
+        drifted_accounts["96274000000149257"]["status"] = "active"
+
+        cases = [
+            (
+                "source line drift", "aborted_before_write",
+                {"reads": [self.recovery_source(amount=21642.72), readback]},
+            ),
+            (
+                "account drift", "aborted_before_write",
+                {"reads": [source, readback], "accounts": drifted_accounts},
+            ),
+            (
+                "superseded transfer returned", "aborted_before_write",
+                {"reads": [source, readback], "superseded": self.transfer(
+                    transaction_id="96274000001535012", amount=21642.71,
+                    date="2026-07-23", currency_code="USD",
+                )},
+            ),
+            (
+                "api error", "indeterminate",
+                {"reads": [source, readback], "post": {
+                    "side_effect": banking.BankingToolError("Zoho banking categorize failed")
+                }},
+            ),
+            (
+                "readback still uncategorized", "indeterminate",
+                {"reads": [source, self.recovery_source()]},
+            ),
+            (
+                "readback wrong type", "indeterminate",
+                {"reads": [source, self.recovery_source(
+                    status="categorized", transaction_type="deposit",
+                    from_account_id="96274000000149257", to_account_id="96274000001409012",
+                )]},
+            ),
+        ]
+        for label, expected_status, kwargs in cases:
+            with self.subTest(case=label):
+                path, _ = self.stage_recovery(source=source)
+                digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
+                posted = mock.MagicMock(**(kwargs.pop("post", None) or {"return_value": {"code": 0}}))
+                with self.assertRaisesRegex(banking.BankingToolError, expected_status):
+                    self.commit_recovery(path, posted=posted, **kwargs)
+                if expected_status == "aborted_before_write":
+                    posted.assert_not_called()
+                else:
+                    posted.assert_called_once()
+                lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
+                self.assertEqual(lock["status"], expected_status)
+                self.assertTrue(lock["no_retry"])
+                self.assertIn(
+                    "zoho_banking_commit_failed_permanently_locked",
+                    [call.args[0] for call in self.append_receipt.call_args_list],
+                )
+
+    def test_recovery_plan_evidence_and_summary_cannot_be_edited_after_review(self) -> None:
+        path, _ = self.stage_recovery()
+        for index, (label, mutate) in enumerate((
+            ("dropped recovery", lambda plan: plan["evidence"].update({"airwallex_recovery": None})),
+            ("forged absence", lambda plan: plan["evidence"]["airwallex_recovery"].update(
+                {"superseded_transfer_verified_absent": False}
+            )),
+            ("counterpart declared required", lambda plan: plan["evidence"]["airwallex_recovery"].update(
+                {"live_outgoing_counterpart_required": True}
+            )),
+            ("swapped historical digest", lambda plan: plan["evidence"]["airwallex_recovery"].update(
+                {"historical_plan_sha256": "0" * 64}
+            )),
+            ("softened statement", lambda plan: plan["human_summary"]["recovery"].update(
+                {"statement": "routine deposit"}
+            )),
+            ("claimed already written", lambda plan: plan["human_summary"]["recovery"].update(
+                {"write_performed_yet": True}
+            )),
+        )):
+            with self.subTest(tampered=label):
+                target = self.plan_dir / f"tampered_{index}.json"
+                target.write_text(path.read_text(encoding="utf-8"), encoding="utf-8")
+                self.rewrite_with_hash(target, mutate)
+                self.load_vault.reset_mock()
+                with mock.patch.object(banking, "api_post_allowed") as post:
+                    with self.assertRaises(banking.BankingToolError):
+                        banking.command_commit(
+                            argparse.Namespace(plan=str(target), approval="APPROVED"), "categorize"
+                        )
+                    post.assert_not_called()
+                self.load_vault.assert_not_called()
+
+    def test_absent_record_class_is_narrower_than_a_failed_read(self) -> None:
+        self.assertTrue(issubclass(banking.BankingRecordAbsent, banking.BankingToolError))
+        response = {"transactions": [], "page_context": {"page": 1, "has_more_page": False}}
+        with mock.patch.object(banking, "books_ui_get", return_value=response):
+            with self.assertRaises(banking.BankingRecordAbsent):
+                banking.get_uncategorized_ui_transaction(self.vault, "96274000001535012")
+        # A read that FAILS is never an absence proof.
+        with mock.patch.object(
+            banking, "get_bank_transaction",
+            side_effect=banking.BankingToolError("Playwright is unavailable"),
+        ), self.assertRaisesRegex(banking.BankingToolError, "Playwright is unavailable"):
+            banking.prove_superseded_transfer_absent("token", self.vault)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

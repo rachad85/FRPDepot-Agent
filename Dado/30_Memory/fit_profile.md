@@ -18,6 +18,8 @@ sheet — ask instead.
 - Outlook live-sweep rule: before declaring an RFQ open, fetch the full live conversation and verify the latest non-draft message is inbound, then cross-check Zoho Books transaction/payment status and Zoho Inventory price/stock data (learned 2026-07-23 after a false open-RFQ report).
 - Official Outlook signature rule: every customer-facing draft must use the verified HTML signature extracted from a real Sent Item, including the inline FRP DEPOTS logo and all contact details; the bundle is `Dado/20_Working/outlook_signature/official_signature_bundle.json` (source Sent Item dated 2026-07-21, verified 2026-07-23).
 - Outlook reply-thread rule (Rachad, 2026-07-23): every email reply draft must use **Reply All** from the latest live external non-draft message in the existing Outlook conversation—never a new standalone message. Preserve the existing subject, conversation identity, quoted history, and externally appropriate To/Cc roles; add the new reply above the history and the official HTML signature once. Check Drafts first, keep only one active response draft, then reopen it and verify the thread, recipients, body, signature, attachments, and that no newer source message arrived before reporting it ready.
+- Internal-copy rule (Rachad, 2026-08-10): every outbound email must copy at least one of `logistics@frpdepots.com`, `accounting@frpdepots.com`, or `operations@frpdepots.com`, or all three, as Rachad selects for that message. These addresses should be readily selectable in his Android email/Zoho workflow rather than manually copied and pasted.
+- Zoho Android recurring-CC finding (live-tested 2026-08-10): Zoho Books Android did not expose Android contacts in its Cc picker even with Contacts permission, and its recipient field would not accept Microsoft SwiftKey clipboard clips. The live invoice-email API exposed only customer-specific contact persons and one organization-wide `Default` email template. Official Zoho Books Canada documentation confirms email templates can carry preset Cc/Bcc addresses. The scalable solution is four module-specific clones of the Default template (`CC - Logistics`, `CC - Accounting`, `CC - Operations`, `CC - All`), not adding FRP Depot staff to every customer. Test one clone on Android before creating the rest; do not associate these templates with individual customers or make one universal default.
 - Chase-own exception (Rachad, 2026-08-02): when a thread he started has NO external message at all (nobody ever answered his email), the follow-up chase draft is a Reply All under HIS OWN latest sent message in that thread — `outlook_tool.py reply-all --chase-own` — keeping the original recipients and quoted history. The tool refuses this path the moment any live external message exists, and refuses it for anything but a chase. Ruled when the 2026-07-31 digest found 5 genuine follow-ups and could draft none.
 - Rachad's standard email signature block (verified from repeated Outlook Sent Items):
   Rachad Homsi
@@ -55,7 +57,10 @@ sheet — ask instead.
   batches are NOT atomic: one independent PUT per line, and any failed or
   indeterminate line stops the run and permanently locks the whole plan. Sales
   rates on every other item family, and every other Zoho field, remain blocked.
-  First 26-item plan staged 2026-08-10, NOT committed, awaiting Rachad's word.
+  The first 26-item plan was approved and committed on 2026-08-10. Live readback
+  verified all 26 sales rates at supplier USD cost × 3.6; 20 increased and 6
+  decreased. The plan is replay-locked. Six current 8-inch D411/D470 variations
+  remain excluded because their supplier cells are blank; no cost was inferred.
 - Payment terms default: No global default confirmed. Customer terms are account/order-specific; supplier terms are negotiated per PO/invoice.
 - Shipping terms default: No global default confirmed. Observed orders use Ex Works, FCA, or customer-account collect arrangements.
 - Quote validity default: No general default found in the mailbox; Rachad must confirm.
@@ -63,7 +68,12 @@ sheet — ask instead.
   website catalog for listed pipe and fittings; exact source-of-truth rule still
   requires Rachad's confirmation.
 - Stock availability rule (Rachad, 2026-07-30): use **Physical Available for Sale** only. Accounting stock and billed-but-unreceived purchase-order quantities must never be represented as physically in stock. Zoho's **Inventory Summary and phone quote item picker display accounting availability even when the organization mode is Physical Stock** (live-confirmed with SKU PIDN150150PSI411: 600 ft displayed versus physical 0 ft). For accurate quotes, open the item and use **Overview > Physical Stock > Available for Sale**, or use the read-only Inventory API field `actual_available_stock`.
-- Sales tax follows the customer's address/jurisdiction. Troy Dualam Services Inc. (customer ID 96274000000060019) is in Quebec and must use the combined **GST + QST** tax group (14.975%; Zoho tax ID 96274000001071139).
+- Sales tax follows the customer's address/jurisdiction. Rachad stated on 2026-08-10 that FRP Depot is not registered to collect BC PST. This registration fact alone does not settle the tax treatment of a BC order; confirm the current CRA place-of-supply and BC out-of-province PST rules, plus the delivery terms, before changing or presenting tax.
+- Zoho invoice capability commissioned by Rachad on 2026-08-10: a named approval-gated tool may (1) revise existing invoices without sending them and without changing their status, and (2) create new invoices in **Draft** status only. Every save is staged and requires Rachad's later exact one-word `APPROVED`; sending/emailing, deleting, voiding, marking sent, payments, credits and automatic approval remain unreachable. Build and OAuth permission work are pending; commissioning itself granted no live permission and caused no Zoho write.
+- Zoho invoice REVISION tool status (2026-08-10): **BUILT AND TESTED ONLY — no permission granted, no plan staged, no invoice changed.** `Dado\Tools\zoho\zoho_invoice_revision_tool.py` revises ONE existing invoice with ONE atomic PUT, changing only `customer_id` (to an ALREADY EXISTING customer), `reference_number`, `date`, `due_date`, customer-owned `billing_address_id`/`shipping_address_id`, `notes`, `terms`, and per existing line `quantity`, `rate`, `discount`, `description`, `tax_id`. Every live line is always resent once in order with its line_item_id and item_id, so nothing can be deleted by omission; adding, removing or substituting a line is refused. It has **no mail transport at all**, cannot change the invoice number, status, currency, exchange rate, balance/payments, adjustments, shipping charges or custom fields, and cannot create, delete, void, mark-draft or mark-sent. It refuses any invoice that is not exactly `draft` or `sent` or that carries a payment, credit, write-off, package, shipment or recurring profile. Approval is byte-exact `APPROVED`; one attempt only, and any failure or indeterminate result permanently locks the plan. The OAuth scope `ZohoBooks.invoices.UPDATE` is in the PREPARED list only and is **not live** until Rachad runs PREPARE_DADO_ZOHO_ACCESS.bat, creates the grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat.
+- Zoho DRAFT INVOICE CREATION status (2026-08-10, follow-on to the revision build): **BUILT AND TESTED ONLY — OAuth reauthorization still pending, no plan staged, zero Zoho writes, zero emails, no invoice created.** Part (2) of the commissioned capability is now implemented as the second action, `create_draft_invoice`, of the SAME named tool `Dado\Tools\zoho\zoho_invoice_revision_tool.py` (stage with `stage-create`, commit with the same `commit`). It creates ONE new invoice with ONE `POST /books/v3/invoices` and verifies live that the result is in exactly `draft` status. **Zoho's own auto-numbering assigns the number** — no caller-supplied number and no `ignore_auto_number_generation` exists anywhere in the module. It requires an EXISTING ACTIVE customer whose live name matches what was stated, addresses owned by that customer, and EXISTING ACTIVE Zoho items on every line (no free-text or unlinked lines; no item, customer or tax creation). Quantity, rate, discount, description and tax ID are accepted only with an explicit `source` string per value. Both `date` and `due_date` must be stated so nothing is inferred. The customer's own currency is preserved; currency and exchange rate are not in the payload allowlist. A duplicate item line is refused unless every line for that item carries its own distinct description. An independent Decimal (half-up) calculation of each line total, the discount, tax and grand total is shown before approval and asserted on read-back wherever Zoho's result is deterministic — a **tax group or compound tax is shown as an ESTIMATE and deliberately not asserted**, because Zoho rounds each component separately. Read-back verifies status exactly `draft`, the auto number, customer, currency, addresses, every line's item/order/quantity/rate/discount/description/tax/line-total, the dates, reference, notes, terms, the totals, that `is_emailed` is false, and that no shipping charge or adjustment appeared. If the POST succeeds but the read-back is missing or not draft, it reports an indeterminate failure **with the invoice ID when known and never attempts cleanup, deletion, voiding, a status change or a retry**. Approval is byte-exact `APPROVED`, checked before the lock, the vault, the token and the network; the plan is locked before the POST and permanently after any attempt. OAuth scope `ZohoBooks.invoices.CREATE` was added to the PREPARED list alongside `.UPDATE` and is **not live** until Rachad runs PREPARE_DADO_ZOHO_ACCESS.bat, creates the grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. There is still no invoice DELETE/ALL/fullaccess scope.
+- INV-000051 revision request (2026-08-10) is CONTEXT, NOT APPROVAL. Ralmax (Josh Caulfield) asked to put the SHM PO on the invoice and forward it to Elaine Iverson. Two blockers, both unresolved: **SHM Marine Constructors JV does not exist as a Zoho contact** (creating it belongs solely to `zoho_customer_quote_tool.py`, never to the revision tool), and the **tax treatment is unresolved** pending delivery/carrier facts — so no tax change may be inferred or staged. The forward itself is a DRAFT-only email action; the revision tool cannot send anything.
+- Troy Dualam Services Inc. (customer ID 96274000000060019) is in Quebec and must use the combined **GST + QST** tax group (14.975%; Zoho tax ID 96274000001071139).
 - Troy Dualam Services Inc. receives an automatic **10% discount** on every FRP Depot order/estimate (Rachad, 2026-07-30).
 - Manufacturer-confirmed pipe construction: Fei wrote on 2025-11-26, **“all pipe sizes adopt filament winding method.”** Her 2025-11-04 attachment, `Filament Wound Pipe Lamination.pdf`, clarifies that this means the **structural roving layer** is filament-wound, while the **inner surface, chopped-strand-mat interior layer, and C-veil + UV outer surface** are hand-laid. Do not describe this as separate hand-laid axial sections. The document covers 1–36 in pipe and cites ASTM D2992 design basis / ASTM D2996 manufacture.
 
@@ -487,3 +497,166 @@ sheet — ask instead.
   logged message is truncated mid-word at "in one of the exce"). This is the
   pointer to search, NOT a confirmed filename or a size list — read the actual
   workbook and cite it before stating any size.
+- 2026-08-10: `zoho_email_template_tool.py` BUILT, TESTED and STAGED read-only.
+  Motivation: Zoho Books ANDROID exposes neither Android contacts nor SwiftKey
+  clipboard clips in its CC picker, so the fix is org-wide invoice email
+  templates carrying preset CCs. Live read-only discovery established the real
+  surface — settings route
+  `#/settings/emails/templates?email_type=invoice_notification`, and readable
+  endpoints `GET /api/v3/settings/emailtemplates` and
+  `GET /api/v3/settings/emailtemplates/{id}`. There is EXACTLY ONE live
+  `invoice_notification` template, `Default`, ID `96274000000000014`,
+  `is_default` true, with `cc_mail_ids` EMPTY and `bcc_mail_ids` EMPTY —
+  clone fingerprint
+  `4a19c02d41e5ba90349345269bde0b056259e4a5e9f0144f7bc55ee4d281886e`.
+  NO TEMPLATE WAS CREATED AND NO EMAIL WAS SENT. Zero Zoho writes; the encrypted
+  vault and profile .env were not touched.
+- 2026-08-10 (same day, later): the native Save contract WAS captured with
+  Rachad's authorization, and it moved the blocker rather than clearing it.
+  Tool now v1.1.0 / schema 2, so every plan staged under the old blocker fails
+  closed. Tests: 103 in the email-template suite, 421 across the whole Zoho
+  suite, all passing. Fresh read-only plan
+  `20260810T231950Z_create_accounting_test_2fa2a591d4936ffe.json` (SHA-256
+  `2fa2a591d4936ffe3482deb9870240ed909f859bd2147e5d5f27d07c0a665a46`) is staged
+  and creates `CC - Accounting` ONLY — but see the blocker; approving it refuses
+  before any write.
+  WHAT THE CAPTURE PROVED: opening the fixed `New` form under an
+  abort-everything interceptor, filling only the fixed name and the fixed Cc
+  option, and clicking Save emitted exactly ONE request — `POST` to
+  `https://books.zohocloud.ca/api/v3/settings/emailtemplates`, empty query, form
+  body `JSONString=` + `organization_id`, body SHA-256
+  `850b177880f00f693bca3ee367a8f548b06bf252e9db873c32a591233c29b7ad`, aborted
+  before the network. Payload schema is closed: 7 top-level keys, and exactly
+  one `language_content` block with `subject`/`body`/`language_code=en`/
+  `is_default=true`. No header, cookie, storage value, CSRF token or password
+  was read.
+  *** THE REAL BLOCKER — CONTENT, NOT CONTRACT. *** Decoding that body proved
+  Zoho's `New` form does NOT clone this org's `Default`. It loads Zoho's stock
+  factory invoice body: stock reads BALANCE DUE / %Balance% / MAKE PAYMENT /
+  Regards %UserName% %CompanyName%, while the live `Default` reads INVOICE
+  AMOUNT / %Total% / PAY NOW / Regards Accounting Departement (subject and From
+  DO match; bodies differ, 2118 vs 2131 chars). The commission requires targets
+  to preserve `Default`'s body, so creating through `New` would either break
+  that guarantee or succeed at the POST and then fail this tool's own
+  clone-fidelity read-back — leaving an ORPHAN template behind a permanently
+  locked plan. `require_native_form_clones_source` therefore refuses BEFORE the
+  replay lock, comparing the live Default's body against what the form actually
+  emitted.
+  NEXT STEP, Rachad's call, two options: (1) a native `Clone` control DOES exist
+  on the `Default` row — its menu holds exactly `Edit` and `Clone`, verified
+  read-only with one click on the disclosure toggle and zero write requests — so
+  authorize a blocked capture of the Clone form's single Save request the way the
+  New form's was captured; or (2) say plainly that the stock body is acceptable,
+  which changes what customers receive and is his decision, not Dado's.
+- 2026-08-10 21:56 EDT live queue verification: the saved Zoho connection now
+  includes the named restricted existing-invoice revision and draft-invoice
+  creation access; `zoho_tool.py check` verified Books and Inventory. This
+  supersedes the earlier pending-OAuth statements for those two capabilities.
+  No SHM invoice-revision plan is staged: SHM Marine Constructors JV is still
+  missing as a Zoho customer, and tax treatment still needs delivery/carrier
+  facts.
+- 2026-08-10 21:56 EDT live WooCommerce GET audit of the 58 intended protected
+  variations found only 2 Pipe variations assigned to `freight-quote-required`;
+  32 Pipe, 13 Manway, and 11 Manway Cover variations remain blank. No unexpected
+  class or missing target was found and the audit performed zero writes. The
+  authenticated WordPress admin window was closed, so the plugin's last verified
+  state remains version 1.0.1 active, but current activity could not be freshly
+  confirmed.
+- 2026-08-10 21:56 EDT live Zoho Books lookup: Airwallex USD transfer ID
+  `96274000001535012` now returns `Transaction does not exist`, the imported-feed
+  fallback has no row, and a complete Status.All ledger read for 2026-07-20
+  through 2026-07-31 has no transaction for USD 21,642.71. Do not reuse the old
+  transfer-correction plans or claim the old wrong source link still exists;
+  investigate whether Rachad manually removed/recreated it or Zoho moved it.
+- 2026-08-10 21:57 EDT Rachad answered that question himself: "Do the airwallex
+  correction. I un categorized it for you". He uncategorized the imported line,
+  which is why transfer `96274000001535012` is gone. The USD 21,642.71 line is
+  back to imported statement line `96274000001423074`, status `uncategorized`,
+  dated 2026-07-23, USD (currency ID `96274000000000081`), bank charges 0,
+  description `Funds transfer received /FRPDepot Inc. /`, on the destination
+  account `96274000001409012`. That instruction authorizes build/test/stage only;
+  it is NOT approval to commit.
+- 2026-08-10: `zoho_banking_reconciliation_tool.py` gained ONE fail-closed
+  recovery path inside its ALREADY COMMISSIONED `categorize` action. Not a new
+  capability: categorizing an imported line as an internal transfer was already
+  commissioned. It only replaces the ordinary Airwallex guard's demand for a LIVE
+  outgoing counterpart -- which uncategorization made permanently unsatisfiable --
+  with the immutable replay-locked plan
+  `20260808T031444Z_update_transfer_accounts_973274b986060804.json`
+  (sha256 `973274b986...3a41d908`, lock status `indeterminate`, `no_retry` true),
+  whose validated snapshot records this same imported line, amount, date,
+  description and account mapping, PLUS a fresh live proof that transfer
+  `96274000001535012` is really absent. Reachable only when EVERY fixed fact
+  matches: statement ID, `uncategorized` status, 21642.71, 2026-07-23, USD +
+  currency ID, description, zero bank charges, `transfer_fund` from
+  `96274000000149257` (`AWX_FRPDepot Inc._USD`, may stay inactive) to
+  `96274000001409012` (`USD Desjardins corporate build-up account`, must be
+  active), reference `Closing Balance From Airwallex Account`. Requested by an
+  explicit closed `recovery` block (mode + pinned historical digest + superseded
+  ID), never inferred from text. EVERY other Airwallex categorization still
+  requires its live outgoing counterpart; income/revenue types stay impossible;
+  approval stays byte-exact `APPROVED`, one POST, lock before side effect, no
+  retry, full fresh readback. Absence is proved by a distinct
+  `BankingRecordAbsent` class, never a message match, so a failed read or a dead
+  browser can never pass as "gone".
+  TESTED, NOT YET STAGED: the focused banking suite passed 40/40 and the complete
+  Zoho suite passed 488/488 on 2026-08-11. Live staging then stopped before plan
+  creation or write because the dedicated authenticated Zoho Books UI window was
+  closed (`Exactly one authenticated Canadian Zoho Books app page must be open`).
+  The sanctioned UI session restart was launched as job
+  `20260810T232210-3cb22d`; no categorization plan exists yet. ZERO Zoho writes,
+  ZERO emails, and no approval has been requested for this banking correction.
+  OPEN RISK to raise before he approves: Zoho rejected the earlier USD source
+  correction with HTTP 400 code 17004, "From and To accounts are in the same
+  foreign currency." Both accounts here are USD against a CAD base, so the
+  categorize POST may fail the same way. That is a different endpoint and is
+  untested; if it fails, the plan locks permanently and nothing is written.
+- 2026-08-10: Rachad said "Repair the verifier for the website freight
+  protection". THE DEFECT, and it is the durable fact here: schema 3 of
+  `woocommerce_shipping_policy_tool.py` treated the SETTLED `_wc_gla_sync_status`
+  value as the only lawful before-state and refused to stage anything else. That
+  refusal deadlocks. Reproduced live 2026-08-10 on Pipe variation 1457 — staging
+  refused before writing any plan because the entry held the pending digest
+  `12adac...` rather than the required settled digest `bed425...`, and read-only
+  monitoring had already recorded 1457 and the next five blank Pipe candidates
+  sitting at that pending value long after the 90-second transient window. An
+  untouched variation can rest there indefinitely, and schema 3 demanded a move
+  before it would permit the update that causes the move.
+  THE REPAIR, BUILT THIS SESSION: schema 4 / tool version 4.0.0. A closed baseline
+  enum `absent` / `settled_baseline` / `pending_baseline`, decided by source from
+  the value-free projection and RE-DERIVED from the plan's own hashed projection
+  at load, so a rehashed edit cannot flip it. A pending before-state is staged
+  only after a bounded READ-ONLY stability proof: the first read plus two more
+  fresh GETs of the same exact resource on a fixed 2s/4s schedule (6-second
+  ceiling) that must agree on the shipping class, `date_modified_gmt`, the
+  aggregate and every per-field fingerprint, the complete metadata projection, and
+  one sound entry at the exact pending digest with a stable numeric id — any
+  disagreement refuses and writes no plan. Commit re-proves the whole baseline on
+  a fresh read before its one PUT. After the write a pending baseline has exactly
+  two successful shapes: the complete staged pending state unchanged (success
+  IMMEDIATELY — it must never wait for settlement just to accept an unchanged
+  state), or that same entry moving pending -> settled with same id/index/count/
+  order and nothing else, which then needs a fixed 2s/4s confirmation showing the
+  complete settled state stable. Anything else locks indeterminate; no retry, no
+  rollback, no second PUT. The settled 90-second path is unchanged, no third digest
+  exists, and schema 1/2/3 plans are refused before the vault and before the
+  network even when rehashed. Baseline mode names are compound
+  (`pending_baseline`, not `pending`) on purpose: the live value IS the word
+  "pending", and a bare mode token in a plan would be indistinguishable from a leak.
+  VERIFIED LIVE 2026-08-11: the first full execution surfaced two defects and
+  they were repaired without weakening protection: malformed/absent bounded
+  diagnostics now return false instead of raising, and the stale-preflight test
+  now isolates commit-time sleeping from the required staging stability sleeps.
+  The complete WooCommerce suite passed 618 tests with one expected PHP-only
+  skip. A fresh schema-4 plan
+  `20260811T032017Z_shipping_class_assign_2546a31f414cc049.json` was staged for
+  Pipe variation 1457 only after three identical live pending-baseline
+  observations; staging made zero store writes. Rachad then answered that exact
+  website plan with his one-word approval. The one PUT committed successfully:
+  variation 1457 / SKU `PIDN25150PSI470` now carries
+  `freight-quote-required`; the complete protected state remained exactly at the
+  staged pending baseline, so no convergence wait was needed. Fresh independent
+  GET audit confirmed 3 of 58 intended variations assigned (Pipe 1456, 2056,
+  1457), 55 blank, zero unexpected classes, zero missing targets. Plan SHA-256
+  `2546a31f414cc049d5f737d5816aedda8b169c266c7b022d991dbad8a0d332ed`
+  is `committed_verified` and replay-locked. No WordPress write and no email.

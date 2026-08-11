@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 from datetime import datetime, timedelta, timezone
+import functools
 import hashlib
 import json
 import os
@@ -32,6 +33,33 @@ from urllib.parse import parse_qs, urlencode, urlsplit
 from urllib.request import Request, urlopen
 
 import zoho_tool
+
+# One writer at a time on the shared authenticated Zoho window. Added
+# 2026-08-10 with Dado's Discord lane: her two chat lanes now run as genuinely
+# concurrent turns, and this tool does not launch a browser -- it attaches to
+# the single long-lived Edge session on CDP 127.0.0.1:9228 and drives an
+# EXISTING tab. Two concurrent turns would receive the same page object, so a
+# click could land after the other lane navigated -- a live write on the wrong
+# screen. Appended, never inserted first, so it cannot shadow a stdlib name.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
+
+
+def holds_zoho_browser(purpose: str):
+    """Serialize a whole command against the shared Zoho browser.
+
+    Wraps the ENTIRE command, so the browser is claimed before the plan's
+    one-attempt replay lock is written. A busy browser therefore refuses for
+    free -- the plan is never locked, never marked indeterminate, and can be
+    committed unchanged once the other lane finishes.
+    """
+    def decorate(function):
+        @functools.wraps(function)
+        def wrapper(*args: Any, **kwargs: Any):
+            with ui_browser_lock("zoho", purpose=purpose):
+                return function(*args, **kwargs)
+        return wrapper
+    return decorate
 
 TOOL_NAME = "FRP Depot Zoho Inventory Catalog Classification Tool"
 SCHEMA_VERSION = 1
@@ -1344,6 +1372,7 @@ def command_stage_assign(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+@holds_zoho_browser("Zoho classification: create the Catalog Classification field")
 def command_commit_create(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path, "classification_field_create")
@@ -1402,6 +1431,7 @@ def command_commit_create(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+@holds_zoho_browser("Zoho classification: assign Catalog Classification to items")
 def command_commit_assign(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path, "classification_assign")
@@ -1538,7 +1568,11 @@ def main() -> int:
     try:
         args.func(args)
         return 0
-    except (ClassificationToolError, zoho_tool.ZohoError, OSError, ValueError) as exc:
+    except (ClassificationToolError, zoho_tool.ZohoError, OSError, ValueError,
+            UiLaneBusy, UiLaneLockError) as exc:
+        # UiLaneBusy is a clean refusal, not a crash: the other lane holds the
+        # shared Zoho window, no plan was locked and nothing was sent. It must
+        # print one ERROR line like every other refusal rather than a traceback.
         print("ERROR: " + str(exc), file=sys.stderr)
         return 1
 

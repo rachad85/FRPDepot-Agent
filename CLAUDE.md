@@ -394,6 +394,210 @@ engineer.
       writes, no commit lock — and awaits Rachad's own `APPROVED`. Six existing
       8-inch D411/D470 variations are excluded because their supplier cells are
       blank; no cost was inferred.
+      2026-08-10: `zoho_invoice_revision_tool.py` commissioned to revise ONE
+      EXISTING Books invoice with ONE atomic `PUT /books/v3/invoices/{id}`. Only
+      `customer_id` (to an ALREADY EXISTING customer — creation stays solely in
+      `zoho_customer_quote_tool.py`), `reference_number`, `date`, `due_date`,
+      `billing_address_id`/`shipping_address_id` owned by that live customer,
+      `notes`, `terms`, and per EXISTING line `quantity`, `rate`, `discount`,
+      `description`, `tax_id` may change. NO OMISSION-BASED DELETION: every live
+      line is always resent once, in order, with its own line_item_id and item_id;
+      adding, removing or substituting a line is refused by the schema, the plan
+      validator, the write allowlist AND the read-back. Invoice number, status,
+      currency, exchange rate, balance/payments/write-offs, adjustments, shipping
+      charges and custom fields are unreachable, as are create, delete, void,
+      mark-draft, mark-sent, submit, approve, reject, mail, reminder, payment,
+      credit-note, attachment, template and every bulk route. IT HAS NO MAIL
+      TRANSPORT AT ALL — a test asserts the source contains no mail/status/
+      lifecycle route and exactly one `urlopen` call site. It refuses any invoice
+      that is not exactly `draft` or `sent`, or that carries a payment, credit,
+      write-off, package, shipment or recurring profile, and it refuses line-value
+      changes on a sales-order-linked invoice (they would desync fulfilment).
+      Totals are predicted only where Zoho's result is deterministic and the plan
+      says so; the byte-exact protected fingerprint exempts a key ONLY when the
+      plan genuinely moves it, so a PO-only revision keeps every line, total and
+      the customer inside the fingerprint. Approval word is byte-exact `APPROVED`.
+      ONE attempt: any failure, timeout or indeterminate result permanently locks
+      the plan. Scope `ZohoBooks.invoices.UPDATE` was added to the PREPARED list
+      only — NOT YET LIVE: Rachad must run PREPARE_DADO_ZOHO_ACCESS.bat, create
+      the grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. There is
+      deliberately no invoice CREATE/DELETE/ALL/fullaccess scope. Tests: 76 new,
+      251 across the whole Zoho suite, all passing; WooCommerce 561 passed /
+      1 skipped. Six deliberate mutations of the tool (weakened approval, dropped
+      line, unpreserved invoice number, non-exclusive lock, skipped fingerprint
+      check, unrestricted status) were each caught by the suite. BUILD AND TESTS
+      ONLY — the live vault was not touched, no plan was staged, and no invoice
+      was changed. Motivating case, NOT approval: INV-000051 (96274000001559012,
+      sent) where Ralmax asked for SHM PO 0000031 and billing to SHM Marine
+      Constructors JV — SHM does not exist as a contact yet, and the tax treatment
+      is unresolved, so nothing was staged.
+      2026-08-10 (follow-on; Rachad answered "Yes" to adding creation): the SAME
+      named tool gained a SECOND and final plan action, `create_draft_invoice` —
+      one new invoice per plan, one `POST /books/v3/invoices`, then a fresh live
+      read that must show status exactly `draft`. Stage with `stage-create`;
+      `commit` dispatches on the plan's action. ZOHO'S OWN AUTO-NUMBERING assigns
+      the number: `invoice_number` is absent from the POST allowlist and the
+      string `ignore_auto_number_generation` does not appear anywhere in the
+      module (a test asserts it). It requires an EXISTING ACTIVE customer whose
+      live name matches the stated one, addresses owned by that customer, and
+      EXISTING ACTIVE Zoho items on every line — no free-text or unlinked lines,
+      and no customer/item/tax/settings write of any kind. Every stated value
+      (quantity, rate, discount, description, tax ID) needs its own `source`
+      string; both dates must be stated so nothing is inferred. The customer's
+      currency is preserved and neither currency nor exchange rate is in the
+      payload allowlist. A repeated item line is refused unless each such line
+      carries its own distinct description. An independent Decimal half-up
+      calculation of line totals, discount, tax and grand total is shown before
+      approval and asserted on read-back WHERE DETERMINISTIC — a tax group or
+      compound tax is labelled ESTIMATE and deliberately not asserted, because
+      Zoho rounds each component separately (this matters: Troy Dualam Services
+      bills on the GST+QST group). Price precision comes from the live
+      organization record; when absent it defaults to 2 and totals are claimed
+      exact only if no line needed rounding at all. Read-back also verifies
+      `is_emailed` is false and that no shipping charge or adjustment appeared.
+      If the POST succeeds but the read-back is missing or not draft, the tool
+      reports indeterminate WITH the invoice ID when known and NEVER cleans up,
+      deletes, voids, changes status or retries. Both transports now funnel
+      through ONE `urlopen` call site (`_perform`), so the source still holds
+      exactly one network call, one `method="PUT"` and one `method="POST"`.
+      Scope `ZohoBooks.invoices.CREATE` was added to the PREPARED list beside
+      `.UPDATE` — NOT YET LIVE, same reauthorization steps. There is still no
+      invoice DELETE/ALL/fullaccess scope. Tests: 67 new
+      (`test_zoho_invoice_draft_creation.py`), 318 across the whole Zoho suite,
+      all passing; WooCommerce 561 passed / 1 skipped. Two pre-existing tests were
+      EXTENDED, not weakened, because this commission superseded them: the
+      "no invoices.CREATE scope" assertions (that scope is now commissioned), and
+      "exactly one write verb" (now one PUT plus one POST, still one urlopen).
+      BUILD AND TESTS ONLY — the live vault was not touched, no plan was staged,
+      no invoice was created and no email was sent.
+      2026-08-10: `zoho_customer_quote_tool.py` gained the ONE narrow ESTIMATE
+      UPDATE Rachad commissioned after two approved create-only draft estimates
+      landed high. THE DEFECT, and it is a Zoho contract fact worth keeping: Zoho
+      Books reads a NUMERIC line discount as a FLAT CAD AMOUNT and only a STRING
+      containing `%` as a percentage. Staging `10` for "10%" therefore took CAD
+      10.00 off each line: QT-000029 (96274000001559037) landed at CAD 15,073.96
+      instead of 13,680.38 and QT-000030 (96274000001558043) at 6,507.31 instead
+      of 5,929.02. Two fixes, one commission.
+      (a) CREATE PATH: percentages are now the exact string (`TDS_LINE_DISCOUNT`
+      = "10%"). A nonzero NUMERIC line or entity discount is refused at staging,
+      and `refuse_numeric_percentage_discounts` refuses a legacy plan at commit
+      BEFORE the vault, the token refresh and the network — so neither consumed
+      create plan can be replayed. Flat-amount line discounts are consequently
+      unreachable through this tool; write the percentage instead.
+      (b) CORRECTION PATH: `stage-tds-discount-correction --estimate-id` and
+      `commit-tds-discount-correction --plan --approval`. Exactly two estimate IDs
+      are reachable (`CORRECTION_TARGETS`); every other ID is refused before any
+      network call. Stage is GET-only: it re-reads the live estimate, requires the
+      exact number, reference, customer, `draft` status, exact line count/IDs/
+      order, `discount == 10` and `discount_amount == 10` on every line and the
+      exact diagnosed wrong totals, then cross-checks each line against the
+      IMMUTABLE original create plan (hash-verified against a constant) and the
+      live diagnosis artifact, and RECOMPUTES every corrected figure from the live
+      quantities and rates before requiring it to equal the approved totals
+      artifact AND the fixed approved totals. Nothing is copied on trust.
+      TAX BASIS, measured not assumed: Zoho computes the Quebec GST+QST on the NET
+      SUBTOTAL, not per line. On the live records 13,110.64 -> 1,963.32 and
+      5,659.76 -> 847.55 reproduce exactly on the subtotal basis (both as the
+      combined 14.975% and as 5% + 9.975%), while the per-line sum gives 1,963.33
+      — one cent out. That is why the corrected tax can be predicted at all, and
+      the tool refuses to stage if that reproduction ever fails.
+      The PUT resends the COMPLETE live line list with every `line_item_id` and
+      `item_id` (Zoho deletes lines a PUT omits) plus the preserved customer,
+      number, reference, date, notes and terms; only the discount changes. The
+      payload allowlist has no status, currency, tax, adjustment, shipping,
+      template, custom-field or mail key, and `oauth_estimate_discount_write_allowed`
+      accepts only PUT to the two fixed IDs — the module holds exactly one
+      `method="PUT"`, one `method="POST"` (the existing create) and two `urlopen`
+      call sites, with no DELETE/PATCH/send/status/approve route anywhere.
+      Commit: byte-exact approval `APPROVED`, plan hash + 24h expiry + full
+      re-derivation of the plan from its own staged live state, `estimates.UPDATE`
+      required in the saved connection, fresh GET fingerprint comparison, durable
+      single-use lock BEFORE the PUT, one attempt, then verification of BOTH the
+      PUT response and a fresh GET (identity, draft status, every line ID/order,
+      each line's expected discount_amount and item_total, the exact totals, and a
+      byte-exact protected fingerprint of every non-derived field). Any mismatch,
+      failure, timeout or indeterminate result leaves the plan permanently locked;
+      there is no retry and no rollback.
+      Scope `ZohoBooks.estimates.UPDATE` was added to the PREPARED list ONLY —
+      NOT YET LIVE: Rachad must run PREPARE_DADO_ZOHO_ACCESS.bat, create the
+      grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. No estimate
+      DELETE/ALL/fullaccess scope exists.
+      Tests: `test_zoho_quote_discount_correction.py` (new) plus the updated
+      `test_zoho_tool.py`. THEY WERE NOT EXECUTED IN THE BUILD SESSION — that
+      session's permission layer refused every `python` invocation, so the counts
+      are unverified; run
+      `python -m unittest discover -s C:\FRPDepot\Dado\Tools\zoho -p "test_zoho*.py"`
+      before trusting them. BUILD ONLY — no plan was staged live, ZERO Zoho
+      writes, ZERO estimates changed, ZERO emails.
+      2026-08-10: `zoho_email_template_tool.py` commissioned after live testing
+      proved Zoho Books ANDROID exposes neither Android contacts nor SwiftKey
+      clipboard clips in its CC picker. The ONLY thing it may ever create is one
+      of exactly FOUR fixed organization-wide INVOICE email templates, each a
+      clone of the single live `Default` invoice template (ID
+      `96274000000000014`) with exactly one changed name and one fixed CC list:
+      `CC - Accounting`/`CC - Logistics`/`CC - Operations` (one address each) and
+      `CC - All` (logistics@, accounting@, operations@ IN THAT ORDER). Creation
+      is TWO-PHASE — the first plan may create `CC - Accounting` ALONE so Rachad
+      can prove on his phone that a non-default template is selectable and its CC
+      populates; the other three need his own recorded Android-test confirmation,
+      and the tool refuses a confirmation whose statement/source reads as
+      commissioning language. No other module, name, address, subset or source is
+      reachable; there is no update/delete/rename/set-default/associate/
+      attachment/PDF/sender/DKIM/relay/workflow route, no mail transport, and no
+      write verb at all — a test asserts the source contains no `"POST"`/`"PUT"`/
+      `"DELETE"`, no `urlopen`, no cookie/storage access and exactly one
+      `method: "GET"` call site.
+      Read-only discovery established the real surface: the settings route is
+      `#/settings/emails/templates?email_type=invoice_notification` and the two
+      readable endpoints are `GET /api/v3/settings/emailtemplates` and
+      `GET /api/v3/settings/emailtemplates/{id}` (both verified live). Zoho
+      publishes NO documented Books API for CREATING an email template, so the
+      only safe mechanism is Zoho's own native Save path, exactly as
+      `zoho_inventory_classification_tool.py` creates the item custom field.
+      *** THAT CONTRACT IS NOW CAPTURED (2026-08-10, Rachad authorized it). ***
+      The fixed `New` form was opened under an abort-everything interceptor,
+      only the fixed name and the fixed Cc dropdown option were filled, and Save
+      emitted exactly ONE request — `POST` to
+      `https://books.zohocloud.ca/api/v3/settings/emailtemplates`, empty query,
+      form body `JSONString=` + `organization_id`, body SHA-256
+      `850b177880f00f693bca3ee367a8f548b06bf252e9db873c32a591233c29b7ad` —
+      aborted before the network. Artifact:
+      `Dado\20_Working\zoho_email_template_capture\native_save_request.json`.
+      The payload schema is closed and now enforced in code: 7 top-level keys,
+      exactly one `language_content` block (`subject`/`body`/`language_code=en`/
+      `is_default=true`). NO header, cookie, storage value, CSRF token or
+      password was read. Cc entry works ONLY by opening that row's own
+      `.zf-ac-toggler` and clicking an exact `role=option` value; typing an
+      address, Enter and comma all failed live and are NOT fallbacks to retry.
+      *** COMMIT IS STILL NOT EXECUTABLE — THE BLOCKER MOVED FROM CONTRACT TO
+      CONTENT. *** Decoding that captured body proved Zoho's `New` form does NOT
+      clone this organization's `Default`: it loads Zoho's stock factory invoice
+      body. Stock reads BALANCE DUE / %Balance% / MAKE PAYMENT / Regards
+      %UserName% %CompanyName%; the live `Default` reads INVOICE AMOUNT /
+      %Total% / PAY NOW / Regards Accounting Departement. Subject and From DO
+      match; the bodies differ (2118 vs 2131 chars). Since the commission
+      requires every target to preserve `Default`'s body, creating through `New`
+      would either break that guarantee or succeed at the POST and then fail this
+      tool's own clone-fidelity read-back — leaving an ORPHAN template behind a
+      permanently locked plan. `require_native_form_clones_source` therefore
+      refuses BEFORE the replay lock, comparing the live Default's body against
+      what the form actually emitted. Nothing was invented and nothing created.
+      NEXT STEP IS RACHAD'S CALL, two options: (1) a native `Clone` control DOES
+      exist on the `Default` row — its menu holds exactly `Edit` and `Clone`,
+      verified read-only with one click on the disclosure toggle and zero write
+      requests — so authorize a blocked capture of the Clone form's single Save
+      request the way the New form's was captured; or (2) he says plainly that
+      the stock body is acceptable, which changes what customers receive and is
+      his decision, not Dado's.
+      Tool is now v1.1.0 / schema 2, so plans staged under the old blocker fail
+      closed. Tests: 103 in the email-template suite, 421 across the whole Zoho
+      suite, all passing. NO NEW SCOPE was needed — the tool reads through
+      the existing authenticated UI session and existing read-only OAuth GETs.
+      One read-only plan
+      (`20260810T231950Z_create_accounting_test_2fa2a591d4936ffe.json`) is STAGED;
+      approving it refuses before any write until the blocker above is resolved. The encrypted vault and profile .env
+      were not touched, ZERO Zoho writes were made, ZERO templates were created
+      and ZERO emails were sent.
 - [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
       existing-product image-alt-only extension to `woocommerce_change_tool.py`.
       Every plan must carry the complete gallery with unchanged IDs and order;
@@ -426,6 +630,135 @@ engineer.
  plan was abandoned before any write after live evidence proved its `1/2 inch`
  selector label was wrong. The corrected `1/2"` plan was staged only after a
  fresh 248-test pass; activation still awaits its own exact `APPROVED`.
+- [x] DISCORD LANE — SECOND CHAT SURFACE, SAME DADO (2026-08-10, Rachad asked for
+      "a new lane for Dado on Discord, completely independent so I can run 2 tasks
+      in parallel without interference"; he chose same-profile over a second agent).
+      IT IS GENUINELY PARALLEL, verified in hermes code, not assumed: every
+      mutual-exclusion primitive in the dispatch path is keyed by SESSION KEY or
+      resolved session_id, never by profile, and the platform value is a mandatory
+      slot in the key (gateway/session.py:1096-1115). So a Telegram DM and a Discord
+      DM are two keys -> two asyncio tasks (platforms/base.py:5393) -> two threads of
+      a ThreadPoolExecutor(max_workers=10) (run.py:21153). `max_concurrent_sessions`
+      is null = unlimited for her. Two turns is nowhere near the ceiling.
+      ZERO INSTALL: discord.py 2.7.1 + PyNaCl are already in the hermes venv, the
+      bundled plugin adapter auto-registers, and Discord binds NO port (it dials out
+      over WebSocket) — 8647 is API_SERVER_PORT, unrelated. Enablement is env-var
+      presence only (gateway/config.py:1867-1871); no config.yaml block is required.
+      *** SHE ONCE RAN AS TDI'S BOT — THIS IS WHY THE SETUP REFUSES SHARED TOKENS. ***
+      On 2026-08-04 her own gateway (profile dado, api_server 8647) connected to
+      Discord as **Aze#1753**, lost a token race to Aze's gateway ("Discord bot token
+      already in use (PID 17152)"), won it on retry 3, and served Rachad's DMs into
+      session agent:main:discord:dm:1530608805388353686. Cause: her .env had NO
+      DISCORD_BOT_TOKEN, and hermes DELIBERATELY does not scrub credential keys from
+      os.environ (hermes_cli/env_loader.py). The fix is that her .env now sets it
+      EXPLICITLY — profile .env loads with override=True (env_loader.py:488), so hers
+      beats anything inherited. SET_DADO_DISCORD_TOKEN.bat additionally REFUSES a
+      token whose sha256[:16] matches a gateway lock owned by another profile
+      (gateway/status.py:279-284, lock dir ~\.local\state\hermes\gateway-locks) —
+      a hash match is a positive identification of a shared bot, not a guess.
+      Files: SET_DADO_DISCORD_TOKEN.bat + Dado\Tools\setup\SET_DADO_DISCORD_TOKEN.ps1,
+      CHECK_DADO_DISCORD.bat + Dado\Tools\discord\dado_discord_check.py (asks Discord
+      GET /users/@me which bot she actually is), OPEN_DADO_DISCORD_SETUP.bat +
+      Dado\Tools\discord\DISCORD_SETUP.txt (9 numbered steps with CHECKs).
+      IDENTITY IS PINNED, NOT NARRATED. The lock check alone is not enough — it only
+      fires while the OTHER gateway is running, so with Aze's gateway stopped her
+      token would have sailed through. So the setter now asks Discord /users/@me
+      itself, refuses a bot named like Aze, requires Rachad's own typed YES, and
+      records DISCORD_EXPECTED_BOT_ID; the check tool FAILS on a mismatch instead of
+      printing ALL CLEAR. CHECK_DADO_DISCORD.bat also distinguishes exit 2
+      ("CHECK INCOMPLETE" — something unproven, usually she is not running) from a
+      pass, because reporting unproven as PASSED is the same false comfort as the
+      stale status line.
+      TWO SETUP-GUIDE FACTS CORRECTED AGAINST THE ADAPTER, not the vendor docs:
+      (a) MESSAGE CONTENT INTENT missing means she NEVER COMES ONLINE — the adapter
+      sets `intents.message_content = True` unconditionally, so Discord refuses the
+      connection; she does not appear online-but-silent. (b) SERVER MEMBERS INTENT is
+      NOT required here: the adapter requests it only when the allowlist holds a
+      non-numeric entry or a role, and Rachad's is a numeric user id. (c) The server
+      invite is MANDATORY even for DM-only use — Discord will not open a DM with a
+      bot you share no guild with — and the invite needs Send Messages, not just the
+      OAuth scopes.
+      DELIBERATE: no DISCORD_HOME_CHANNEL. Proactive output (inbox watch, follow-up
+      digest, job watch, conduct review, urgent alerts) stays on TELEGRAM so nothing
+      is duplicated; Discord is a lane he asks on. SOUL gained a "## YOUR TWO LANES"
+      section (synced to the live profile).
+      *** gateway_state.json LIES BY OMISSION — do not trust it raw. *** Per-platform
+      entries are NEVER cleared. Hers still claimed discord "connected" from
+      2026-08-04 on a gateway started 2026-08-10, and whatsapp "fatal" from a config
+      she no longer has. Both the check tool and the lane-health watcher compare every
+      entry against the gateway's own start_time (which is psutil create_time in
+      CENTISECONDS — divide by 100) and treat anything older as ABSENT, never as truth.
+- [x] BROWSER LANE LOCK (2026-08-10, shipped with the Discord lane — the one
+      DATA-CORRUPTING risk a second lane creates). The authenticated UI sessions are
+      singletons: Zoho on CDP 9228, WordPress on 9229. The write tools do not launch a
+      browser — they attach with connect_over_cdp and drive an EXISTING tab
+      (wordpress_plugin_deployment_tool took contexts[0].pages[0] unfiltered;
+      zoho_inventory_classification_tool takes the first /app page and navigates it).
+      Two concurrent turns get THE SAME PAGE OBJECT, so a click landing after the
+      other lane navigated is a live business write on the wrong screen. The tools'
+      own replay locks are per PLAN and never contend across different plans.
+      Dado\Tools\common\ui_lane_lock.py: O_EXCL file lock per browser, PID-liveness
+      reclamation (not age alone — a browser write legitimately takes minutes),
+      release-only-what-we-own by pid+nonce, and RE-ENTRANT PER THREAD (not per
+      process — the gateway runs the lanes as threads, so a process-wide counter
+      would let the second lane walk straight through; a test pins this).
+      Wired via decorators so the commissioned bodies stay byte-identical:
+      classification commit_create/commit_assign, and WordPress commit_replace/
+      commit_activate/commit_deactivate plus admin_session() itself. The command-level
+      hold is deliberate — activation closes its session before its emergency
+      rollback re-opens one, and the hold must span that gap.
+      ACQUIRED BEFORE THE PLAN'S REPLAY LOCK, always: a busy browser must be a FREE
+      refusal, never a mid-write abort that permanently locks Rachad's plan.
+      NOT a wall — it removes no capability. TOOL_VERSION deliberately NOT bumped:
+      the recorded PREFLIGHT EVIDENCE carries `tool_version` and the commit path
+      refuses evidence whose version does not match the running build, so bumping
+      it would invalidate the fresh three-rehearsal preflight a staged activation
+      depends on. (Prefer symbol names over line numbers when citing this file —
+      any edit above a cited line silently makes the citation wrong.)
+      *** THE EXCLUSION IS A WINDOWS NAMED MUTEX, NOT A LOCK FILE. *** The first
+      cut used an O_EXCL file with PID-liveness reclaim; an adversarial review
+      REPRODUCED two defects in it with real subprocesses: (1) reclaim was
+      check-then-act, so a stalled process could unlink the NEW holder's lock and
+      both ran at once (measured: 9 seconds of overlap); (2) a hard-killed holder
+      whose PID was later reused wedged the lane permanently, and the documented
+      HARD_STALE backstop was never consulted on the acquire path. The kernel
+      object has neither failure mode — acquisition is atomic, and a dead holder
+      either releases (WAIT_ABANDONED) or takes the object with it. The JSON file
+      beside it is now PURELY INFORMATIONAL (who/why, for the refusal message);
+      it never grants or denies. The mutex name includes a hash of LOCK_DIR so a
+      test run cannot contend with the live browser — and BOTH commissioned
+      suites now redirect LOCK_DIR in setUpModule, because before that the Zoho
+      suite took the real lock 25x per run and WooCommerce 98x.
+      Tests: 19 (test_ui_lane_lock.py) covering cross-thread AND cross-process
+      exclusion plus the killed-holder case; Zoho 476 pass, WooCommerce 561 pass /
+      1 PHP-only skip.
+- [x] CHAT-LANE HEALTH WATCHER (2026-08-10). THE WATCHDOG WAS BLIND TO CHAT: it
+      treats a listener on 8647 as liveness, but that is API_SERVER_PORT, and hermes
+      keeps the gateway UP when a chat adapter fails — her own log shows Discord down
+      ~90s on 2026-08-04 with everything reporting healthy. That is the 2026-07-25
+      shape, and two lanes make it worse (the surviving lane hides the dead one).
+      Dado\Tools\watch\dado_lane_health.py: for every chat lane whose token is
+      actually configured, is it connected on THIS gateway run? Silent when healthy,
+      out-of-band Telegram alert via dado_urgent_alert.py when not, respects
+      gateway_disabled.flag, and NEVER restarts anything (a restart kills in-flight
+      turns). Called from dado_gateway_watchdog.ps1 on the port-is-up path, wrapped so
+      a broken checker cannot take down the keep-alive; -WhatIfOnly passes --dry-run
+      through so the rehearsal switch stays a real rehearsal.
+      THREE PAGING RULES, each one a defect an adversarial review caught before it
+      ever fired: (1) TWO consecutive bad samples before paging — hermes reconnects
+      on its own (Discord retries at +30s) and a single sample would page Rachad for
+      something already fixing itself. (2) A credential whose .env mtime is NEWER
+      than the gateway's start_time means "configured, awaiting restart", NOT down —
+      without this the documented setup order guaranteed a false "DISCORD LANE IS
+      DOWN" page in the window between step 5 (write token) and step 7 (restart).
+      A lane the gateway DID report as broken is still reported in that window.
+      (3) --clear is called ONLY after we actually alerted: dado_urgent_alert --clear
+      also deletes the SHARED last-resort Desktop marker, so calling it on every
+      healthy 5-minute run would quietly erase the marker left by a real
+      gateway-down alert. Alert text also branches — a `fatal` lane (e.g. token held
+      by another gateway) is told NOT to just restart, because a restart cannot fix
+      it and would end whatever is running on the surviving lane.
+      Tests: 33, all passing.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 

@@ -71,6 +71,57 @@ Schema 3 waits for that ONE proven transition, and for nothing else:
 
 Schema-1 and schema-2 plans are both permanently unusable and are refused before
 any vault or network access even if their hash is recomputed.
+
+*** SCHEMA 4 (2026-08-10) -- THE PENDING BASELINE. ***
+Schema 3 assumed the settled value is the only lawful before-state, and refused to
+stage anything else. That assumption produced a DEADLOCK, reproduced live on
+/products/1455/variations/1457: the entry sits at the PENDING digest and stays
+there -- monitors saw it long after the 90-second transient window, and the six
+next blank FRP Pipe candidates were in the same state. An untouched variation can
+rest at that value indefinitely, because nothing is going to move it until the
+product is updated; schema 3 demanded a move before it would allow the update.
+
+Schema 4 repairs the verifier by adding a SECOND closed baseline, and nothing else:
+
+  * BASELINE MODES are a closed enum decided by SOURCE from the value-free
+    projection: "absent" (no Google-sync entry -- no wait ever applies),
+    "settled_baseline" (exactly the schema-3 path, unchanged) and
+    "pending_baseline" (exactly the one already-proven transient digest). Any
+    third value, a duplicate entry, a malformed entry or an entry with no stable
+    numeric id still REFUSES staging.
+  * NO INPUT CAN CHOOSE. The mode is never read from a request, and it is never
+    trusted as stored: load_plan RE-DERIVES it from the plan's own hashed
+    projection, so a rehashed edit cannot flip a target into another mode.
+  * A PENDING BASELINE MUST BE PROVEN STILL. Staging takes the first read, then
+    two more fresh GETs of the same exact resource on a fixed 2s/4s schedule
+    (6-second ceiling, owned by source). All three observations must agree on the
+    shipping class, date_modified_gmt, the aggregate fingerprint, every per-field
+    fingerprint, the complete metadata projection, and the one sound
+    `_wc_gla_sync_status` entry at the exact pending digest with a stable numeric
+    id. Any disagreement refuses staging and writes no plan at all.
+  * COMMIT RE-PROVES IT. Before the one PUT, the fresh pre-write read must still
+    carry the whole staged baseline AND the same mode, entry index, entry id and
+    value digest.
+  * AFTER THE WRITE, a pending baseline has exactly two successful shapes:
+      - the complete protected state is still exactly the staged pending state.
+        That is success IMMEDIATELY: the write moved nothing protected, and
+        waiting for settlement to call an unchanged state successful would be
+        inventing a requirement.
+      - the ONLY movement is that same entry, same id, same index, same count and
+        order, from the fixed pending digest to the fixed settled digest -- the
+        reverse half of the convergence schema 3 already proved. That is not
+        accepted on sight: a fixed 2s/4s confirmation (6-second ceiling) must show
+        the complete settled state, unchanged, on every observation.
+    Anything else -- any other value, any other protected field, any metadata
+    add/remove/reorder/identity change, a shipping-class drift, a GET error, a
+    timeout or any instability -- locks the plan indeterminate. No retry, no
+    rollback, no second PUT.
+  * The settled-baseline path is untouched: same detector, same fixed 90-second
+    schedule, same "the transient is never success" rule.
+
+Schema-1, schema-2 and schema-3 plans are all permanently unusable and are refused
+before any vault or network access even if their hash is recomputed. Existing
+commit locks remain authoritative.
 """
 from __future__ import annotations
 
@@ -90,8 +141,8 @@ from typing import Any
 import woocommerce_common as wc
 
 TOOL_NAME = "FRP Depot WooCommerce Approved Shipping-Policy Tool"
-SCHEMA_VERSION = 3
-TOOL_VERSION = "3.0.0"
+SCHEMA_VERSION = 4
+TOOL_VERSION = "4.0.0"
 EXACT_ORIGIN = "https://frpdepots.com:443"
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "woocommerce_shipping_plans"
@@ -185,6 +236,70 @@ CONVERGENCE_ALLOWED_CHANGED_FIELDS = (META_FIELD,)
 
 # Per-target eligibility, decided at staging from the value-free projection.
 GLA_ELIGIBILITY_FIELD = "gla_convergence_eligible"
+
+# --- The CLOSED baseline modes (schema 4) ----------------------------------
+# Which of the two proven Google-sync states a target rests in. A closed enum,
+# decided by SOURCE from the value-free projection, never supplied by a request
+# and never trusted as stored -- load_plan re-derives it from the plan's own
+# hashed projection, so a rehashed edit cannot flip a target into another mode.
+#
+# The two live values behind these modes are the strings "synced" and "pending".
+# The mode names are DELIBERATELY not either of those words on their own: a leak
+# check has to be able to tell "the tool named its own mode" from "the tool echoed
+# a value it read", and a bare "pending" in a plan would be indistinguishable from
+# the real metadata value. Compound tokens stay strippable; bare ones would not.
+BASELINE_ABSENT = "absent"                 # No entry at all. No wait ever applies.
+BASELINE_SETTLED = "settled_baseline"      # Exactly the schema-3 path, unchanged.
+BASELINE_PENDING = "pending_baseline"      # The one already-proven pending digest.
+BASELINE_MODES = (BASELINE_ABSENT, BASELINE_SETTLED, BASELINE_PENDING)
+GLA_BASELINE_MODE_FIELD = "gla_baseline_mode"
+
+# The one digest each waitable mode is allowed to rest at. There is no third
+# entry here and no way to add one from outside this module.
+BASELINE_VALUE_SHA256 = {
+    BASELINE_SETTLED: GLA_STAGED_VALUE_SHA256,
+    BASELINE_PENDING: GLA_TRANSIENT_VALUE_SHA256,
+}
+
+# A pending before-state is only honest if it is STILL. Staging takes the first
+# read and then two more fresh GETs of the same exact resource on this fixed
+# front-loaded schedule. Short on purpose: this runs inside Rachad's staging
+# command, and the point is to catch a resource mid-flight, not to outwait one.
+PENDING_STABILITY_SCHEDULE_SECONDS = (2, 4)
+PENDING_STABILITY_MAX_SECONDS = sum(PENDING_STABILITY_SCHEDULE_SECONDS)
+PENDING_STABILITY_CEILING_SECONDS = 6
+PENDING_STABILITY_OBSERVATIONS = 1 + len(PENDING_STABILITY_SCHEDULE_SECONDS)
+# The ceiling above bounds the SCHEDULE, which is the only thing this tool paces.
+# Measured elapsed time also contains the store's own answer time for the extra
+# reads, which this tool does not control; it is bounded by the transport timeout
+# per read rather than by the schedule, and it is recorded, never relied upon.
+WOO_READ_TIMEOUT_SECONDS = 60
+PENDING_STABILITY_ELAPSED_LIMIT_SECONDS = (
+    PENDING_STABILITY_MAX_SECONDS
+    + WOO_READ_TIMEOUT_SECONDS * len(PENDING_STABILITY_SCHEDULE_SECONDS)
+)
+
+# After a write against a pending baseline, the settled digest coming back is the
+# reverse half of the proven convergence -- but it is not accepted on sight. This
+# fixed schedule must show the complete settled state, unchanged, every time.
+PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS = (2, 4)
+PENDING_SETTLE_CONFIRM_MAX_SECONDS = sum(PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS)
+PENDING_SETTLE_CONFIRM_CEILING_SECONDS = 6
+PENDING_SETTLE_CONFIRM_OBSERVATIONS = len(PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS)
+
+# What a pending baseline is allowed to end as, in fixed vocabulary.
+PENDING_FINAL_REQUIREMENT = "exact_staged_pending_state_or_confirmed_settled_state"
+PENDING_UNCHANGED_FINAL_STATE = "exact_staged_pending_state"
+PENDING_SETTLED_FINAL_STATE = "confirmed_stable_settled_state"
+PENDING_CONFIRM_PHASE = "pending_settle_confirmation"
+
+# The closed shape of the per-target stability evidence a plan may carry. Hashes,
+# indexes, counts and seconds only -- never a metadata value.
+PENDING_STABILITY_KEYS = frozenset({
+    "mode", "observations", "schedule_seconds", "max_seconds", "elapsed_seconds",
+    "value_sha256", "meta_entry_index", "meta_entry_id", "stable",
+})
+GLA_STABILITY_FIELD = "gla_pending_stability"
 
 
 class ShippingPolicyError(RuntimeError):
@@ -280,6 +395,18 @@ def convergence_contract() -> dict[str, Any]:
         "max_seconds": CONVERGENCE_MAX_SECONDS,
         "final_requirement": CONVERGENCE_FINAL_REQUIREMENT,
         "allowed_changed_protected_fields_during_wait": list(CONVERGENCE_ALLOWED_CHANGED_FIELDS),
+        # Schema 4. The pending baseline reuses the SAME two digests -- it adds no
+        # third state, only a second lawful before-state and the bounded proofs
+        # that make it honest.
+        "baseline_modes": list(BASELINE_MODES),
+        "settled_baseline_value_sha256": GLA_STAGED_VALUE_SHA256,
+        "pending_baseline_value_sha256": GLA_TRANSIENT_VALUE_SHA256,
+        "pending_stability_schedule_seconds": list(PENDING_STABILITY_SCHEDULE_SECONDS),
+        "pending_stability_max_seconds": PENDING_STABILITY_MAX_SECONDS,
+        "pending_settle_confirm_schedule_seconds":
+            list(PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS),
+        "pending_settle_confirm_max_seconds": PENDING_SETTLE_CONFIRM_MAX_SECONDS,
+        "pending_final_requirement": PENDING_FINAL_REQUIREMENT,
     }
 
 
@@ -295,6 +422,37 @@ def _exact_int(value: Any) -> bool:
     return isinstance(value, int) and not isinstance(value, bool)
 
 
+def _validate_fixed_schedule(raw: dict[str, Any], schedule_key: str, max_key: str,
+                             fixed: tuple[int, ...], ceiling: int) -> None:
+    """One bounded, ordered, integer schedule that totals its own declared max.
+
+    Applied identically to all three fixed schedules, so none of them can be
+    widened, re-ordered, floated or decoupled from its own ceiling.
+    """
+    schedule = raw[schedule_key]
+    if not isinstance(schedule, list) or len(schedule) != len(fixed):
+        raise ShippingPolicyError(
+            f"REFUSED: convergence_contract.{schedule_key} is not the fixed schedule."
+        )
+    if not all(_exact_int(step) and step > 0 for step in schedule):
+        raise ShippingPolicyError(
+            f"REFUSED: convergence_contract.{schedule_key} must be positive integers."
+        )
+    if not _exact_int(raw[max_key]):
+        raise ShippingPolicyError(
+            f"REFUSED: convergence_contract.{max_key} must be an integer."
+        )
+    if sum(schedule) != raw[max_key]:
+        raise ShippingPolicyError(
+            f"REFUSED: convergence_contract.{max_key} is not the exact schedule total."
+        )
+    if raw[max_key] > ceiling:
+        raise ShippingPolicyError(
+            f"REFUSED: convergence_contract.{max_key} exceeds the fixed "
+            f"{ceiling}-second ceiling."
+        )
+
+
 def validate_convergence_contract(raw: Any) -> dict[str, Any]:
     """Exact semantic validation of a plan's contract. Closed, ordered, typed."""
     fixed = convergence_contract()
@@ -305,29 +463,18 @@ def validate_convergence_contract(raw: Any) -> dict[str, Any]:
             f"REFUSED: convergence_contract must carry exactly the {len(fixed)} fixed "
             "fields. An extra, missing or renamed field is refused."
         )
-    schedule = raw["schedule_seconds"]
-    if not isinstance(schedule, list) or len(schedule) != len(CONVERGENCE_SCHEDULE_SECONDS):
-        raise ShippingPolicyError(
-            "REFUSED: convergence_contract.schedule_seconds is not the fixed schedule."
-        )
-    if not all(_exact_int(step) and step > 0 for step in schedule):
-        raise ShippingPolicyError(
-            "REFUSED: convergence_contract.schedule_seconds must be positive integers."
-        )
-    if not _exact_int(raw["max_seconds"]):
-        raise ShippingPolicyError(
-            "REFUSED: convergence_contract.max_seconds must be an integer."
-        )
-    if sum(schedule) != raw["max_seconds"]:
-        raise ShippingPolicyError(
-            "REFUSED: convergence_contract.max_seconds is not the exact schedule total."
-        )
-    if raw["max_seconds"] > CONVERGENCE_CEILING_SECONDS:
-        raise ShippingPolicyError(
-            f"REFUSED: convergence_contract exceeds the fixed "
-            f"{CONVERGENCE_CEILING_SECONDS}-second ceiling."
-        )
-    for field in ("staged_value_sha256", "transient_value_sha256"):
+    _validate_fixed_schedule(raw, "schedule_seconds", "max_seconds",
+                             CONVERGENCE_SCHEDULE_SECONDS, CONVERGENCE_CEILING_SECONDS)
+    _validate_fixed_schedule(raw, "pending_stability_schedule_seconds",
+                             "pending_stability_max_seconds",
+                             PENDING_STABILITY_SCHEDULE_SECONDS,
+                             PENDING_STABILITY_CEILING_SECONDS)
+    _validate_fixed_schedule(raw, "pending_settle_confirm_schedule_seconds",
+                             "pending_settle_confirm_max_seconds",
+                             PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS,
+                             PENDING_SETTLE_CONFIRM_CEILING_SECONDS)
+    for field in ("staged_value_sha256", "transient_value_sha256",
+                  "settled_baseline_value_sha256", "pending_baseline_value_sha256"):
         clean_digest(raw[field], f"convergence_contract.{field}")
     for field, value in fixed.items():
         # Order matters for the schedule, so this is list equality, not a set.
@@ -614,38 +761,24 @@ def validate_meta_projection(raw: Any, label: str) -> list[dict[str, Any]]:
     return list(raw)
 
 
-def gla_convergence_eligible(projection: list[dict[str, Any]]) -> bool:
-    """Is this resource's Google-sync flag settled enough to plan a write against?
-
-    Decided from the value-free projection alone, so it can be recomputed at commit
-    from the plan's own evidence rather than trusted as a stored boolean.
-
-    True  -- exactly one sound `_wc_gla_sync_status` entry, already at the
-             contract's staged value digest. Only such a target may ever use the
-             bounded wait.
-    False -- the key is absent. An ordinary resource Google does not track; the
-             wait simply never applies to it.
-    REFUSED -- the key appears more than once, is malformed, or holds any other
-             value (including the transient one). Rachad must never be asked to
-             approve a plan built while Google sync is unsettled: the staged
-             "before" state would be a moving target, and the detector below
-             could not tell a settling sync from a real third-party edit.
+def gla_baseline_row(projection: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The one sound `_wc_gla_sync_status` projection row, or None if absent.
 
     Entries are matched by key DIGEST, not by the printable key, so an entry that
     carries this key beside an unsound id cannot slip past as "not found".
     """
     rows = [row for row in projection if row["key_sha256"] == GLA_META_KEY_SHA256]
     if not rows:
-        return False
+        return None
     if len(rows) > 1:
         raise ShippingPolicyError(
             f"REFUSED: {GLA_META_KEY} appears {len(rows)} times in this resource's "
-            "metadata. One settled entry is required; stage nothing against it."
+            "metadata. Exactly one entry is required; stage nothing against it."
         )
     row = rows[0]
-    # A stable numeric id is required as well as a sound shape: the detector below
-    # tracks this entry across fresh reads by id, so an entry it cannot identify
-    # could never be followed anyway.
+    # A stable numeric id is required as well as a sound shape: the detectors below
+    # track this entry across fresh reads by id, so an entry that cannot be
+    # identified could never be followed anyway.
     if row["shape"] != "entry" or row["key"] != GLA_META_KEY or \
             not _exact_int(row["id"]) or row["id"] < 0:
         raise ShippingPolicyError(
@@ -653,14 +786,124 @@ def gla_convergence_eligible(projection: list[dict[str, Any]]) -> bool:
             "stable numeric id, so its state cannot be established. Stage nothing "
             "against this resource."
         )
-    if row["value_sha256"] == GLA_STAGED_VALUE_SHA256:
-        return True
+    return row
+
+
+def gla_baseline_mode(projection: list[dict[str, Any]]) -> str:
+    """Which CLOSED baseline this resource's Google-sync flag rests in.
+
+    Decided from the value-free projection alone, so it can be recomputed at commit
+    from the plan's own evidence rather than trusted as a stored string.
+
+    "absent"           -- no `_wc_gla_sync_status` entry. An ordinary resource
+                          Google does not track; neither wait applies to it.
+    "settled_baseline" -- exactly one sound entry at the contract's settled digest.
+                          This is the schema-3 path, unchanged in every respect.
+    "pending_baseline" -- exactly one sound entry at the contract's pending digest.
+                          Schema 3 refused this outright, which deadlocked every
+                          resource resting there; schema 4 accepts it only after a
+                          bounded stability proof.
+    REFUSED            -- the key appears more than once, is malformed, carries no
+                          stable numeric id, or holds ANY value other than those
+                          two proven ones. A third value is a state nobody has
+                          diagnosed: the detectors could not tell it from a real
+                          third-party edit, so nothing is staged.
+    """
+    row = gla_baseline_row(projection)
+    if row is None:
+        return BASELINE_ABSENT
+    for mode, digest in BASELINE_VALUE_SHA256.items():
+        if row["value_sha256"] == digest:
+            return mode
+    # The two baselines are named by their MODE tokens, never by the live words
+    # they stand for: an error message is output, and output must stay value-free.
     raise ShippingPolicyError(
-        f"REFUSED: the {GLA_META_KEY} entry does not hold the contract's staged "
-        f"value digest ({GLA_STAGED_VALUE_SHA256[:16]}...), so Google sync is "
-        "unsettled on this resource right now. Wait for it to settle and stage "
-        "again; do not ask Rachad to approve a moving before-state."
+        f"REFUSED: the {GLA_META_KEY} entry matches neither the {BASELINE_SETTLED} "
+        f"digest ({GLA_STAGED_VALUE_SHA256[:16]}...) nor the {BASELINE_PENDING} digest "
+        f"({GLA_TRANSIENT_VALUE_SHA256[:16]}...). That is a Google-sync state this "
+        "tool has never diagnosed, so it cannot tell it from a third-party edit. "
+        "Stage nothing against this resource."
     )
+
+
+def gla_convergence_eligible(projection: list[dict[str, Any]]) -> bool:
+    """True only for the SETTLED baseline -- the schema-3 wait's own precondition.
+
+    Kept as its own name because the settled path reads exactly this and nothing
+    else, so schema 4 cannot widen that path by accident.
+    """
+    return gla_baseline_mode(projection) == BASELINE_SETTLED
+
+
+def baseline_snapshot(record: dict[str, Any]) -> dict[str, Any]:
+    """Everything an observation of one resource must hold still, value-free.
+
+    date_modified_gmt is INCLUDED here, unlike protected_fingerprint: a stability
+    proof is asking "is anything happening to this resource right now", and the
+    modification stamp is the store's own answer to that.
+    """
+    return {
+        "shipping_class": str(record.get("shipping_class") or ""),
+        "date_modified_gmt": str(record.get("date_modified_gmt") or ""),
+        "protected_fingerprint": protected_fingerprint(record),
+        "protected_field_fingerprints": protected_field_fingerprints(record),
+        "meta_data_projection": metadata_projection(record),
+    }
+
+
+def validate_pending_stability(raw: Any, mode: str, projection: list[dict[str, Any]],
+                               label: str) -> None:
+    """Re-validate the stability evidence a plan carries. Closed, and re-derived.
+
+    Only a pending baseline may carry evidence, and every field of it except the
+    measured elapsed time is recomputed from source constants and from the plan's
+    own hashed projection -- so a rehashed edit can neither invent a proof nor
+    change what the proof claims.
+    """
+    if mode != BASELINE_PENDING:
+        if raw is not None:
+            raise ShippingPolicyError(
+                f"{label} must be null: only a {BASELINE_PENDING} target carries a "
+                "stability proof."
+            )
+        return
+    if not isinstance(raw, dict) or set(raw) != PENDING_STABILITY_KEYS:
+        raise ShippingPolicyError(f"{label} has an unexpected shape.")
+    row = gla_baseline_row(projection)
+    if row is None:
+        raise ShippingPolicyError(f"{label} has no Google-sync entry to stand on.")
+    expected = {
+        "mode": BASELINE_PENDING,
+        "observations": PENDING_STABILITY_OBSERVATIONS,
+        "schedule_seconds": list(PENDING_STABILITY_SCHEDULE_SECONDS),
+        "max_seconds": PENDING_STABILITY_MAX_SECONDS,
+        "value_sha256": GLA_TRANSIENT_VALUE_SHA256,
+        "meta_entry_index": row["index"],
+        "meta_entry_id": row["id"],
+        "stable": True,
+    }
+    for field, value in expected.items():
+        if raw[field] != value or type(raw[field]) is not type(value):
+            raise ShippingPolicyError(
+                f"REFUSED: {label}.{field} is not the value this plan's own evidence "
+                "and this tool's fixed schedule produce."
+            )
+    # `[2.0, 4.0] == [2, 4]` in Python, so list equality alone would let a rehashed
+    # float schedule through -- the same trap _exact_int exists for.
+    if not all(_exact_int(step) for step in raw["schedule_seconds"]):
+        raise ShippingPolicyError(
+            f"REFUSED: {label}.schedule_seconds must be the fixed integer schedule."
+        )
+    elapsed = raw["elapsed_seconds"]
+    if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or \
+            elapsed < PENDING_STABILITY_MAX_SECONDS or \
+            elapsed > PENDING_STABILITY_ELAPSED_LIMIT_SECONDS:
+        raise ShippingPolicyError(
+            f"REFUSED: {label}.elapsed_seconds must be at least the fixed "
+            f"{PENDING_STABILITY_MAX_SECONDS}-second schedule and no more than "
+            f"{PENDING_STABILITY_ELAPSED_LIMIT_SECONDS} seconds. A proof that took "
+            "less time than its own schedule did not run it."
+        )
 
 
 def _meta_identity(row: dict[str, Any]) -> tuple[Any, str]:
@@ -833,25 +1076,27 @@ def matched_diagnostic(endpoint: str, phase: str, target: dict[str, Any],
     }
 
 
-def is_gla_sync_transient(target: dict[str, Any], diagnostic: dict[str, Any],
-                          shipping_class_matches: bool) -> bool:
-    """The ONE waitable mismatch, recognised exactly. Pure: no I/O, no clock.
+def _is_single_gla_value_move(diagnostic: dict[str, Any], shipping_class_matches: bool,
+                              before_sha256: str, after_sha256: str) -> bool:
+    """One `_wc_gla_sync_status` value move, between two FIXED digests, and nothing
+    else at all. Pure: no I/O, no clock.
 
     Every condition must hold. Anything else -- any other field, entry, identity,
     count, order, value, class or shape -- is an immediate permanent indeterminate
     mismatch, reported through the ordinary schema-2 bounded diagnostic.
 
-    This is not a tolerance. It recognises a state that is still WRONG; the caller
-    is only permitted to look again, within a fixed bound, for the complete staged
-    state to come back.
+    This is not a tolerance. It recognises one exactly-known movement; what the
+    caller may then do with it is decided by the caller's baseline, not here.
     """
+    # A malformed or absent bounded diagnostic can never prove a known movement.
+    # This predicate is deliberately pure and fail-closed: it returns False rather
+    # than raising before the caller records the ordinary protected-state mismatch.
+    if not isinstance(diagnostic, dict):
+        return False
     # 1. The approved class is already exactly in place.
     if not shipping_class_matches:
         return False
-    # 2. The target was staged with a settled, single, exact Google-sync entry.
-    if target.get(GLA_ELIGIBILITY_FIELD) is not True:
-        return False
-    # 3. meta_data is the only protected field that moved, and it really moved.
+    # 2. meta_data is the only protected field that moved, and it really moved.
     if diagnostic.get("changed_protected_fields") != list(CONVERGENCE_ALLOWED_CHANGED_FIELDS):
         return False
     fields = diagnostic.get("field_fingerprints")
@@ -902,14 +1147,45 @@ def is_gla_sync_transient(target: dict[str, Any], diagnostic: dict[str, Any],
         return False
     if row.get("key") != GLA_META_KEY or row.get("key_sha256") != GLA_META_KEY_SHA256:
         return False
-    # 8. Exactly the staged digest before, exactly the transient digest after.
-    if row.get("staged_value_sha256") != GLA_STAGED_VALUE_SHA256:
+    # 8. Exactly the caller's fixed digest before, exactly its fixed digest after.
+    if row.get("staged_value_sha256") != before_sha256:
         return False
-    if row.get("readback_value_sha256") != GLA_TRANSIENT_VALUE_SHA256:
+    if row.get("readback_value_sha256") != after_sha256:
         return False
     if row.get("value_differs") is not True:
         return False
     return row.get("staged_entry_sha256") != row.get("readback_entry_sha256")
+
+
+def is_gla_sync_transient(target: dict[str, Any], diagnostic: dict[str, Any],
+                          shipping_class_matches: bool) -> bool:
+    """The SETTLED baseline's one waitable mismatch: settled -> pending.
+
+    Unchanged from schema 3, down to its precondition: only a target staged with a
+    settled, single, exact Google-sync entry can ever reach the 90-second wait.
+    """
+    if target.get(GLA_ELIGIBILITY_FIELD) is not True:
+        return False
+    return _is_single_gla_value_move(diagnostic, shipping_class_matches,
+                                     GLA_STAGED_VALUE_SHA256, GLA_TRANSIENT_VALUE_SHA256)
+
+
+def is_gla_sync_settling(target: dict[str, Any], diagnostic: dict[str, Any],
+                         shipping_class_matches: bool) -> bool:
+    """The PENDING baseline's one acceptable movement: pending -> settled.
+
+    This is the reverse half of the convergence schema 3 already proved live. It is
+    still not success on its own -- the caller must confirm the settled state holds
+    across a fixed bounded schedule before anything is called committed.
+
+    Only a target whose plan re-derived the pending baseline can reach this, so a
+    settled-baseline target can never be settled-confirmed by mistake, and an
+    absent-baseline target can reach neither path.
+    """
+    if target.get(GLA_BASELINE_MODE_FIELD) != BASELINE_PENDING:
+        return False
+    return _is_single_gla_value_move(diagnostic, shipping_class_matches,
+                                     GLA_TRANSIENT_VALUE_SHA256, GLA_STAGED_VALUE_SHA256)
 
 
 def mismatch_message(diagnostic: dict[str, Any]) -> str:
@@ -927,6 +1203,18 @@ def mismatch_message(diagnostic: dict[str, Any]) -> str:
                     "the bounded Google-sync wait. Reconcile this resource.")
         return (f"{endpoint} protected state moved during the bounded Google-sync "
                 f"wait: {label}. Reconcile this resource.")
+    if diagnostic["phase"] == PENDING_CONFIRM_PHASE:
+        # Deliberately not built from `label`: when the resource falls BACK to the
+        # staged pending state nothing differs from the plan, so the field list is
+        # empty and would read as "unidentified" rather than as the real answer.
+        if diagnostic.get("shipping_class_matches_plan") is False:
+            return (f"{endpoint} no longer carries the approved shipping class during "
+                    "the bounded settled-state confirmation. Reconcile this resource.")
+        return (f"{endpoint} did not hold one exact settled {GLA_META_KEY} state across "
+                f"the fixed {PENDING_SETTLE_CONFIRM_MAX_SECONDS}-second confirmation "
+                f"({PENDING_SETTLE_CONFIRM_OBSERVATIONS} read-only observations). The "
+                "assignment itself landed; nothing was retried, rolled back or written "
+                "again. Reconcile this resource.")
     return (f"{endpoint} protected readback mismatch: {label}. "
             "Reconcile this resource.")
 
@@ -942,6 +1230,97 @@ def read_target(target: dict[str, Any], vault: dict[str, Any] | None = None) -> 
     if target["kind"] == "variation" and int(record.get("parent_id") or 0) != int(target["product_id"]):
         raise ShippingPolicyError(f"{endpoint} is not a child of the enumerated parent product.")
     return record
+
+
+def prove_pending_baseline_stable(target: dict[str, Any], first_record: dict[str, Any],
+                                  vault: dict[str, Any] | None = None) -> dict[str, Any]:
+    """Bounded, READ-ONLY proof that a pending before-state is actually STILL.
+
+    Schema 3 refused a pending baseline outright because a state that is mid-flight
+    is a moving before-state, and Rachad must never approve one of those. That
+    reasoning is right; the mistake was concluding that every pending state is
+    mid-flight. Live evidence says otherwise: an untouched variation rests at the
+    pending digest indefinitely, long past the 90-second transient window.
+
+    So the refusal is replaced by a measurement, not by an assumption. The first
+    read is the one staging already took; two more fresh GETs of the SAME exact
+    resource follow on the fixed 2s/4s schedule, and all three observations must
+    agree on every one of: the shipping class, date_modified_gmt, the aggregate
+    protected fingerprint, every per-field fingerprint, the complete metadata
+    projection, and the single sound `_wc_gla_sync_status` entry -- same stable
+    numeric id, same index, exactly the pending digest.
+
+    Any disagreement REFUSES staging and no plan is written. Nothing is written to
+    the store on any path through this function.
+    """
+    endpoint = target_endpoint(target)
+    baseline = baseline_snapshot(first_record)
+    if gla_baseline_mode(baseline["meta_data_projection"]) != BASELINE_PENDING:
+        raise ShippingPolicyError(
+            f"REFUSED: {endpoint} is not at the {BASELINE_PENDING}; no stability proof "
+            "applies to it."
+        )
+    started = monotonic()
+    observations = 1
+    for wait_seconds in PENDING_STABILITY_SCHEDULE_SECONDS:
+        sleep(wait_seconds)
+        record = read_target(target, vault)
+        observations += 1
+        again = baseline_snapshot(record)
+        if again != baseline or \
+                gla_baseline_mode(again["meta_data_projection"]) != BASELINE_PENDING:
+            raise ShippingPolicyError(
+                f"REFUSED: {endpoint} did not hold one exact state across "
+                f"{PENDING_STABILITY_OBSERVATIONS} fresh read-only observations over "
+                f"{PENDING_STABILITY_MAX_SECONDS} seconds, so its {GLA_META_KEY} state "
+                "is moving right now and its before-state cannot be staged honestly. "
+                "Nothing was written and no plan was created; try again once the "
+                "resource is quiet."
+            )
+    row = gla_baseline_row(baseline["meta_data_projection"])
+    return {
+        "mode": BASELINE_PENDING,
+        "observations": observations,
+        "schedule_seconds": list(PENDING_STABILITY_SCHEDULE_SECONDS),
+        "max_seconds": PENDING_STABILITY_MAX_SECONDS,
+        "elapsed_seconds": _elapsed_since(started),
+        "value_sha256": GLA_TRANSIENT_VALUE_SHA256,
+        "meta_entry_index": row["index"],
+        "meta_entry_id": row["id"],
+        "stable": True,
+    }
+
+
+def prove_staged_baseline_live(target: dict[str, Any], record: dict[str, Any],
+                               endpoint: str) -> str:
+    """Re-prove the plan's whole baseline against ONE fresh read, before the PUT.
+
+    The pre-write projection comparison already implies most of this, but the
+    baseline is the thing the post-write branch dispatches on, so it is proven
+    explicitly and freshly rather than inferred. Returns the proven mode.
+    """
+    mode = target[GLA_BASELINE_MODE_FIELD]
+    live_projection = metadata_projection(record)
+    live_mode = gla_baseline_mode(live_projection)
+    if live_mode != mode:
+        raise ShippingPolicyError(
+            f"{endpoint} is no longer at the {mode} {GLA_META_KEY} baseline this plan "
+            "was staged against. Nothing was written to this resource; stage a new plan."
+        )
+    if mode == BASELINE_ABSENT:
+        return mode
+    live_row = gla_baseline_row(live_projection)
+    staged_row = gla_baseline_row(target["before_meta_data_projection"])
+    if staged_row is None or live_row is None or \
+            live_row["index"] != staged_row["index"] or \
+            live_row["id"] != staged_row["id"] or \
+            live_row["value_sha256"] != BASELINE_VALUE_SHA256[mode]:
+        raise ShippingPolicyError(
+            f"{endpoint} {GLA_META_KEY} entry moved its index, its id or its value "
+            "since this plan was staged. Nothing was written to this resource; stage "
+            "a new plan."
+        )
+    return mode
 
 
 def find_freight_class(vault: dict[str, Any] | None = None) -> dict[str, Any] | None:
@@ -1067,10 +1446,18 @@ def command_stage(args: argparse.Namespace) -> None:
             target["before_date_modified_gmt"] = str(record.get("date_modified_gmt") or "")
             target["before_protected_field_fingerprints"] = protected_field_fingerprints(record)
             target["before_meta_data_projection"] = metadata_projection(record)
-            # Refuses here, before Rachad ever sees a plan, if Google sync is
-            # unsettled on this resource. Names eligibility only -- never a value.
-            target[GLA_ELIGIBILITY_FIELD] = gla_convergence_eligible(
-                target["before_meta_data_projection"])
+            # Refuses here, before Rachad ever sees a plan, if the Google-sync entry
+            # is duplicated, malformed, unidentifiable or at a state nobody has
+            # diagnosed. Names the closed mode only -- never a value.
+            mode = gla_baseline_mode(target["before_meta_data_projection"])
+            target[GLA_BASELINE_MODE_FIELD] = mode
+            target[GLA_ELIGIBILITY_FIELD] = mode == BASELINE_SETTLED
+            # A pending before-state is only staged once it has been MEASURED still.
+            # Read-only, bounded, and a refusal writes no plan at all.
+            target[GLA_STABILITY_FIELD] = (
+                prove_pending_baseline_stable(target, record)
+                if mode == BASELINE_PENDING else None
+            )
             preview.append({
                 "endpoint": target_endpoint(target),
                 "sku": str(record.get("sku") or ""),
@@ -1080,7 +1467,9 @@ def command_stage(args: argparse.Namespace) -> None:
                 "already_correct": current == desired,
                 "protected_fields_fingerprinted": len(PROTECTED_FIELDS),
                 "meta_data_entries_projected": len(target["before_meta_data_projection"]),
+                GLA_BASELINE_MODE_FIELD: mode,
                 GLA_ELIGIBILITY_FIELD: target[GLA_ELIGIBILITY_FIELD],
+                GLA_STABILITY_FIELD: target[GLA_STABILITY_FIELD],
             })
         if all(row["already_correct"] for row in preview):
             raise ShippingPolicyError("No change was detected: every target already matches.")
@@ -1101,6 +1490,9 @@ def command_stage(args: argparse.Namespace) -> None:
         "shipping_class_slug": FREIGHT_CLASS_SLUG,
         "convergence_contract": plan["convergence_contract"],
         "target_count": len(targets),
+        "baseline_modes": {mode: sum(1 for row in preview
+                                     if row.get(GLA_BASELINE_MODE_FIELD) == mode)
+                           for mode in BASELINE_MODES},
         "diagnostic_scope": diagnostic_scope,
         "scope_note": (
             "One target only: a diagnostic scope. It is the ordinary approved "
@@ -1130,8 +1522,10 @@ def load_plan(path: str) -> dict[str, Any]:
             "an aggregate protected fingerprint, so a mismatch could not name the field "
             "that moved. Schema-2 plans carry no convergence contract and no per-target "
             "Google-sync eligibility, so the bounded wait has no evidence to stand on. "
-            "Both are permanently unusable and rehashing one does not revive it. Stage a "
-            "new plan. Existing commit locks remain authoritative."
+            f"Schema-3 plans carry no baseline mode and no {GLA_STABILITY_FIELD} proof, "
+            f"so a {BASELINE_PENDING} before-state in one could never have been measured "
+            "still. All three are permanently unusable and rehashing one does not revive "
+            "it. Stage a new plan. Existing commit locks remain authoritative."
         )
     if plan.get("tool_version") != TOOL_VERSION:
         raise ShippingPolicyError(
@@ -1174,7 +1568,8 @@ def load_plan(path: str) -> dict[str, Any]:
             required = {"kind", "product_id", "variation_id", "before_shipping_class",
                         "before_stale_fingerprint", "before_protected_fingerprint",
                         "before_date_modified_gmt", "before_protected_field_fingerprints",
-                        "before_meta_data_projection", GLA_ELIGIBILITY_FIELD}
+                        "before_meta_data_projection", GLA_BASELINE_MODE_FIELD,
+                        GLA_ELIGIBILITY_FIELD, GLA_STABILITY_FIELD}
             if set(row) != required:
                 raise ShippingPolicyError(f"targets[{index}] has an unexpected shape.")
             # The aggregate fingerprint is never optional, and the per-field mapping
@@ -1191,20 +1586,36 @@ def load_plan(path: str) -> dict[str, Any]:
                 row["before_meta_data_projection"],
                 f"targets[{index}].before_meta_data_projection",
             )
-            # The eligibility flag is never trusted as stored. It is re-derived
-            # from the plan's own projection, so a rehashed plan cannot flip a
-            # resource into the bounded wait -- and an unsettled projection is
-            # refused here exactly as it would have been at staging.
+            # Neither the baseline mode nor the eligibility flag is trusted as
+            # stored. Both are RE-DERIVED from the plan's own hashed projection, so
+            # a rehashed plan cannot flip a resource into another mode or into the
+            # bounded wait -- and a duplicated, malformed or undiagnosed projection
+            # is refused here exactly as it would have been at staging.
+            mode = row[GLA_BASELINE_MODE_FIELD]
+            if mode not in BASELINE_MODES:
+                raise ShippingPolicyError(
+                    f"targets[{index}].{GLA_BASELINE_MODE_FIELD} is not one of the "
+                    f"closed baseline modes: {', '.join(BASELINE_MODES)}."
+                )
+            if mode != gla_baseline_mode(row["before_meta_data_projection"]):
+                raise ShippingPolicyError(
+                    f"targets[{index}].{GLA_BASELINE_MODE_FIELD} disagrees with this "
+                    "target's own metadata projection."
+                )
             eligible = row[GLA_ELIGIBILITY_FIELD]
             if not isinstance(eligible, bool):
                 raise ShippingPolicyError(
                     f"targets[{index}].{GLA_ELIGIBILITY_FIELD} must be true or false."
                 )
-            if eligible != gla_convergence_eligible(row["before_meta_data_projection"]):
+            if eligible != (mode == BASELINE_SETTLED):
                 raise ShippingPolicyError(
                     f"targets[{index}].{GLA_ELIGIBILITY_FIELD} disagrees with this "
-                    "target's own metadata projection."
+                    "target's own baseline mode."
                 )
+            validate_pending_stability(
+                row[GLA_STABILITY_FIELD], mode, row["before_meta_data_projection"],
+                f"targets[{index}].{GLA_STABILITY_FIELD}",
+            )
             base = {"kind": row["kind"], "product_id": row["product_id"]}
             if row["kind"] == "variation":
                 base["variation_id"] = row["variation_id"]
@@ -1307,6 +1718,55 @@ def _await_gla_convergence(target: dict[str, Any], endpoint: str, desired: str,
     )
 
 
+def _confirm_pending_settled(target: dict[str, Any], endpoint: str, desired: str,
+                             settled_record: dict[str, Any],
+                             vault: dict[str, Any]) -> dict[str, Any]:
+    """Bounded, READ-ONLY confirmation that a newly SETTLED state is holding.
+
+    Reached only when a pending-baseline write moved exactly one thing: the fixed
+    `_wc_gla_sync_status` entry, from the pending digest to the settled digest,
+    same id, same index, same count, same order, nothing else. That is the reverse
+    half of the convergence already proved live -- but it is a state change, so it
+    is not accepted on sight.
+
+    The post-write read becomes the expected state, and every observation on the
+    fixed 2s/4s schedule must reproduce it exactly: the shipping class,
+    date_modified_gmt, the aggregate fingerprint, every per-field fingerprint, the
+    complete projection, and the settled baseline itself. A resource that flips
+    back to pending, moves on to anything else, or errors, fails here -- the plan
+    locks indeterminate and nothing is retried, rolled back or written again.
+    """
+    expected = baseline_snapshot(settled_record)
+    started = monotonic()
+    observations = 0
+    for wait_seconds in PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS:
+        sleep(wait_seconds)
+        record = read_target(target, vault)
+        observations += 1
+        class_matches = str(record.get("shipping_class") or "") == desired
+        try:
+            observed = baseline_snapshot(record)
+            holding = class_matches and observed == expected and \
+                gla_baseline_mode(observed["meta_data_projection"]) == BASELINE_SETTLED
+        except ShippingPolicyError:
+            # An unreadable or undiagnosed metadata state is a failure, not a pass.
+            holding = False
+        if holding:
+            continue
+        detail = protected_diagnostic(endpoint, PENDING_CONFIRM_PHASE, target, record) \
+            or matched_diagnostic(endpoint, PENDING_CONFIRM_PHASE, target, record)
+        detail = {**detail, "shipping_class_matches_plan": class_matches}
+        raise ProtectedStateMismatch(mismatch_message(detail), detail)
+    return {
+        "convergence_used": True,
+        "convergence_attempts": observations,
+        "convergence_elapsed_seconds": _elapsed_since(started),
+        "convergence_meta_key": GLA_META_KEY,
+        "final_requirement": PENDING_FINAL_REQUIREMENT,
+        "final_state": PENDING_SETTLED_FINAL_STATE,
+    }
+
+
 def _commit_assignment(plan: dict[str, Any], vault: dict[str, Any],
                        lock: Path) -> list[dict[str, Any]]:
     desired = plan["payload"]["shipping_class"]
@@ -1333,10 +1793,13 @@ def _commit_assignment(plan: dict[str, Any], vault: dict[str, Any],
         pre_write = protected_diagnostic(endpoint, "pre_write", target, current)
         if pre_write is not None:
             raise ProtectedStateMismatch(mismatch_message(pre_write), pre_write)
+        # The whole staged baseline, re-proven on this fresh read, BEFORE the PUT.
+        # The post-write branch dispatches on it, so it is never inferred.
+        mode = prove_staged_baseline_live(target, current, endpoint)
         if str(current.get("shipping_class") or "") == desired:
             results.append({"endpoint": endpoint, "shipping_class": desired,
                             "written": False, "reason": "already correct",
-                            "convergence_used": False})
+                            "baseline_mode": mode, "convergence_used": False})
             continue
         attempted.append(endpoint)
         write_lock(lock, {
@@ -1354,9 +1817,28 @@ def _commit_assignment(plan: dict[str, Any], vault: dict[str, Any],
         # per-field hash and the metadata projection, and only EXPLAINS a failure.
         # Raising here stops the loop before any further target is touched.
         post_write = protected_diagnostic(endpoint, "post_write", target, readback)
+        row = {"endpoint": endpoint, "shipping_class": desired, "written": True,
+               "baseline_mode": mode}
         if post_write is None:
-            results.append({"endpoint": endpoint, "shipping_class": desired,
-                            "written": True, "convergence_used": False})
+            # The complete staged protected state, unchanged. That is success on
+            # ANY baseline, immediately. A pending baseline in particular must
+            # never wait for settlement merely to call an unchanged state
+            # successful -- the write moved nothing protected, and inventing a
+            # settlement requirement would fail correct work.
+            unchanged = {**row, "convergence_used": False}
+            if mode == BASELINE_PENDING:
+                unchanged["final_requirement"] = PENDING_FINAL_REQUIREMENT
+                unchanged["final_state"] = PENDING_UNCHANGED_FINAL_STATE
+            results.append(unchanged)
+            continue
+        if mode == BASELINE_PENDING:
+            # A pending baseline has exactly one other acceptable shape: the same
+            # entry moving on to the settled digest -- the reverse half of the
+            # proven convergence. It is confirmed, not assumed.
+            if not is_gla_sync_settling(target, post_write, True):
+                raise ProtectedStateMismatch(mismatch_message(post_write), post_write)
+            results.append({**row, **_confirm_pending_settled(
+                target, endpoint, desired, readback, vault)})
             continue
         if not is_gla_sync_transient(target, post_write, True):
             raise ProtectedStateMismatch(mismatch_message(post_write), post_write)
@@ -1364,8 +1846,7 @@ def _commit_assignment(plan: dict[str, Any], vault: dict[str, Any],
         # read-only and within a fixed bound, for the complete staged state. The
         # next target cannot start until this one is exact again -- a timeout or
         # any other movement raises out of this loop permanently.
-        results.append({"endpoint": endpoint, "shipping_class": desired, "written": True,
-                        **_await_gla_convergence(target, endpoint, desired, vault)})
+        results.append({**row, **_await_gla_convergence(target, endpoint, desired, vault)})
     return results
 
 
@@ -1494,15 +1975,21 @@ def command_commit(args: argparse.Namespace) -> None:
         "plan_sha256": plan["sha256"], "status": "committed_verified",
         "updated_utc": utc_now().isoformat(), "outcome": outcome,
     })
-    converged = [row for row in outcome
-                 if isinstance(row, dict) and row.get("convergence_used")] \
-        if isinstance(outcome, list) else []
+    rows = outcome if isinstance(outcome, list) else []
+    converged = [row for row in rows if isinstance(row, dict) and row.get("convergence_used")]
+    modes = {mode: sum(1 for row in rows
+                       if isinstance(row, dict) and row.get("baseline_mode") == mode)
+             for mode in BASELINE_MODES}
+    settled_confirmed = sum(1 for row in converged
+                            if row.get("final_state") == PENDING_SETTLED_FINAL_STATE)
     wc.append_receipt(
         "woocommerce_shipping_policy_committed",
         f"action={action}; plan={plan_path}; sha256={plan['sha256']}; "
         f"convergence_used_targets={len(converged)}; "
         f"convergence_meta_key={GLA_META_KEY}; "
-        f"final_state={CONVERGENCE_FINAL_REQUIREMENT}",
+        f"final_state={CONVERGENCE_FINAL_REQUIREMENT}; "
+        + "; ".join(f"baseline_{mode}_targets={count}" for mode, count in modes.items())
+        + f"; pending_settled_confirmed_targets={settled_confirmed}",
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED", "action": action,
@@ -1513,6 +2000,10 @@ def command_commit(args: argparse.Namespace) -> None:
             "targets_converged": len(converged),
             "max_seconds": CONVERGENCE_MAX_SECONDS,
             "final_requirement": CONVERGENCE_FINAL_REQUIREMENT,
+            "baseline_modes": modes,
+            "pending_final_requirement": PENDING_FINAL_REQUIREMENT,
+            "pending_settle_confirm_max_seconds": PENDING_SETTLE_CONFIRM_MAX_SECONDS,
+            "pending_settled_confirmed_targets": settled_confirmed,
         },
         "plan_sha256": plan["sha256"], "replay_locked": True,
     }, indent=2, ensure_ascii=False))

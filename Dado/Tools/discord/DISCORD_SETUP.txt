@@ -1,0 +1,233 @@
+===============================================================
+  GIVING DADO A SECOND LANE ON DISCORD
+  One action per step. Do them in order. Stop at any CHECK that fails.
+===============================================================
+
+WHAT THIS GETS YOU
+  A second place to talk to the SAME Dado. Same memory, same tools, same
+  everything - just a second door. When you message her on Discord and on
+  Telegram at the same time, BOTH tasks run at once. Neither waits for the
+  other.
+
+  This was verified in the code, not assumed: hermes keeps its "one turn at a
+  time" rule per CONVERSATION, and the platform name is part of what identifies
+  a conversation. Two lanes = two conversations = two turns running side by
+  side.
+
+WHAT IT DOES NOT CHANGE
+  * Her alerts stay on TELEGRAM. The inbox watch, the follow-up digest, the job
+    watch and the nightly conduct review all keep messaging you exactly where
+    they do today. Discord is a lane you ASK her things on - nothing gets
+    duplicated to it.
+  * Drafts only. No send capability was added anywhere.
+  * No new access of any kind. She can do on Discord exactly what she can do on
+    Telegram, no more.
+
+READ THIS BEFORE YOU START - IT IS THE WHOLE REASON FOR STEP 1
+  On 2026-08-04 Dado already connected to Discord ONCE, by accident, and she
+  came up as "Aze#1753" - TROY DUALAM'S BOT. She had no Discord token of her
+  own, so she picked up TDI's from the environment, fought Aze's gateway for
+  it, won, and then answered your DMs through TDI's identity into an FRP Depot
+  conversation.
+
+  So she needs her OWN Discord application. Not a copy of Aze's, not a shared
+  one. Two gateways cannot share one Discord bot - they steal it from each
+  other. The setup button will REFUSE Aze's token if you paste it.
+
+
+---------------------------------------------------------------
+STEP 1 - Create an FRP Depot Discord application
+---------------------------------------------------------------
+  1. Go to  https://discord.com/developers/applications
+  2. Click "New Application" (top right).
+  3. Name it something clearly FRP Depot, e.g.  Dado - FRP Depot
+  4. Accept the terms, click Create.
+
+  CHECK: you are on the application's "General Information" page and the name
+         says FRP Depot, not Troy Dualam and not Aze.
+
+
+---------------------------------------------------------------
+STEP 2 - Turn on the intent she cannot start without
+---------------------------------------------------------------
+  1. Left sidebar -> "Bot".
+  2. Scroll to "Privileged Gateway Intents".
+  3. Turn ON:  MESSAGE CONTENT INTENT     <- required
+  4. Click "Save Changes" at the bottom.
+
+  WHY: Dado always asks Discord for message content. If that switch is off,
+  Discord REFUSES the connection outright and she never comes online at all -
+  she does not appear grey-but-broken, she simply never appears. This is the
+  single most common reason a new Discord bot never works.
+
+  SERVER MEMBERS INTENT is NOT needed for this setup and you can leave it off.
+  She only asks for it when the allow-list contains names or roles; yours is
+  your numeric user id, so she does not. Turning it on anyway does no harm.
+
+  CHECK: Message Content Intent is blue/on and you clicked Save Changes.
+
+
+---------------------------------------------------------------
+STEP 3 - Copy the bot token
+---------------------------------------------------------------
+  1. Still on the "Bot" page, find the "Token" section.
+  2. Click "Reset Token" (this is normal - it shows you a fresh one).
+  3. Confirm, and enter your 2FA code if Discord asks.
+  4. Copy the token. Keep the window open until Step 5 is done.
+
+  DISCORD SHOWS THE TOKEN ONCE. If you lose it, just click Reset Token again.
+
+  CHECK: you have a long string with two dots in it on your clipboard.
+
+  DO NOT paste it into a chat with Dado, or into any message. Step 5 is the
+  only place it goes.
+
+
+---------------------------------------------------------------
+STEP 4 - Get your own Discord user id
+---------------------------------------------------------------
+  1. In Discord: Settings (gear) -> Advanced -> turn ON "Developer Mode".
+  2. Close settings.
+  3. Right-click YOUR OWN name anywhere -> "Copy User ID".
+
+  CHECK: you have a number roughly 18-19 digits long. That is your id, and it
+         is what locks the bot to you and nobody else.
+
+
+---------------------------------------------------------------
+STEP 5 - Save both into Dado (this PC only)
+---------------------------------------------------------------
+  1. Double-click:   SET_DADO_DISCORD_TOKEN.bat
+  2. Paste the token when asked (it will not appear on screen - that is normal).
+  3. Paste your user id when asked.
+
+  It saves to a local vault and into Dado's own profile. Nothing is uploaded to
+  GitHub and nothing is shown on screen.
+
+  IF IT SAYS "REFUSED": you pasted a token that already belongs to another
+  agent on this PC - almost certainly Aze's. Go back to Step 1 and make a
+  SEPARATE application for FRP Depot.
+
+  CHECK: it printed "Saved." and named your user id.
+
+
+---------------------------------------------------------------
+STEP 6 - Invite the bot to a server  (REQUIRED, even for DMs)
+---------------------------------------------------------------
+  DO NOT SKIP THIS. Discord will not let you open a DM with a bot unless you
+  and it share a server. Without this step there is no way to message her at
+  all - the DM simply cannot be started. A private server with only you in it
+  is perfectly fine and is the tidiest option.
+
+  If you do not already have one: in Discord click the "+" at the bottom of the
+  server list -> "Create My Own" -> "For me and my friends".
+
+  1. Developer Portal -> your app -> "Installation".
+  2. Under "Installation Contexts" tick "Guild Install".
+  3. Install Link -> "Discord Provided Link".
+  4. Scopes: tick  bot  and  applications.commands
+  5. Permissions: tick  View Channels, Send Messages, Embed Links,
+     Attach Files, Read Message History  (add Send Messages in Threads and
+     Add Reactions if offered).
+     Without Send Messages she can read a channel and not answer in it.
+  6. Open the link it gives you, pick your server, Authorize.
+
+  CHECK: the bot appears in your server's member list (shown offline for now -
+         that is expected until Step 7).
+
+
+---------------------------------------------------------------
+STEP 7 - Restart her
+---------------------------------------------------------------
+  1. Double-click:   STOP_DADO.bat
+  2. Wait for it to finish.
+  3. Double-click:   START_DADO.bat
+  4. Give her about 20 seconds.
+
+  CHECK: no error window stayed open.
+
+
+---------------------------------------------------------------
+STEP 8 - Prove she is HER bot, not TDI's
+---------------------------------------------------------------
+  1. Double-click:   CHECK_DADO_DISCORD.bat
+
+  It asks Discord directly which bot the token belongs to and prints the name.
+  It also checks that no other agent on this PC holds the same token, and that
+  the Discord lane is genuinely connected RIGHT NOW (it deliberately ignores
+  the stale status line hermes leaves behind, which still claims she connected
+  on 2026-08-04).
+
+  CHECK: it ends with "ALL CLEAR" and the bot name it prints is YOUR FRP Depot
+         application - NOT "Aze".
+
+  "CHECK INCOMPLETE" is NOT a pass. It means something could not be confirmed -
+  usually that she is not running yet. Do Step 7 and run it again.
+
+  If it says the token belongs to profile 'aze', or names a different bot than
+  the one you confirmed in Step 5, stop and redo Step 1.
+
+
+---------------------------------------------------------------
+STEP 9 - Say hello, then try two things at once
+---------------------------------------------------------------
+  1. In Discord, DM the bot:  hello
+     She should answer within a few seconds, as herself.
+  2. Now the actual point: give her a slow job on Telegram, and while it is
+     still running, ask her something else on Discord.
+
+  CHECK: the Discord answer arrives while the Telegram job is still going. That
+         is the two lanes running in parallel.
+
+
+===============================================================
+  ONE THING TO KNOW ABOUT RUNNING TWO AT ONCE
+===============================================================
+  The two lanes are separate conversations, but they share ONE computer, ONE
+  copy of the repo, and ONE logged-in browser window for Zoho and for
+  WordPress.
+
+  That last one mattered enough to fix: if both lanes tried to drive the
+  logged-in Zoho window at the same time, a click meant for one screen could
+  land on another - a real write on the wrong page. Dado now takes a lock on
+  that browser before any Zoho or WordPress write. The second lane simply
+  waits, and if the first is genuinely long-running it tells you who is using
+  it instead of interfering. Nothing was taken away - it only stops the two
+  lanes colliding.
+
+  What to avoid anyway: don't ask BOTH lanes to commit an approved plan to the
+  same thing at the same moment. And note the lock covers her named write tools,
+  not every one-off script she might write that drives the same signed-in
+  window - if she is doing that in one lane, let it finish. Email drafting,
+  Zoho reports and quoting are all fine in parallel.
+
+
+===============================================================
+  IF SOMETHING GOES WRONG
+===============================================================
+  She never comes online at all
+      Message Content Intent is off - Discord refuses the connection. Redo
+      Step 2, then Step 7, then run CHECK_DADO_DISCORD.bat.
+
+  You cannot start a DM with her / she is not searchable
+      You do not share a server with the bot. Do Step 6.
+
+  Bot is online but never answers
+      In a SERVER you must @mention her. In a DM you do not.
+      If she ignores DMs too, your user id in Step 5 is wrong - rerun Step 5.
+
+  She answers DMs but never in a server channel
+      She is missing Send Messages (or View Channels) in that channel. Re-invite
+      with the permissions in Step 6, or add her role to the channel's
+      permissions in Discord.
+
+  She answers as the wrong bot
+      Redo Step 1 with a new FRP Depot application, then Step 3 and Step 5.
+
+  Telegram stopped working after this
+      It should not have - the two are independent. Run CHECK_DADO_DISCORD.bat;
+      it reports the Telegram lane too.
+
+  She goes quiet on Discord later
+      The keep-alive now watches the chat lanes, not just the port, and will
+      message you on Telegram if a lane dies while she is otherwise running.

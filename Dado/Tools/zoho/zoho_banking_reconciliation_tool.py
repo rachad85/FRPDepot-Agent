@@ -15,6 +15,15 @@ There is no generic bank-transaction creation/update, delete, rule, exclusion,
 restoration, or bank-account write path in this module. The sole PUT reconstructs
 an existing ``transfer_fund`` from its immutable live state and can change only
 its from/to account IDs after a separately staged exact approval.
+
+2026-08-10: the existing ``categorize`` operation gained ONE fail-closed recovery
+path, hard-pinned to the single imported line Rachad Homsi uncategorized himself
+(``96274000001423074``). It is not a new capability -- categorizing an imported
+line as an internal transfer was already commissioned -- it only replaces an
+outgoing-counterpart proof that uncategorization made impossible with the
+immutable replay-locked original-transfer plan plus fresh live checks. See
+``AIRWALLEX_USD_RECOVERY``. Every other Airwallex line still requires its live
+outgoing counterpart, and no write verb, scope or approval rule changed.
 """
 from __future__ import annotations
 
@@ -106,6 +115,9 @@ INPUT_FIELDS = {
     "uncategorize": BASE_INPUT_FIELDS | {"target_account_ids"},
     "update_transfer_accounts": BASE_INPUT_FIELDS | {"payload"},
 }
+# The ONLY optional input key in this module. It is accepted for ``categorize``
+# alone, and only ever satisfies the one hard-pinned Airwallex USD recovery below.
+OPTIONAL_INPUT_FIELDS = {"categorize": {"recovery"}}
 PLAN_FIELDS = {
     "schema_version", "tool", "action", "created_utc", "expires_utc", "nonce",
     "approval_required", "organization", "payload", "sources", "evidence",
@@ -125,7 +137,27 @@ SOURCES_FIELDS = {"instruction", "statement_line"}
 EVIDENCE_INPUT_FIELDS = {"basis", "airwallex_outgoing_transaction_id"}
 EVIDENCE_FIELDS = {
     "basis", "airwallex_guarded", "airwallex_outgoing_transaction_id",
-    "airwallex_verification",
+    "airwallex_verification", "airwallex_recovery",
+}
+RECOVERY_INPUT_FIELDS = {
+    "mode", "historical_plan", "historical_plan_sha256",
+    "superseded_transfer_transaction_id",
+}
+RECOVERY_EVIDENCE_FIELDS = {
+    "mode", "statement", "source_transaction_id", "superseded_transfer_transaction_id",
+    "superseded_transfer_verified_absent", "historical_plan", "historical_plan_sha256",
+    "historical_plan_lock_status", "live_outgoing_counterpart_required",
+}
+RECOVERY_SUMMARY_FIELDS = {
+    "kind", "statement", "source_statement_line_id", "transaction_type",
+    "from_account", "to_account", "amount", "currency", "currency_id", "date",
+    "reference_number", "description", "superseded_transfer_transaction_id",
+    "superseded_transfer_verified_absent", "historical_plan_sha256", "write",
+    "emails_sent", "revenue_or_income_classification", "write_performed_yet",
+}
+RECOVERY_PAYLOAD_FIELDS = {
+    "from_account_id", "to_account_id", "transaction_type", "amount", "date",
+    "reference_number", "description", "currency_id",
 }
 AIRWALLEX_VERIFICATION_FIELDS = {
     "outgoing_transaction_id", "amount_compatible", "currency_compatible",
@@ -178,8 +210,64 @@ AIRWALLEX_ACCOUNT_UPDATE_CONSTRAINTS: dict[str, dict[str, Any]] = {
 }
 
 
+# --------------------------------------------------------------------------
+# ONE hard-pinned recovery of ONE already-commissioned categorize action.
+#
+# Rachad Homsi uncategorized the USD Airwallex closure statement line himself on
+# 2026-08-10 and asked Dado to redo the correction.  Uncategorizing it destroyed
+# transfer 96274000001535012, so the ordinary Airwallex guard's demand for a LIVE
+# outgoing counterpart transaction can no longer be satisfied by anything real --
+# the Books ledger for 2026-07-20..2026-07-31 holds no 21642.71 row at all.
+#
+# The counterpart proof is therefore replaced, for this ONE statement line only,
+# by the immutable replay-locked plan that recorded the very same imported line,
+# amount, date, description and account mapping while the transfer still existed,
+# PLUS a fresh live proof that the old transfer is really gone.  Nothing else is
+# relaxed: every other Airwallex line still needs its live outgoing counterpart.
+# --------------------------------------------------------------------------
+AIRWALLEX_USD_RECOVERY_MODE = "airwallex_usd_closure_uncategorized_by_rachad"
+AIRWALLEX_USD_RECOVERY_STATEMENT = (
+    "RECOVERY of the user-uncategorized USD closure transfer: Rachad Homsi uncategorized "
+    "the 2026-07-23 Airwallex USD 21,642.71 statement line himself on 2026-08-10, so this "
+    "recategorizes it as the internal transfer AWX_FRPDepot Inc._USD -> USD Desjardins "
+    "corporate build-up account. It is not revenue, not income and not a customer receipt."
+)
+AIRWALLEX_USD_RECOVERY: dict[str, Any] = {
+    "source_transaction_id": "96274000001423074",
+    "source_status": "uncategorized",
+    "source_account_id": "96274000001409012",
+    "amount": Decimal("21642.71"),
+    "date": "2026-07-23",
+    "currency_code": "USD",
+    "currency_id": "96274000000000081",
+    "description": "Funds transfer received /FRPDepot Inc. /",
+    "reference_number": "Closing Balance From Airwallex Account",
+    "transaction_type": "transfer_fund",
+    "from_account_id": "96274000000149257",
+    "from_account_name": "AWX_FRPDepot Inc._USD",
+    "from_currency": "USD",
+    "to_account_id": "96274000001409012",
+    "to_account_name": "USD Desjardins corporate build-up account",
+    "to_currency": "USD",
+    "superseded_transfer_transaction_id": "96274000001535012",
+    "historical_plan_name": "20260808T031444Z_update_transfer_accounts_973274b986060804.json",
+    "historical_plan_sha256": (
+        "973274b9860608042d421e929b21ce688dfd8bacc42b7ca635b201f63a41d908"
+    ),
+    "historical_plan_lock_status": "indeterminate",
+}
+
+
 class BankingToolError(RuntimeError):
     pass
+
+
+class BankingRecordAbsent(BankingToolError):
+    """The record exists in neither the Books API nor the live imported feed.
+
+    A distinct class, not a message, so an absence proof can never be satisfied by
+    a network failure, an expired session or a browser that is not running.
+    """
 
 
 def utc_now() -> datetime:
@@ -653,6 +741,13 @@ def get_uncategorized_ui_transaction(
         row for row in list_uncategorized_ui_transactions(vault)
         if row["transaction_id"] == transaction_id
     ]
+    if not found:
+        # Absent from BOTH the Books API (404) and the live imported feed. Same
+        # message and same BankingToolError base as before; the narrower class only
+        # lets the recovery absence proof tell "really gone" from "read failed".
+        raise BankingRecordAbsent(
+            f"Zoho Books imported feed did not return exactly one transaction {transaction_id}."
+        )
     if len(found) != 1:
         raise BankingToolError(
             f"Zoho Books imported feed did not return exactly one transaction {transaction_id}."
@@ -1129,6 +1224,328 @@ def validate_airwallex_account_update(
     }
 
 
+def validate_recovery_input(value: Any) -> dict[str, str]:
+    """Explicit recovery request, hard-pinned to the one uncategorized USD line."""
+    spec = AIRWALLEX_USD_RECOVERY
+    if not isinstance(value, dict):
+        raise BankingToolError("recovery must be an object.")
+    closed_fields(value, RECOVERY_INPUT_FIELDS, "recovery")
+    mode = clean_text(value["mode"], "recovery.mode", 100)
+    if mode != AIRWALLEX_USD_RECOVERY_MODE:
+        raise BankingToolError(
+            "recovery.mode must be exactly " + AIRWALLEX_USD_RECOVERY_MODE
+            + "; no other recovery mode exists in this tool."
+        )
+    digest = clean_text(value["historical_plan_sha256"], "recovery.historical_plan_sha256", 64)
+    if not HEX_64_RE.fullmatch(digest) or not secrets.compare_digest(
+        digest, spec["historical_plan_sha256"]
+    ):
+        raise BankingToolError(
+            "recovery.historical_plan_sha256 is not the pinned immutable evidence digest."
+        )
+    superseded = positive_id(
+        value["superseded_transfer_transaction_id"], "recovery.superseded_transfer_transaction_id"
+    )
+    if superseded != spec["superseded_transfer_transaction_id"]:
+        raise BankingToolError(
+            "recovery.superseded_transfer_transaction_id must be exactly "
+            + spec["superseded_transfer_transaction_id"] + "."
+        )
+    return {
+        "mode": mode,
+        "historical_plan": clean_text(value["historical_plan"], "recovery.historical_plan", 4000),
+        "historical_plan_sha256": digest,
+        "superseded_transfer_transaction_id": superseded,
+    }
+
+
+def verify_recovery_historical_plan(raw_path: Any) -> dict[str, str]:
+    """Re-derive the immutable original-transfer evidence from disk. Never trusted on faith."""
+    spec = AIRWALLEX_USD_RECOVERY
+    resolved = contained_plan(raw_path)
+    if resolved.name != spec["historical_plan_name"]:
+        raise BankingToolError(
+            "Recovery evidence must be the pinned historical plan " + spec["historical_plan_name"] + "."
+        )
+    plan = read_json_object(resolved, "Recovery historical plan")
+    closed_fields(plan, PLAN_FIELDS, "Recovery historical plan")
+    saved = str(plan.get("sha256") or "")
+    core = {key: value for key, value in plan.items() if key != "sha256"}
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise BankingToolError(
+            "Recovery historical plan failed its own digest check; the immutable evidence changed."
+        )
+    if not secrets.compare_digest(saved, spec["historical_plan_sha256"]):
+        raise BankingToolError("Recovery historical plan is not the pinned immutable evidence plan.")
+    if (
+        plan["tool"] != TOOL_NAME
+        or plan["action"] != "update_transfer_accounts"
+        or plan["schema_version"] != SCHEMA_VERSION
+    ):
+        raise BankingToolError("Recovery historical plan is not this tool's transfer-account plan.")
+
+    payload = plan["payload"]
+    source_snapshot = plan["source_snapshot"]
+    live = source_snapshot["current_state"]
+    imported = live.get("imported_transactions")
+    if not isinstance(imported, list) or len(imported) != 1 or not isinstance(imported[0], dict):
+        raise BankingToolError(
+            "Recovery historical plan must record exactly one imported statement line."
+        )
+    line = imported[0]
+    mapping = plan["evidence"].get("airwallex_mapping")
+    if not isinstance(mapping, dict):
+        raise BankingToolError("Recovery historical plan lacks its Airwallex account mapping evidence.")
+    expected = {
+        "historical payload from_account_id": (payload.get("from_account_id"), spec["from_account_id"]),
+        "historical payload to_account_id": (payload.get("to_account_id"), spec["to_account_id"]),
+        "historical payload transaction_type": (payload.get("transaction_type"), spec["transaction_type"]),
+        "historical payload amount": (
+            decimal_text(payload.get("amount"), "historical payload amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        ),
+        "historical payload date": (date_text(payload.get("date"), "historical payload date"), spec["date"]),
+        "historical payload reference_number": (
+            str(payload.get("reference_number") or "").strip(), spec["reference_number"],
+        ),
+        "historical payload description": (
+            str(payload.get("description") or "").strip(), spec["description"],
+        ),
+        "historical superseded transfer ID": (
+            source_snapshot.get("requested_id"), spec["superseded_transfer_transaction_id"],
+        ),
+        "historical transfer amount": (
+            decimal_text(source_snapshot["before_state"]["amount"], "historical transfer amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        ),
+        "historical transfer date": (source_snapshot["before_state"]["date"], spec["date"]),
+        "historical imported line ID": (
+            str(line.get("imported_transaction_id") or "").strip(), spec["source_transaction_id"],
+        ),
+        "historical imported line amount": (
+            decimal_text(line.get("amount"), "historical imported line amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        ),
+        "historical imported line date": (
+            date_text(line.get("date"), "historical imported line date"), spec["date"],
+        ),
+        "historical imported line description": (
+            str(line.get("description") or "").strip(), spec["description"],
+        ),
+        "historical imported line account": (
+            str(line.get("account_id") or "").strip(), spec["to_account_id"],
+        ),
+        "historical mapping transaction ID": (
+            mapping.get("transaction_id"), spec["superseded_transfer_transaction_id"],
+        ),
+        "historical mapping approved source": (
+            mapping.get("approved_from_account_id"), spec["from_account_id"],
+        ),
+        "historical mapping approved destination": (
+            mapping.get("approved_to_account_id"), spec["to_account_id"],
+        ),
+    }
+    roles = snapshots_by_role(plan["target_snapshots"])
+    for role, key_id, key_name, key_currency in (
+        ("proposed_from_account", "from_account_id", "from_account_name", "from_currency"),
+        ("proposed_to_account", "to_account_id", "to_account_name", "to_currency"),
+    ):
+        snapshot = roles.get(role)
+        if snapshot is None:
+            raise BankingToolError(f"Recovery historical plan lacks its {role} snapshot.")
+        before = snapshot["before_state"]
+        expected[f"historical {role} ID"] = (before["account_id"], spec[key_id])
+        expected[f"historical {role} name"] = (before["name"], spec[key_name])
+        expected[f"historical {role} currency"] = (before["currency"].upper(), spec[key_currency])
+    mismatches = [label for label, (actual, want) in expected.items() if actual != want]
+    if mismatches:
+        raise BankingToolError(
+            "Recovery historical evidence does not carry the exact original mapping: "
+            + ", ".join(mismatches)
+        )
+
+    lock = lock_path(saved)
+    if not lock.is_file():
+        raise BankingToolError(
+            "Recovery historical plan carries no commit lock; it is not proven spent and replay-locked."
+        )
+    lock_state = read_json_object(lock, "Recovery historical plan commit lock")
+    if (
+        str(lock_state.get("plan_sha256") or "") != saved
+        or lock_state.get("no_retry") is not True
+        or str(lock_state.get("status") or "") != spec["historical_plan_lock_status"]
+    ):
+        raise BankingToolError(
+            "Recovery historical plan lock is not the permanently locked "
+            + spec["historical_plan_lock_status"] + " record."
+        )
+    return {
+        "historical_plan": str(resolved),
+        "historical_plan_sha256": saved,
+        "historical_plan_lock_status": spec["historical_plan_lock_status"],
+    }
+
+
+def require_airwallex_usd_recovery_facts(
+    source: dict[str, Any], payload: dict[str, Any], targets: list[dict[str, Any]]
+) -> None:
+    """Every fixed fact of the one recoverable line, checked against live snapshots."""
+    spec = AIRWALLEX_USD_RECOVERY
+    before = source["before_state"]
+    live = source["current_state"]
+    if source["requested_id"] != spec["source_transaction_id"]:
+        raise BankingToolError(
+            "The recovery path is reachable only for statement line "
+            + spec["source_transaction_id"] + "."
+        )
+    closed_fields(payload, RECOVERY_PAYLOAD_FIELDS, "recovery categorize payload")
+    roles = snapshots_by_role([row for row in targets if row["record_type"] == "account"])
+    from_account = roles.get("from_account")
+    to_account = roles.get("to_account")
+    if from_account is None or to_account is None:
+        raise BankingToolError("Recovery requires freshly read from/to account snapshots.")
+    charges_present = "bank_charges" in live
+    gross_present = "gross_amount" in live
+    if not charges_present and not gross_present:
+        raise BankingToolError(
+            "Recovery requires the live statement line to expose bank_charges or gross_amount."
+        )
+    expected = {
+        "source status": (normalized_status(before["status"]), spec["source_status"]),
+        "source statement account": (before["account_id"], spec["source_account_id"]),
+        "source amount": (
+            decimal_text(before["amount"], "live source amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        ),
+        "source date": (before["date"], spec["date"]),
+        "source currency": (before["currency"].upper(), spec["currency_code"]),
+        "source currency ID": (str(live.get("currency_id") or "").strip(), spec["currency_id"]),
+        "source description": (str(live.get("description") or "").strip(), spec["description"]),
+        "payload transaction_type": (payload["transaction_type"], spec["transaction_type"]),
+        "payload from_account_id": (payload["from_account_id"], spec["from_account_id"]),
+        "payload to_account_id": (payload["to_account_id"], spec["to_account_id"]),
+        "payload currency_id": (payload["currency_id"], spec["currency_id"]),
+        "payload description": (payload["description"], spec["description"]),
+        "payload reference_number": (payload["reference_number"], spec["reference_number"]),
+        "payload amount": (
+            decimal_text(payload["amount"], "recovery payload amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        ),
+        "payload date": (date_text(payload["date"], "recovery payload date"), spec["date"]),
+        "new source account ID": (from_account["before_state"]["account_id"], spec["from_account_id"]),
+        "new source account name": (from_account["before_state"]["name"], spec["from_account_name"]),
+        "new source account currency": (
+            from_account["before_state"]["currency"].upper(), spec["from_currency"],
+        ),
+        "destination account ID": (to_account["before_state"]["account_id"], spec["to_account_id"]),
+        "destination account name": (to_account["before_state"]["name"], spec["to_account_name"]),
+        "destination account currency": (
+            to_account["before_state"]["currency"].upper(), spec["to_currency"],
+        ),
+        "destination account status": (
+            normalized_status(to_account["before_state"]["status"]), "active",
+        ),
+    }
+    if charges_present:
+        expected["source bank charges"] = (
+            decimal_text(live.get("bank_charges"), "live bank_charges"), "0",
+        )
+    if gross_present:
+        expected["source gross amount"] = (
+            decimal_text(live.get("gross_amount"), "live gross_amount"),
+            decimal_text(spec["amount"], "recovery amount"),
+        )
+    mismatches = [label for label, (actual, want) in expected.items() if actual != want]
+    if mismatches:
+        raise BankingToolError(
+            "Airwallex USD recovery fixed-fact check failed: " + ", ".join(mismatches)
+        )
+
+
+def prove_superseded_transfer_absent(access_token: str, vault: dict[str, Any]) -> None:
+    """Fresh live proof through the existing read path that the old transfer is gone."""
+    transfer_id = AIRWALLEX_USD_RECOVERY["superseded_transfer_transaction_id"]
+    try:
+        get_bank_transaction(access_token, vault, transfer_id, "regular")
+    except BankingRecordAbsent:
+        return
+    raise BankingToolError(
+        f"REFUSED: superseded transfer {transfer_id} is live again. The recovery precondition "
+        "is false; reconcile the real Zoho state instead of recategorizing."
+    )
+
+
+def build_airwallex_usd_recovery_evidence(
+    recovery_input: dict[str, str], historical: dict[str, str]
+) -> dict[str, Any]:
+    spec = AIRWALLEX_USD_RECOVERY
+    return {
+        "mode": AIRWALLEX_USD_RECOVERY_MODE,
+        "statement": AIRWALLEX_USD_RECOVERY_STATEMENT,
+        "source_transaction_id": spec["source_transaction_id"],
+        "superseded_transfer_transaction_id": recovery_input["superseded_transfer_transaction_id"],
+        "superseded_transfer_verified_absent": True,
+        "historical_plan": historical["historical_plan"],
+        "historical_plan_sha256": historical["historical_plan_sha256"],
+        "historical_plan_lock_status": historical["historical_plan_lock_status"],
+        "live_outgoing_counterpart_required": False,
+    }
+
+
+def validate_recovery_evidence(
+    evidence: Any, source: dict[str, Any], payload: dict[str, Any], targets: list[dict[str, Any]]
+) -> None:
+    """Re-derive the whole recovery block offline; equality is the only accepted answer."""
+    if not isinstance(evidence, dict):
+        raise BankingToolError("evidence.airwallex_recovery must be an object.")
+    closed_fields(evidence, RECOVERY_EVIDENCE_FIELDS, "airwallex_recovery")
+    if evidence.get("superseded_transfer_verified_absent") is not True:
+        raise BankingToolError("Recovery evidence must record the superseded transfer as verified absent.")
+    if evidence.get("live_outgoing_counterpart_required") is not False:
+        raise BankingToolError("Recovery evidence must record that no live counterpart exists to require.")
+    recovery_input = validate_recovery_input({
+        "mode": evidence.get("mode"),
+        "historical_plan": evidence.get("historical_plan"),
+        "historical_plan_sha256": evidence.get("historical_plan_sha256"),
+        "superseded_transfer_transaction_id": evidence.get("superseded_transfer_transaction_id"),
+    })
+    historical = verify_recovery_historical_plan(recovery_input["historical_plan"])
+    require_airwallex_usd_recovery_facts(source, payload, targets)
+    if evidence != build_airwallex_usd_recovery_evidence(recovery_input, historical):
+        raise BankingToolError("Recovery evidence does not match its immutable re-derived form.")
+
+
+def recovery_summary(
+    evidence: dict[str, Any], payload: dict[str, Any], targets: list[dict[str, Any]]
+) -> dict[str, Any]:
+    spec = AIRWALLEX_USD_RECOVERY
+    roles = snapshots_by_role([row for row in targets if row["record_type"] == "account"])
+    return {
+        "kind": AIRWALLEX_USD_RECOVERY_MODE,
+        "statement": AIRWALLEX_USD_RECOVERY_STATEMENT,
+        "source_statement_line_id": spec["source_transaction_id"],
+        "transaction_type": payload["transaction_type"],
+        "from_account": roles["from_account"]["before_state"],
+        "to_account": roles["to_account"]["before_state"],
+        "amount": decimal_text(payload["amount"], "recovery payload amount"),
+        "currency": spec["currency_code"],
+        "currency_id": payload["currency_id"],
+        "date": payload["date"],
+        "reference_number": payload["reference_number"],
+        "description": payload["description"],
+        "superseded_transfer_transaction_id": evidence["superseded_transfer_transaction_id"],
+        "superseded_transfer_verified_absent": True,
+        "historical_plan_sha256": evidence["historical_plan_sha256"],
+        "write": (
+            "exactly one POST /books/v3/banktransactions/uncategorized/"
+            + spec["source_transaction_id"] + "/categorize"
+        ),
+        "emails_sent": 0,
+        "revenue_or_income_classification": "impossible: transfer_fund only, no income route exists",
+        "write_performed_yet": False,
+    }
+
+
 def require_match_compatibility(source: dict[str, Any], targets: list[dict[str, Any]]) -> None:
     source_before = source["before_state"]
     total = sum(
@@ -1152,7 +1569,8 @@ def require_ids_in_source(source: dict[str, Any], ids: list[str], label: str) ->
 
 
 def summary_for(
-    action: str, source: dict[str, Any], payload: dict[str, Any], targets: list[dict[str, Any]]
+    action: str, source: dict[str, Any], payload: dict[str, Any], targets: list[dict[str, Any]],
+    recovery: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     before = source["before_state"]
     if action == "update_transfer_accounts":
@@ -1195,7 +1613,7 @@ def summary_for(
         target = {"uncategorize_account_ids": [
             row["requested_id"] for row in targets if row["record_type"] == "account"
         ]}
-    return {
+    summary = {
         "action": action,
         "account": {"id": before["account_id"], "name": before["account_name"]},
         "date": before["date"],
@@ -1206,6 +1624,9 @@ def summary_for(
         "status": before["status"],
         "target": target,
     }
+    if recovery is not None:
+        summary["recovery"] = recovery_summary(recovery, payload, targets)
+    return summary
 
 
 def stage_plan(
@@ -1256,7 +1677,10 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
     if action not in ACTIONS:
         raise BankingToolError("Unsupported banking stage action.")
     raw = read_json_object(Path(args.input), f"{action} input")
-    closed_fields(raw, INPUT_FIELDS[action], f"{action} input")
+    expected_input = INPUT_FIELDS[action]
+    optional_supplied = OPTIONAL_INPUT_FIELDS.get(action, set()) & set(raw)
+    closed_fields(raw, expected_input | optional_supplied, f"{action} input")
+    recovery_input = validate_recovery_input(raw["recovery"]) if "recovery" in raw else None
     source_id = positive_id(raw["source_transaction_id"], "source_transaction_id")
     sources = source_fields(raw["sources"])
     if action == "update_transfer_accounts":
@@ -1366,6 +1790,14 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
         guarded = airwallex_guarded(source, sources)
         outgoing_id = supplied_evidence["airwallex_outgoing_transaction_id"]
         verification: dict[str, Any] | None = None
+        recovery_evidence: dict[str, Any] | None = None
+        if recovery_input is not None:
+            if not guarded:
+                raise BankingToolError("The recovery path exists only for the guarded Airwallex line.")
+            if outgoing_id:
+                raise BankingToolError(
+                    "The recovery path replaces the outgoing counterpart proof; it cannot also carry one."
+                )
         if guarded:
             if action == "match" and any(
                 row["transaction_type"] != "transfer_fund" for row in payload["transactions_to_be_matched"]
@@ -1373,17 +1805,25 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
                 raise BankingToolError("Airwallex statement lines may only be matched as transfer_fund, never income/revenue.")
             if action == "categorize" and payload["transaction_type"] != "transfer_fund":
                 raise BankingToolError("Airwallex statement lines may only be categorized as transfer_fund, never income/revenue.")
-            if not outgoing_id:
+            if recovery_input is not None:
+                # The one exemption. Every fixed fact must match, the immutable original
+                # plan must re-derive, and the old transfer must be freshly proved gone.
+                require_airwallex_usd_recovery_facts(source, payload, targets)
+                historical = verify_recovery_historical_plan(recovery_input["historical_plan"])
+                prove_superseded_transfer_absent(access_token, vault)
+                recovery_evidence = build_airwallex_usd_recovery_evidence(recovery_input, historical)
+            elif not outgoing_id:
                 raise BankingToolError("Airwallex plans require a verified corresponding outgoing transaction ID in evidence.")
-            outgoing = next(
-                (row for row in targets if row["record_type"] == "transaction" and row["requested_id"] == outgoing_id),
-                None,
-            )
-            if outgoing is None:
-                current = get_bank_transaction(access_token, vault, outgoing_id, "regular")
-                outgoing = transaction_snapshot(current, outgoing_id, "airwallex_outgoing")
-                targets.append(outgoing)
-            verification = airwallex_verification(source, outgoing)
+            if outgoing_id:
+                outgoing = next(
+                    (row for row in targets if row["record_type"] == "transaction" and row["requested_id"] == outgoing_id),
+                    None,
+                )
+                if outgoing is None:
+                    current = get_bank_transaction(access_token, vault, outgoing_id, "regular")
+                    outgoing = transaction_snapshot(current, outgoing_id, "airwallex_outgoing")
+                    targets.append(outgoing)
+                verification = airwallex_verification(source, outgoing)
         elif outgoing_id:
             raise BankingToolError("Airwallex outgoing evidence is only accepted for an Airwallex-guarded statement line.")
 
@@ -1392,8 +1832,12 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
             "airwallex_guarded": guarded,
             "airwallex_outgoing_transaction_id": outgoing_id,
             "airwallex_verification": verification,
+            "airwallex_recovery": recovery_evidence,
         }
-    summary = summary_for(action, source, payload, targets)
+    summary = summary_for(
+        action, source, payload, targets,
+        None if action == "update_transfer_accounts" else evidence["airwallex_recovery"],
+    )
     path = stage_plan(action, organization, payload, sources, evidence, source, targets, summary)
     plan = read_json_object(path, "Staged plan")
     print(json.dumps({
@@ -1605,11 +2049,10 @@ def validate_plan(plan: dict[str, Any], expected_action: str) -> None:
                 raise BankingToolError("Airwallex mapping evidence does not match immutable live snapshots.")
     else:
         guarded = airwallex_guarded(plan["source_snapshot"], sources)
+        recovery = evidence["airwallex_recovery"]
         if evidence["airwallex_guarded"] != guarded:
             raise BankingToolError("Airwallex guard evidence is inconsistent with the statement line/amount.")
         if guarded:
-            if not outgoing_id:
-                raise BankingToolError("Airwallex plan lacks its outgoing transaction evidence ID.")
             if expected_action == "match" and any(
                 row["transaction_type"] != "transfer_fund"
                 for row in plan["payload"]["transactions_to_be_matched"]
@@ -1617,20 +2060,33 @@ def validate_plan(plan: dict[str, Any], expected_action: str) -> None:
                 raise BankingToolError("Airwallex matching is restricted to transfer_fund.")
             if expected_action == "categorize" and plan["payload"]["transaction_type"] != "transfer_fund":
                 raise BankingToolError("Airwallex categorization is restricted to transfer_fund.")
-            outgoing = next(
-                (row for row in targets if row["record_type"] == "transaction" and row["requested_id"] == outgoing_id),
-                None,
-            )
-            if outgoing is None:
-                raise BankingToolError("Airwallex outgoing transaction snapshot is absent.")
-            expected_verification = airwallex_verification(plan["source_snapshot"], outgoing)
-            verification = evidence["airwallex_verification"]
-            if not isinstance(verification, dict):
-                raise BankingToolError("Airwallex compatibility verification is absent.")
-            closed_fields(verification, AIRWALLEX_VERIFICATION_FIELDS, "airwallex_verification")
-            if verification != expected_verification:
-                raise BankingToolError("Airwallex compatibility evidence does not match the live snapshots.")
-        elif outgoing_id or evidence["airwallex_verification"] is not None:
+            if recovery is not None:
+                if expected_action != "categorize":
+                    raise BankingToolError("The Airwallex recovery exemption exists only for categorize.")
+                if outgoing_id or evidence["airwallex_verification"] is not None:
+                    raise BankingToolError(
+                        "A recovery plan replaces the outgoing counterpart proof and cannot also carry one."
+                    )
+                validate_recovery_evidence(
+                    recovery, plan["source_snapshot"], plan["payload"], targets
+                )
+            else:
+                if not outgoing_id:
+                    raise BankingToolError("Airwallex plan lacks its outgoing transaction evidence ID.")
+                outgoing = next(
+                    (row for row in targets if row["record_type"] == "transaction" and row["requested_id"] == outgoing_id),
+                    None,
+                )
+                if outgoing is None:
+                    raise BankingToolError("Airwallex outgoing transaction snapshot is absent.")
+                expected_verification = airwallex_verification(plan["source_snapshot"], outgoing)
+                verification = evidence["airwallex_verification"]
+                if not isinstance(verification, dict):
+                    raise BankingToolError("Airwallex compatibility verification is absent.")
+                closed_fields(verification, AIRWALLEX_VERIFICATION_FIELDS, "airwallex_verification")
+                if verification != expected_verification:
+                    raise BankingToolError("Airwallex compatibility evidence does not match the live snapshots.")
+        elif outgoing_id or evidence["airwallex_verification"] is not None or recovery is not None:
             raise BankingToolError("Non-Airwallex plan contains Airwallex-only evidence.")
     summary = plan["human_summary"]
     if not isinstance(summary, dict):
@@ -1648,9 +2104,19 @@ def validate_plan(plan: dict[str, Any], expected_action: str) -> None:
                     summary[side][role], ACCOUNT_BEFORE_FIELDS,
                     f"human_summary.{side}.{role}",
                 )
+        recovery = None
     else:
-        closed_fields(summary, SUMMARY_FIELDS, "human_summary")
-    expected_summary = summary_for(expected_action, plan["source_snapshot"], plan["payload"], targets)
+        closed_fields(
+            summary, SUMMARY_FIELDS | ({"recovery"} if recovery is not None else set()),
+            "human_summary",
+        )
+        if recovery is not None:
+            if not isinstance(summary["recovery"], dict):
+                raise BankingToolError("human_summary.recovery must be an object.")
+            closed_fields(summary["recovery"], RECOVERY_SUMMARY_FIELDS, "human_summary.recovery")
+    expected_summary = summary_for(
+        expected_action, plan["source_snapshot"], plan["payload"], targets, recovery
+    )
     if summary != expected_summary:
         raise BankingToolError("Plan human summary does not match the immutable source/target evidence.")
 
@@ -2115,6 +2581,21 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
             )
             if refreshed_mapping != plan["evidence"]["airwallex_mapping"]:
                 raise BankingToolError("Transfer account mapping evidence changed after review.")
+        elif plan["evidence"]["airwallex_recovery"] is not None:
+            recovery_evidence = plan["evidence"]["airwallex_recovery"]
+            require_airwallex_usd_recovery_facts(
+                current_source_snapshot, plan["payload"], refreshed_targets
+            )
+            refreshed_historical = verify_recovery_historical_plan(
+                recovery_evidence["historical_plan"]
+            )
+            if refreshed_historical != {
+                "historical_plan": recovery_evidence["historical_plan"],
+                "historical_plan_sha256": recovery_evidence["historical_plan_sha256"],
+                "historical_plan_lock_status": recovery_evidence["historical_plan_lock_status"],
+            }:
+                raise BankingToolError("Recovery historical evidence changed after review.")
+            prove_superseded_transfer_absent(access_token, vault)
         elif plan["evidence"]["airwallex_guarded"]:
             outgoing_id = plan["evidence"]["airwallex_outgoing_transaction_id"]
             outgoing = next(

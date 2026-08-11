@@ -34,12 +34,33 @@ class ZohoToolTests(unittest.TestCase):
             {
                 "ZohoBooks.contacts.CREATE",
                 "ZohoBooks.estimates.CREATE",
+                # Commissioned 2026-08-10 for zoho_customer_quote_tool.py only:
+                # the two fixed draft estimates whose line discount Zoho read as
+                # CAD 10.00 instead of 10%. Discount-only, one PUT each.
+                "ZohoBooks.estimates.UPDATE",
                 "ZohoBooks.banking.CREATE",
                 "ZohoBooks.banking.UPDATE",
+                # Commissioned 2026-08-10 for zoho_invoice_revision_tool.py only:
+                # UPDATE for one existing-invoice revision, CREATE for one draft
+                # invoice. Nothing else in the tree may use either.
+                "ZohoBooks.invoices.UPDATE",
+                "ZohoBooks.invoices.CREATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
             },
         )
+        # No invoice DELETE/ALL/fullaccess scope may ever be prepared, so an
+        # invoice can never be deleted, voided, marked or mailed.
+        for forbidden in (
+            "ZohoBooks.invoices.DELETE",
+            "ZohoBooks.invoices.ALL",
+            "ZohoBooks.fullaccess.all",
+            # The discount correction gained UPDATE and nothing else: an
+            # estimate still cannot be deleted, sent, marked or converted.
+            "ZohoBooks.estimates.DELETE",
+            "ZohoBooks.estimates.ALL",
+        ):
+            self.assertNotIn(forbidden, tool.SCOPES)
         self.assertEqual(
             {
                 scope for scope in tool.SCOPES
@@ -80,9 +101,9 @@ class ZohoToolTests(unittest.TestCase):
             ["ZohoBooks.estimates.DELETE"],
             ["ZohoBooks.fullaccess.all"],
             ["ZohoInventory.inventoryadjustments.CREATE"],
-            ["ZohoBooks.invoices.CREATE"],
+            ["ZohoBooks.invoices.DELETE"],
             ["ZohoBooks.contacts.UPDATE"],
-            ["ZohoBooks.estimates.UPDATE"],
+            ["ZohoBooks.estimates.ALL"],
             ["ZohoBooks.banking.rules.UPDATE"],
             ["ZohoBooks.banking.DELETE"],
             ["ZohoBooks.banking.ALL"],
@@ -204,12 +225,17 @@ class ZohoToolTests(unittest.TestCase):
             payload = plan["payload"]
             self.assertEqual(payload["discount_type"], "item_level")
             self.assertIs(payload["is_discount_before_tax"], True)
-            self.assertEqual(payload["line_items"][0]["discount"], 10.0)
+            # The percentage is the STRING "10%": Zoho reads the bare number 10
+            # as a flat CAD 10.00, which is exactly the 2026-08-10 defect.
+            self.assertEqual(payload["line_items"][0]["discount"], "10%")
             self.assertEqual(payload["line_items"][0]["tax_id"], draft.TDS_GST_QST_TAX_ID)
             self.assertIn("Rachad's standing instruction", plan["sources"]["line_items"][0]["discount"])
             self.assertIn("Quebec", plan["sources"]["line_items"][0]["tax"])
 
             payload["line_items"][0]["discount"] = 0
+            with self.assertRaisesRegex(draft.DraftToolError, "automatic 10% discount"):
+                draft.validate_quote_customer_policy(payload)
+            payload["line_items"][0]["discount"] = 10.0
             with self.assertRaisesRegex(draft.DraftToolError, "automatic 10% discount"):
                 draft.validate_quote_customer_policy(payload)
 

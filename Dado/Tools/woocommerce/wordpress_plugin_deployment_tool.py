@@ -112,6 +112,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 from datetime import datetime, timedelta, timezone
+import functools
 import hashlib
 import json
 import os
@@ -123,6 +124,34 @@ import time
 from typing import Any, Callable, Iterator
 from urllib.parse import urlsplit
 import zipfile
+
+# One writer at a time on the shared authenticated WordPress window. Added
+# 2026-08-10 with Dado's Discord lane: her two chat lanes now run as genuinely
+# concurrent turns, and admin_session() below does not launch a browser -- it
+# attaches to the single long-lived Edge session on CDP 127.0.0.1:9229 and
+# drives contexts[0].pages[0]. Two concurrent turns would drive the same page.
+# Appended, never inserted first, so it cannot shadow a stdlib name.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
+
+
+def holds_wordpress_browser(purpose: str):
+    """Serialize a whole command against the shared WordPress admin browser.
+
+    Applied to the COMMAND rather than only to admin_session() so the hold spans
+    the emergency rollback too. Activation deliberately closes its session before
+    rolling back (nesting Playwright contexts fails only in production), which
+    would otherwise leave a gap for the other lane to take the browser at exactly
+    the moment a half-activated plugin needed deactivating. The lock is
+    re-entrant per thread, so the nested admin_session() calls inside are no-ops.
+    """
+    def decorate(function):
+        @functools.wraps(function)
+        def wrapper(*args: Any, **kwargs: Any):
+            with ui_browser_lock("wordpress", purpose=purpose):
+                return function(*args, **kwargs)
+        return wrapper
+    return decorate
 
 TOOL_NAME = "FRP Depot WordPress Plugin Deployment Tool"
 TOOL_VERSION = "1.2.0"
@@ -1055,7 +1084,10 @@ def admin_session() -> Iterator[AdminPage]:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 
-    with sync_playwright() as playwright:
+    # Belt and braces: the commands are decorated, but any future caller that
+    # reaches for the admin browser directly is serialized too. Re-entrant, so
+    # nesting inside a decorated command costs nothing.
+    with ui_browser_lock("wordpress", purpose="WordPress admin session"), sync_playwright() as playwright:
         try:
             browser = playwright.chromium.connect_over_cdp(CDP_ENDPOINT, timeout=15_000)
         except (PlaywrightError, PlaywrightTimeoutError) as exc:
@@ -1780,6 +1812,7 @@ def _verify_plan_preflight(plan: dict[str, Any]) -> dict[str, Any]:
     return evidence
 
 
+@holds_wordpress_browser("WordPress: replace the freight checkout-guard plugin")
 def command_commit_replace(args: argparse.Namespace) -> None:
     plan_path, plan = _open_commit(args, "plugin_replace")
     artifact = verify_artifact(Path(plan["artifact"]["path"]))
@@ -1938,6 +1971,7 @@ def _emergency_deactivate() -> dict[str, Any]:
             "plugin_file": PLUGIN_FILE}
 
 
+@holds_wordpress_browser("WordPress: activate the freight checkout-guard plugin")
 def command_commit_activate(args: argparse.Namespace) -> None:
     plan_path, plan = _open_commit(args, "plugin_activate")
     # Local file check, still before any browser: stale or tampered evidence
@@ -2070,6 +2104,7 @@ def _rollback_once(plan: dict[str, Any], plan_path: Path, lock: Path,
     return rollback
 
 
+@holds_wordpress_browser("WordPress: deactivate the freight checkout-guard plugin")
 def command_commit_deactivate(args: argparse.Namespace) -> None:
     plan_path, plan = _open_commit(args, "plugin_deactivate")
     lock = lock_path(plan_path)
@@ -2137,7 +2172,10 @@ def main() -> int:
     try:
         args.func(args)
         return 0
-    except (DeploymentError, OSError, ValueError) as exc:
+    except (DeploymentError, OSError, ValueError, UiLaneBusy, UiLaneLockError) as exc:
+        # UiLaneBusy is a clean refusal, not a crash: the other lane holds the
+        # shared WordPress window, no plan was locked and nothing was uploaded
+        # or activated. It must print one ERROR line, not a traceback.
         print("ERROR: " + str(exc), file=sys.stderr)
         return 1
 

@@ -3,9 +3,20 @@
 
 This tool exchanges a Zoho self-client grant for an encrypted refresh token and
 provides GET-only verification/report commands. Separately named tools may use
-the commissioned customer, draft-estimate, and tightly restricted banking-
-reconciliation Books CREATE/UPDATE scopes. This connector contains no service-
-API write endpoint itself.
+the commissioned customer, draft-estimate, tightly restricted banking-
+reconciliation, and invoice revision/draft-creation Books CREATE/UPDATE scopes.
+This connector contains no service-API write endpoint itself.
+
+Estimates.UPDATE exists for ONE narrow job: zoho_customer_quote_tool.py may
+rewrite the line discount of the two fixed draft estimates QT-000029 and
+QT-000030 from the numeric 10 Zoho read as CAD 10.00 into the string "10%".
+No scope here can send, mark, convert or delete an estimate.
+
+Invoices are NOT permanently unreachable: zoho_invoice_revision_tool.py may
+revise an EXISTING invoice's customer, reference number, dates, addresses,
+notes, terms and existing line values, and may create ONE new invoice in Draft
+status, both under the stage-then-commit flow. No scope here permits deleting,
+voiding, marking, mailing or otherwise transmitting an invoice.
 """
 
 from __future__ import annotations
@@ -81,8 +92,20 @@ READ_SCOPES = (
 ALLOWED_WRITE_SCOPES = (
     "ZohoBooks.contacts.CREATE",
     "ZohoBooks.estimates.CREATE",
+    # Commissioned 2026-08-10 for zoho_customer_quote_tool.py ONLY, and inside
+    # it only for the two fixed draft estimates QT-000029 / QT-000030, whose
+    # line discounts Zoho read as CAD 10.00 instead of 10%. Discount-only,
+    # stage-then-commit, one PUT each. There is deliberately no estimate
+    # DELETE/ALL/fullaccess scope and no scope that can send or mark an estimate.
+    "ZohoBooks.estimates.UPDATE",
     "ZohoBooks.banking.CREATE",
     "ZohoBooks.banking.UPDATE",
+    # Existing-invoice revision through zoho_invoice_revision_tool.py ONLY.
+    "ZohoBooks.invoices.UPDATE",
+    # ONE draft-invoice creation through that same named tool ONLY. There is
+    # deliberately no invoice DELETE, ALL or fullaccess scope, and no scope of
+    # any kind that could mail, void or change the status of an invoice.
+    "ZohoBooks.invoices.CREATE",
     "ZohoInventory.items.CREATE",
     "ZohoInventory.items.UPDATE",
 )
@@ -351,9 +374,11 @@ def command_connect(_: argparse.Namespace) -> None:
     append_receipt("zoho_connected_restricted_named_write_tools", str(VAULT_PATH))
     print("Zoho Books: CONNECTED AND VERIFIED")
     print("Zoho Inventory: CONNECTED AND VERIFIED RESTRICTED")
-    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION ONLY")
+    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION")
+    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
+    print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
-    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
+    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
 
 
 def command_scope_list(args: argparse.Namespace) -> None:
@@ -416,7 +441,8 @@ def command_reauthorize(_: argparse.Namespace) -> None:
     append_receipt("zoho_reauthorized_expanded_restricted_access", str(VAULT_PATH))
     print("Zoho reauthorization: SAVED FOR FRP DEPOT")
     print("New granular read scopes: INCLUDED")
-    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
+    print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
 
 
 def command_check(_: argparse.Namespace) -> None:
@@ -463,9 +489,11 @@ def command_check(_: argparse.Namespace) -> None:
     print(f"Inventory item read: VERIFIED ({len(inventory_items.get('items') or [])} sample row)")
     for label, count in probe_results:
         print(f"{label}: VERIFIED ({count} sample row(s))")
-    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION ONLY")
+    print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION")
+    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
+    print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
-    print("Delete/stock-adjustment/order/invoice/send scopes: ABSENT")
+    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
 
 
 def build_parser() -> argparse.ArgumentParser:

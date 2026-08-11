@@ -26,6 +26,7 @@ $LogFile     = Join-Path $Root 'Dado\40_Logs\gateway_watchdog.log'
 $Hermes      = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\hermes.exe'
 $VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
 $Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
+$LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
 
 function Write-Log([string]$Message) {
     try {
@@ -49,7 +50,38 @@ if (Test-Path $DisableFlag) {
 }
 
 # 2. Healthy is the common case, and must stay silent.
-if (Test-GatewayUp) { exit 0 }
+#
+#    "Healthy" here means only that PORT 8647 has a listener - and that port is
+#    API_SERVER_PORT, the HTTP api_server platform. It says NOTHING about chat.
+#    Hermes deliberately keeps the gateway up when a chat adapter fails to
+#    connect, so this check alone would report perfect health while Dado was
+#    unreachable - which is precisely the 2026-07-25 shape. Verified on her own
+#    log: Discord failed for ~90s on 2026-08-04 with the gateway "healthy"
+#    throughout. Since 2026-08-10 she has TWO chat lanes (Telegram + Discord),
+#    which makes this worse, not better: the surviving lane keeps answering and
+#    hides the dead one.
+#
+#    So when the port is up, ask the question the port cannot answer. That
+#    checker is silent when healthy, alerts out-of-band when a configured lane
+#    is down, and NEVER restarts anything - restarting kills in-flight turns.
+if (Test-GatewayUp) {
+    if ((Test-Path $LaneHealth) -and (Test-Path $VenvPython)) {
+        # -WhatIfOnly must stay a genuine dry run. Without this the switch would
+        # send Rachad real Telegram alerts and mutate the alert cooldown state,
+        # which is the opposite of what a rehearsal is for.
+        $laneArgs = @($LaneHealth)
+        if ($WhatIfOnly) { $laneArgs += '--dry-run' }
+        try {
+            & $VenvPython @laneArgs 2>&1 | Where-Object { $_ } | ForEach-Object {
+                Write-Log "lane-health: $_"
+            }
+        } catch {
+            # A broken lane checker must never take down the keep-alive itself.
+            Write-Log "LANE HEALTH CHECK FAILED: $($_.Exception.Message)"
+        }
+    }
+    exit 0
+}
 
 # 3. Down and not deliberately stopped.
 if ($WhatIfOnly) { Write-Log "WOULD START: port $Port has no listener"; exit 0 }

@@ -19,6 +19,17 @@ Two artifacts are under test:
    fixed 90-second bound, and is NEVER accepted as success. Only the complete
    staged protected state ends a commit successfully. Nothing in these tests
    actually waits -- the clock and the sleeper are injected and patched.
+
+   Plan schema 4 (2026-08-10) repairs the verifier itself. Schema 3 treated the
+   settled value as the only lawful before-state, and that deadlocked every
+   resource resting at the pending one -- reproduced live on
+   /products/1455/variations/1457, which refused to stage at all. Schema 4 adds a
+   SECOND closed baseline for exactly the already-proven pending digest, gated on
+   a bounded read-only stability proof at staging, re-proven before the write, and
+   allowed exactly two successful endings: the unchanged pending state (success
+   immediately) or the same entry settling, confirmed across a fixed bounded
+   schedule. The tests below hold both halves: the new path exists and is honest,
+   and the settled path is byte-for-byte the behaviour schema 3 proved.
 2. freight_checkout_guard/ -- the site-side WordPress plugin that blocks checkout.
 
 The checkout-guard scenarios live in freight_checkout_guard/freight_guard_scenarios.json
@@ -196,8 +207,21 @@ GLA_ID = 63040
 GLA_STAGED = "synced"
 GLA_TRANSIENT = "pending"
 # Fixed vocabulary the tool is allowed to say out loud. It is contract naming,
-# not a value it read back from the store.
-FIXED_VOCABULARY = ("gla_sync_pending_to_synced", "pending_not_accepted")
+# not a value it read back from the store. Every token here is a COMPOUND word:
+# none of them is the bare string "pending" or "synced", so stripping them cannot
+# also swallow a genuine leak of the live metadata value.
+FIXED_VOCABULARY = (
+    "gla_sync_pending_to_synced", "pending_not_accepted",
+    # Schema 4.
+    "pending_baseline", "settled_baseline",
+    "exact_staged_pending_state_or_confirmed_settled_state",
+    "exact_staged_pending_state", "confirmed_stable_settled_state",
+    "pending_settle_confirmation", "gla_pending_stability",
+    "pending_stability_schedule_seconds", "pending_stability_max_seconds",
+    "pending_settle_confirm_schedule_seconds", "pending_settle_confirm_max_seconds",
+    "pending_baseline_value_sha256", "pending_final_requirement",
+    "pending_settled_confirmed_targets",
+)
 
 
 def gla_meta_entries(value: str = GLA_STAGED) -> list[dict]:
@@ -217,11 +241,17 @@ def gla_variation_record(parent_id: int, variation_id: int,
 def strip_fixed_vocabulary(text: str) -> str:
     """Remove the fixed contract tokens so a leak check can be exact.
 
-    `gla_sync_pending_to_synced` and `pending_not_accepted` are hard-coded
-    vocabulary in the tool's own source. Everything else that spells either value
-    would have to have come from a live record, which is the leak this guards.
+    `gla_sync_pending_to_synced`, `pending_not_accepted` and the schema-4 baseline
+    names are hard-coded vocabulary in the tool's own source. Everything else that
+    spells either live value would have to have come from a record, which is the
+    leak this guards.
+
+    LONGEST FIRST, deliberately: several tokens contain another one
+    (`exact_staged_pending_state` sits inside
+    `exact_staged_pending_state_or_confirmed_settled_state`), and stripping the
+    short one first would leave an orphan tail that reads like a leak.
     """
-    for token in FIXED_VOCABULARY:
+    for token in sorted(FIXED_VOCABULARY, key=len, reverse=True):
         text = text.replace(token, "")
     return text
 
@@ -657,6 +687,38 @@ class PlanImmutabilityTests(PlanFixture):
             lambda plan: plan["targets"][0].__setitem__("gla_convergence_eligible", "yes"),
             lambda plan: plan["targets"][0].__setitem__("gla_convergence_eligible", 1),
             lambda plan: plan["targets"][0].pop("gla_convergence_eligible"),
+            # -- schema 4 additions ---------------------------------------
+            lambda plan: plan.__setitem__("schema_version", 3),
+            lambda plan: plan.__setitem__("tool_version", "3.0.0"),
+            lambda plan: plan["convergence_contract"].pop("baseline_modes"),
+            lambda plan: plan["convergence_contract"].pop("pending_final_requirement"),
+            lambda plan: plan["convergence_contract"].__setitem__(
+                "baseline_modes", ["absent"]),
+            lambda plan: plan["convergence_contract"].__setitem__(
+                "pending_baseline_value_sha256", "0" * 64),
+            lambda plan: plan["convergence_contract"].__setitem__(
+                "settled_baseline_value_sha256", "0" * 63),
+            lambda plan: plan["convergence_contract"].update(
+                {"pending_stability_schedule_seconds": [600, 600],
+                 "pending_stability_max_seconds": 1200}),
+            lambda plan: plan["convergence_contract"].__setitem__(
+                "pending_stability_max_seconds", 60),
+            lambda plan: plan["convergence_contract"].update(
+                {"pending_settle_confirm_schedule_seconds": [600, 600],
+                 "pending_settle_confirm_max_seconds": 1200}),
+            lambda plan: plan["convergence_contract"].__setitem__(
+                "pending_final_requirement", "accept_anything"),
+            # The baseline mode is re-derived from the projection, never trusted.
+            lambda plan: plan["targets"][0].pop("gla_baseline_mode"),
+            lambda plan: plan["targets"][0].pop("gla_pending_stability"),
+            lambda plan: plan["targets"][0].__setitem__(
+                "gla_baseline_mode", "pending_baseline"),
+            lambda plan: plan["targets"][0].__setitem__(
+                "gla_baseline_mode", "settled_baseline"),
+            lambda plan: plan["targets"][0].__setitem__("gla_baseline_mode", "anything"),
+            lambda plan: plan["targets"][0].__setitem__("gla_baseline_mode", None),
+            lambda plan: plan["targets"][0].__setitem__(
+                "gla_pending_stability", {"stable": True}),
         )
         for index, mutate in enumerate(mutations):
             with self.subTest(index=index):
@@ -1230,16 +1292,16 @@ class MetadataDiagnosticTests(unittest.TestCase):
 
 
 class SchemaVersionTests(PlanFixture):
-    def test_a_staged_plan_declares_schema_three_and_the_tool_version(self):
+    def test_a_staged_plan_declares_schema_four_and_the_tool_version(self):
         store = self._assign_store()
         plan_path, result = self._stage(store, self._assign_input())
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
-        self.assertEqual(policy.SCHEMA_VERSION, 3)
-        self.assertEqual(policy.TOOL_VERSION, "3.0.0")
-        self.assertEqual(plan["schema_version"], 3)
-        self.assertEqual(plan["tool_version"], "3.0.0")
-        self.assertEqual(result["schema_version"], 3)
-        self.assertEqual(result["tool_version"], "3.0.0")
+        self.assertEqual(policy.SCHEMA_VERSION, 4)
+        self.assertEqual(policy.TOOL_VERSION, "4.0.0")
+        self.assertEqual(plan["schema_version"], 4)
+        self.assertEqual(plan["tool_version"], "4.0.0")
+        self.assertEqual(result["schema_version"], 4)
+        self.assertEqual(result["tool_version"], "4.0.0")
 
     def test_every_target_carries_the_closed_per_field_and_metadata_evidence(self):
         store = self._assign_store()
@@ -1250,11 +1312,14 @@ class SchemaVersionTests(PlanFixture):
                 "kind", "product_id", "variation_id", "before_shipping_class",
                 "before_stale_fingerprint", "before_protected_fingerprint",
                 "before_date_modified_gmt", "before_protected_field_fingerprints",
-                "before_meta_data_projection", "gla_convergence_eligible",
+                "before_meta_data_projection", "gla_baseline_mode",
+                "gla_convergence_eligible", "gla_pending_stability",
             })
-            # These fixtures carry no Google-sync entry at all, so the bounded
-            # wait can never apply to them.
+            # These fixtures carry no Google-sync entry at all, so neither bounded
+            # path can ever apply to them, and there is nothing to prove still.
+            self.assertEqual(target["gla_baseline_mode"], "absent")
             self.assertIs(target["gla_convergence_eligible"], False)
+            self.assertIsNone(target["gla_pending_stability"])
             fingerprints = target["before_protected_field_fingerprints"]
             self.assertEqual(set(fingerprints), set(policy.PROTECTED_FIELDS))
             for field, digest in fingerprints.items():
@@ -1307,6 +1372,8 @@ class SchemaVersionTests(PlanFixture):
             plan.pop("convergence_contract")
             for target in plan["targets"]:
                 target.pop("gla_convergence_eligible")
+                target.pop("gla_baseline_mode")
+                target.pop("gla_pending_stability")
 
         self._rewrite(plan_path, downgrade, rehash=True)
         with mock.patch.object(policy.wc, "load_vault") as load, \
@@ -1320,6 +1387,58 @@ class SchemaVersionTests(PlanFixture):
             write.assert_not_called()
         self.assertIn("schema", str(caught.exception).casefold())
         self.assertFalse(policy.lock_path(plan_path.resolve()).exists())
+
+    def test_a_schema_three_plan_is_refused_before_any_network_even_when_rehashed(self):
+        """Schema 3 carries no baseline mode and no stability proof, so a pending
+        before-state in one could never have been measured still. It is refused
+        exactly like schema 1 and 2 -- before the vault, before the network."""
+        store = self._assign_store()
+        plan_path, _ = self._stage(store, self._assign_input())
+
+        def downgrade(plan):
+            plan["schema_version"] = 3
+            plan["tool_version"] = "3.0.0"
+            for field in ("baseline_modes", "settled_baseline_value_sha256",
+                          "pending_baseline_value_sha256",
+                          "pending_stability_schedule_seconds",
+                          "pending_stability_max_seconds",
+                          "pending_settle_confirm_schedule_seconds",
+                          "pending_settle_confirm_max_seconds",
+                          "pending_final_requirement"):
+                plan["convergence_contract"].pop(field)
+            for target in plan["targets"]:
+                target.pop("gla_baseline_mode")
+                target.pop("gla_pending_stability")
+
+        self._rewrite(plan_path, downgrade, rehash=True)
+        with mock.patch.object(policy.wc, "load_vault") as load, \
+             mock.patch.object(policy.wc, "api_get") as get, \
+             mock.patch.object(policy.wc, "api_request") as write:
+            with self.assertRaises(policy.ShippingPolicyError) as caught:
+                policy.command_commit(argparse.Namespace(
+                    plan=str(plan_path), approval="APPROVED"))
+            load.assert_not_called()
+            get.assert_not_called()
+            write.assert_not_called()
+        self.assertIn("schema", str(caught.exception).casefold())
+        self.assertFalse(policy.lock_path(plan_path.resolve()).exists())
+
+    def test_only_the_current_schema_and_tool_version_load(self):
+        """Every earlier schema is unusable, and so is a version-only edit."""
+        store = self._assign_store()
+        plan_path, _ = self._stage(store, self._assign_input())
+        for schema, tool_version in ((1, "1.0.0"), (2, "2.0.0"), (3, "3.0.0"),
+                                     (5, "5.0.0"), (4, "3.0.0"), (3, "4.0.0")):
+            with self.subTest(schema=schema, tool_version=tool_version):
+                self._rewrite(plan_path, lambda plan: plan.update(
+                    {"schema_version": schema, "tool_version": tool_version}),
+                    rehash=True)
+                with mock.patch.object(policy.wc, "load_vault") as load, \
+                     mock.patch.object(policy.wc, "api_get") as get:
+                    with self.assertRaises(policy.ShippingPolicyError):
+                        policy.load_plan(str(plan_path))
+                    load.assert_not_called()
+                    get.assert_not_called()
 
     def test_the_prior_indeterminate_lock_is_not_disturbed_by_the_new_schema(self):
         """A schema-1 plan that already holds a lock stays locked AND refused."""
@@ -1672,7 +1791,64 @@ class ConvergenceContractTests(PlanFixture):
             "max_seconds": 90,
             "final_requirement": "exact_staged_protected_state",
             "allowed_changed_protected_fields_during_wait": ["meta_data"],
+            # Schema 4 adds the pending baseline. It introduces NO third digest:
+            # the two baselines are the same two values the incident proved.
+            "baseline_modes": ["absent", "settled_baseline", "pending_baseline"],
+            "settled_baseline_value_sha256":
+                "bed425acaecb0b9f4dd17f2f763e28b52f027d43feb0265137f49c86bb875c8c",
+            "pending_baseline_value_sha256":
+                "12adac54ac6f7140109391b670b3cbcd51f083d8f5ee62ce26857c794ed67d36",
+            "pending_stability_schedule_seconds": [2, 4],
+            "pending_stability_max_seconds": 6,
+            "pending_settle_confirm_schedule_seconds": [2, 4],
+            "pending_settle_confirm_max_seconds": 6,
+            "pending_final_requirement":
+                "exact_staged_pending_state_or_confirmed_settled_state",
         })
+
+    def test_the_two_baselines_reuse_the_two_proven_digests_and_add_no_third(self):
+        contract = policy.convergence_contract()
+        self.assertEqual(contract["settled_baseline_value_sha256"],
+                         contract["staged_value_sha256"])
+        self.assertEqual(contract["pending_baseline_value_sha256"],
+                         contract["transient_value_sha256"])
+        self.assertEqual(set(policy.BASELINE_VALUE_SHA256.values()),
+                         {policy.GLA_STAGED_VALUE_SHA256,
+                          policy.GLA_TRANSIENT_VALUE_SHA256})
+        self.assertEqual(set(policy.BASELINE_VALUE_SHA256),
+                         {"settled_baseline", "pending_baseline"})
+        self.assertEqual(policy.BASELINE_MODES,
+                         ("absent", "settled_baseline", "pending_baseline"))
+
+    def test_the_two_pending_schedules_are_fixed_and_inside_their_own_ceilings(self):
+        for schedule, total, ceiling in (
+            (policy.PENDING_STABILITY_SCHEDULE_SECONDS,
+             policy.PENDING_STABILITY_MAX_SECONDS,
+             policy.PENDING_STABILITY_CEILING_SECONDS),
+            (policy.PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS,
+             policy.PENDING_SETTLE_CONFIRM_MAX_SECONDS,
+             policy.PENDING_SETTLE_CONFIRM_CEILING_SECONDS),
+        ):
+            with self.subTest(schedule=schedule):
+                self.assertEqual(schedule, (2, 4))
+                self.assertEqual(sum(schedule), total)
+                self.assertEqual(total, 6)
+                self.assertLessEqual(total, ceiling)
+                self.assertEqual(ceiling, 6)
+                self.assertTrue(all(isinstance(step, int) and step > 0
+                                    for step in schedule))
+        # Three observations at staging (the first read plus two more); at least
+        # one confirming read after a settling write.
+        self.assertEqual(policy.PENDING_STABILITY_OBSERVATIONS, 3)
+        self.assertGreaterEqual(policy.PENDING_SETTLE_CONFIRM_OBSERVATIONS, 1)
+        self.assertEqual(policy.PENDING_SETTLE_CONFIRM_OBSERVATIONS, 2)
+
+    def test_no_baseline_mode_is_a_bare_live_value(self):
+        """A mode name must never be confusable with a value read from the store."""
+        for mode in policy.BASELINE_MODES:
+            with self.subTest(mode=mode):
+                self.assertNotEqual(mode, GLA_STAGED)
+                self.assertNotEqual(mode, GLA_TRANSIENT)
 
     def test_the_digests_are_the_canonical_hashes_of_the_two_observed_values(self):
         self.assertEqual(policy.sha256_of(GLA_STAGED), policy.GLA_STAGED_VALUE_SHA256)
@@ -1736,6 +1912,46 @@ class ConvergenceContractTests(PlanFixture):
                 "allowed_changed_protected_fields_during_wait", [])),
             mutated(lambda c: c.__setitem__(
                 "allowed_changed_protected_fields_during_wait", "meta_data")),
+            # Schema 4. Neither pending schedule may be widened, re-ordered,
+            # floated, emptied or decoupled from its own declared total.
+            mutated(lambda c: c.__setitem__("pending_stability_schedule_seconds",
+                                            [600, 600])),
+            mutated(lambda c: c.__setitem__("pending_stability_max_seconds", 1200)),
+            mutated(lambda c: c.update({"pending_stability_schedule_seconds": [600, 600],
+                                        "pending_stability_max_seconds": 1200})),
+            mutated(lambda c: c.__setitem__("pending_stability_schedule_seconds",
+                                            [2.0, 4.0])),
+            mutated(lambda c: c.__setitem__("pending_stability_schedule_seconds", [2])),
+            mutated(lambda c: c.__setitem__("pending_stability_schedule_seconds", [])),
+            mutated(lambda c: c.__setitem__("pending_stability_schedule_seconds",
+                                            [0, 6])),
+            mutated(lambda c: c["pending_stability_schedule_seconds"].reverse()),
+            mutated(lambda c: c.__setitem__("pending_stability_max_seconds", 6.0)),
+            mutated(lambda c: c.__setitem__("pending_settle_confirm_schedule_seconds",
+                                            [600, 600])),
+            mutated(lambda c: c.update({
+                "pending_settle_confirm_schedule_seconds": [600, 600],
+                "pending_settle_confirm_max_seconds": 1200})),
+            mutated(lambda c: c.__setitem__("pending_settle_confirm_schedule_seconds",
+                                            [])),
+            mutated(lambda c: c["pending_settle_confirm_schedule_seconds"].reverse()),
+            # Nor may a baseline be added, renamed, dropped or re-pointed.
+            mutated(lambda c: c.__setitem__(
+                "baseline_modes", ["absent", "settled_baseline", "pending_baseline",
+                                   "anything"])),
+            mutated(lambda c: c.__setitem__("baseline_modes", ["absent"])),
+            mutated(lambda c: c.__setitem__(
+                "baseline_modes", ["pending_baseline", "settled_baseline", "absent"])),
+            mutated(lambda c: c.__setitem__("pending_baseline_value_sha256", "0" * 64)),
+            mutated(lambda c: c.__setitem__("pending_baseline_value_sha256", "0" * 63)),
+            mutated(lambda c: c.__setitem__("settled_baseline_value_sha256", "0" * 64)),
+            # Swapping the two baselines would make the pending state the success
+            # condition of the settled path, and vice versa.
+            mutated(lambda c: c.update({
+                "settled_baseline_value_sha256": policy.GLA_TRANSIENT_VALUE_SHA256,
+                "pending_baseline_value_sha256": policy.GLA_STAGED_VALUE_SHA256})),
+            mutated(lambda c: c.__setitem__("pending_final_requirement",
+                                            "accept_anything")),
         )
         for value in refused:
             with self.subTest(value=str(value)[:70]):
@@ -1778,17 +1994,34 @@ class ConvergenceContractTests(PlanFixture):
             {**self._assign_input(), "max_seconds": 3600},
             {**self._assign_input(), "gla_convergence_eligible": True},
             {**self._assign_input(), "final_requirement": "accept_the_transient"},
+            # Schema 4: a request may not choose a baseline, a digest, a schedule
+            # or a ceiling either.
+            {**self._assign_input(), "gla_baseline_mode": "pending_baseline"},
+            {**self._assign_input(), "baseline_modes": ["pending_baseline"]},
+            {**self._assign_input(), "gla_pending_stability": {"stable": True}},
+            {**self._assign_input(), "pending_baseline_value_sha256": "0" * 64},
+            {**self._assign_input(), "pending_stability_schedule_seconds": [0]},
+            {**self._assign_input(), "pending_stability_max_seconds": 0},
+            {**self._assign_input(), "pending_settle_confirm_schedule_seconds": []},
+            {**self._assign_input(), "pending_settle_confirm_max_seconds": 0},
+            {**self._assign_input(), "pending_final_requirement": "accept_anything"},
         )
         for data in refused:
             with self.subTest(extra=sorted(set(data) - {"action", "targets", "sources"})):
                 with self.assertRaises(policy.ShippingPolicyError):
                     self._stage(store, data)
-        # Nor may a target row carry its own eligibility or timing.
+        # Nor may a target row carry its own baseline, eligibility or timing.
         for row in (
             {"kind": "variation", "product_id": 1423, "variation_id": 1424,
              "gla_convergence_eligible": True},
             {"kind": "variation", "product_id": 1423, "variation_id": 1424,
              "max_seconds": 3600},
+            {"kind": "variation", "product_id": 1423, "variation_id": 1424,
+             "gla_baseline_mode": "pending_baseline"},
+            {"kind": "variation", "product_id": 1423, "variation_id": 1424,
+             "gla_pending_stability": {"stable": True}},
+            {"kind": "variation", "product_id": 1423, "variation_id": 1424,
+             "pending_stability_max_seconds": 0},
         ):
             with self.subTest(row=sorted(row)):
                 with self.assertRaises(policy.ShippingPolicyError):
@@ -1797,44 +2030,70 @@ class ConvergenceContractTests(PlanFixture):
 
 
 # ---------------------------------------------------------------------------
-# Schema 3: stage eligibility
+# Schema 4: the closed baseline modes (schema 3's eligibility, widened by one)
 # ---------------------------------------------------------------------------
-class GlaEligibilityTests(PlanFixture):
+class GlaBaselineModeTests(PlanFixture):
     def _projection(self, entries):
         return policy.metadata_projection({"meta_data": entries})
 
-    def test_exactly_one_settled_entry_is_eligible(self):
-        self.assertIs(
-            policy.gla_convergence_eligible(self._projection(gla_meta_entries())), True)
+    def test_exactly_one_settled_entry_is_the_settled_baseline(self):
+        projection = self._projection(gla_meta_entries())
+        self.assertEqual(policy.gla_baseline_mode(projection), "settled_baseline")
+        self.assertIs(policy.gla_convergence_eligible(projection), True)
 
-    def test_an_absent_key_is_simply_not_eligible(self):
-        self.assertIs(policy.gla_convergence_eligible([]), False)
-        self.assertIs(
-            policy.gla_convergence_eligible(self._projection(meta_entries())), False)
-        self.assertIs(policy.gla_convergence_eligible(self._projection(
-            [{"id": 1, "key": "_wc_gla_sync_status_other", "value": GLA_STAGED}])), False)
+    def test_exactly_one_pending_entry_is_the_pending_baseline(self):
+        """Schema 3 refused this outright. That refusal was the deadlock."""
+        projection = self._projection(gla_meta_entries(GLA_TRANSIENT))
+        self.assertEqual(policy.gla_baseline_mode(projection), "pending_baseline")
+        # It is a lawful baseline, but it is NOT the settled path's precondition.
+        self.assertIs(policy.gla_convergence_eligible(projection), False)
 
-    def test_duplicate_malformed_or_unsettled_entries_refuse_staging(self):
+    def test_an_absent_key_is_the_absent_baseline(self):
+        for projection in ([], self._projection(meta_entries()),
+                           self._projection([{"id": 1, "key": "_wc_gla_sync_status_other",
+                                              "value": GLA_STAGED}])):
+            with self.subTest(projection=len(projection)):
+                self.assertEqual(policy.gla_baseline_mode(projection), "absent")
+                self.assertIs(policy.gla_convergence_eligible(projection), False)
+
+    def test_duplicate_malformed_or_undiagnosed_entries_refuse_staging(self):
         refused = (
             # Two entries for one key: which one is the plan's before-state?
             gla_meta_entries() + [{"id": 63041, "key": GLA_KEY, "value": GLA_STAGED}],
             gla_meta_entries() + [{"id": 63040, "key": GLA_KEY, "value": GLA_STAGED}],
-            # Google sync is in flight right now.
-            gla_meta_entries(GLA_TRANSIENT),
-            # Any other value at all.
+            gla_meta_entries(GLA_TRANSIENT) + [
+                {"id": 63041, "key": GLA_KEY, "value": GLA_TRANSIENT}],
+            # A value nobody has diagnosed. Schema 4 adds a SECOND known state,
+            # not a tolerance for unknown ones.
             gla_meta_entries("error"),
             gla_meta_entries(""),
             gla_meta_entries("SYNCED"),
+            gla_meta_entries("PENDING"),
+            gla_meta_entries("pending "),
             meta_entries() + [{"id": 63040, "key": GLA_KEY, "value": ["synced"]}],
+            meta_entries() + [{"id": 63040, "key": GLA_KEY, "value": ["pending"]}],
             # Unidentifiable entries.
             meta_entries() + [{"id": True, "key": GLA_KEY, "value": GLA_STAGED}],
             meta_entries() + [{"id": "63040", "key": GLA_KEY, "value": GLA_STAGED}],
             meta_entries() + [{"key": GLA_KEY, "value": GLA_STAGED}],
+            meta_entries() + [{"key": GLA_KEY, "value": GLA_TRANSIENT}],
         )
         for entries in refused:
             with self.subTest(entries=str(entries[-1])[:60]):
                 with self.assertRaises(policy.ShippingPolicyError):
+                    policy.gla_baseline_mode(self._projection(entries))
+                with self.assertRaises(policy.ShippingPolicyError):
                     policy.gla_convergence_eligible(self._projection(entries))
+
+    def test_the_refusal_for_an_undiagnosed_value_names_no_value(self):
+        with self.assertRaises(policy.ShippingPolicyError) as caught:
+            policy.gla_baseline_mode(self._projection(gla_meta_entries("error")))
+        self.assertIn(GLA_KEY, str(caught.exception))
+        message = strip_fixed_vocabulary(str(caught.exception))
+        # Neither the value it found nor either value it expected.
+        self.assertNotIn("error", message)
+        self.assertNotIn(GLA_STAGED, message)
+        self.assertNotIn(GLA_TRANSIENT, message)
 
     def test_staging_records_eligibility_and_names_it_without_a_value(self):
         store = FakeStore(
@@ -1847,8 +2106,14 @@ class GlaEligibilityTests(PlanFixture):
             "sources": {"policy": "shipping_policy_manifest.json 2026-08-09"},
         })
         self.assertIs(result["targets"][0]["gla_convergence_eligible"], True)
+        self.assertEqual(result["targets"][0]["gla_baseline_mode"], "settled_baseline")
+        self.assertIsNone(result["targets"][0]["gla_pending_stability"])
+        self.assertEqual(result["baseline_modes"],
+                         {"absent": 0, "settled_baseline": 1, "pending_baseline": 0})
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
         self.assertIs(plan["targets"][0]["gla_convergence_eligible"], True)
+        self.assertEqual(plan["targets"][0]["gla_baseline_mode"], "settled_baseline")
+        self.assertIsNone(plan["targets"][0]["gla_pending_stability"])
         # The key is named; neither value is anywhere in the plan or the preview.
         text = strip_fixed_vocabulary(
             plan_path.read_text(encoding="utf-8") + json.dumps(result))
@@ -1857,11 +2122,12 @@ class GlaEligibilityTests(PlanFixture):
         self.assertNotIn(GLA_TRANSIENT, text)
         self.assertNotIn(SECRET_META_VALUE, text)
 
-    def test_staging_refuses_a_target_whose_google_sync_is_unsettled(self):
-        """Rachad is never asked to approve a plan with a moving before-state."""
+    def test_staging_refuses_a_target_at_an_undiagnosed_sync_value(self):
+        """Rachad is never asked to approve a plan built on a state nobody has
+        diagnosed. Schema 4 added ONE more known state, not a tolerance."""
         store = FakeStore(
             {"/products/1455/variations/2056":
-                gla_variation_record(1455, 2056, GLA_TRANSIENT)},
+                gla_variation_record(1455, 2056, "error")},
             classes=[dict(FREIGHT_CLASS_ROW)],
         )
         with self.assertRaises(policy.ShippingPolicyError) as caught:
@@ -1872,7 +2138,9 @@ class GlaEligibilityTests(PlanFixture):
                 "sources": {"policy": "manifest"},
             })
         self.assertIn(GLA_KEY, str(caught.exception))
-        self.assertNotIn(GLA_TRANSIENT, strip_fixed_vocabulary(str(caught.exception)))
+        message = strip_fixed_vocabulary(str(caught.exception))
+        self.assertNotIn(GLA_TRANSIENT, message)
+        self.assertNotIn("error", message)
         self.assertEqual(store.writes, [])
         self.assertEqual(list(self.plan_dir.glob("*.json")), [])
 
@@ -1883,8 +2151,9 @@ class GlaEligibilityTests(PlanFixture):
 class GlaTransientDetectorTests(unittest.TestCase):
     ENDPOINT = "/products/1455/variations/2056"
 
-    def _target(self, record, eligible=None):
+    def _target(self, record, eligible=None, mode=None):
         projection = policy.metadata_projection(record)
+        derived = policy.gla_baseline_mode(projection)
         return {
             "kind": "variation", "product_id": 1455, "variation_id": 2056,
             "before_shipping_class": "",
@@ -1894,14 +2163,16 @@ class GlaTransientDetectorTests(unittest.TestCase):
             "before_protected_field_fingerprints":
                 policy.protected_field_fingerprints(record),
             "before_meta_data_projection": projection,
-            "gla_convergence_eligible": (policy.gla_convergence_eligible(projection)
+            "gla_baseline_mode": derived if mode is None else mode,
+            "gla_convergence_eligible": (derived == "settled_baseline"
                                          if eligible is None else eligible),
+            "gla_pending_stability": None,
         }
 
     def _pair(self, staged_value=GLA_STAGED, readback_value=GLA_TRANSIENT,
-              eligible=None, **readback):
+              eligible=None, mode=None, **readback):
         staged = gla_variation_record(1455, 2056, staged_value)
-        target = self._target(staged, eligible=eligible)
+        target = self._target(staged, eligible=eligible, mode=mode)
         moved = gla_variation_record(1455, 2056, readback_value,
                                      shipping_class=policy.FREIGHT_CLASS_SLUG)
         moved.update(readback)
@@ -2021,6 +2292,141 @@ class GlaTransientDetectorTests(unittest.TestCase):
                 copy = json.loads(json.dumps(diagnostic))
                 mutate(copy)
                 self.assertIs(policy.is_gla_sync_transient(target, copy, True), False)
+
+
+# ---------------------------------------------------------------------------
+# Schema 4: the settling detector (pure) -- the reverse half of the same move
+# ---------------------------------------------------------------------------
+class GlaSettlingDetectorTests(GlaTransientDetectorTests):
+    """Same fixture, mirrored contract: pending -> settled, on a pending baseline.
+
+    Inherits the transient tests deliberately: whatever schema 4 does, the settled
+    path's detector must keep answering exactly as it did under schema 3.
+    """
+
+    def _settling(self, **kwargs):
+        kwargs.setdefault("staged_value", GLA_TRANSIENT)
+        kwargs.setdefault("readback_value", GLA_STAGED)
+        kwargs.setdefault("mode", "pending_baseline")
+        return self._pair(**kwargs)
+
+    def test_the_exact_settling_move_is_recognised(self):
+        target, diagnostic = self._settling()
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual(diagnostic["changed_protected_fields"], ["meta_data"])
+        detail = diagnostic["meta_data_projection"]["diagnostic"]
+        self.assertEqual(detail["value_changed_entry_count"], 1)
+        self.assertEqual(detail["value_changed_entries"][0]["id"], GLA_ID)
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True), True)
+        # And it is NOT the settled path's transient, in either direction.
+        self.assertIs(policy.is_gla_sync_transient(target, diagnostic, True), False)
+
+    def test_the_two_detectors_never_both_fire(self):
+        for label, pair in (("settled_baseline", self._pair()),
+                            ("pending_baseline", self._settling())):
+            with self.subTest(label=label):
+                target, diagnostic = pair
+                self.assertNotEqual(
+                    policy.is_gla_sync_transient(target, diagnostic, True),
+                    policy.is_gla_sync_settling(target, diagnostic, True))
+
+    def test_a_class_that_does_not_match_is_never_settling(self):
+        target, diagnostic = self._settling()
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, False), False)
+
+    def test_only_a_pending_baseline_target_can_settle(self):
+        for mode in ("absent", "settled_baseline", "", "pending", "PENDING_BASELINE"):
+            with self.subTest(mode=mode):
+                target, diagnostic = self._settling(mode=mode)
+                self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True),
+                              False)
+        # A target with no mode at all -- a schema-3 shape -- cannot settle either.
+        target, diagnostic = self._settling()
+        target.pop("gla_baseline_mode")
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True), False)
+
+    def test_the_forward_transition_is_not_a_settlement(self):
+        target, diagnostic = self._pair(mode="pending_baseline")
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True), False)
+
+    def test_any_other_readback_value_is_not_a_settlement(self):
+        for value in ("error", "", "not-synced", "SYNCED", "synced ", GLA_TRANSIENT):
+            with self.subTest(value=value):
+                target, diagnostic = self._settling(readback_value=value)
+                self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True),
+                              False)
+
+    def test_another_protected_field_moving_alongside_it_is_not_a_settlement(self):
+        for field, value in (("weight", "99.9"), ("regular_price", "0.01"),
+                             ("name", "Renamed"), ("sku", "OTHER"), ("status", "draft")):
+            with self.subTest(field=field):
+                target, diagnostic = self._settling(**{field: value})
+                self.assertEqual(diagnostic["changed_protected_fields"],
+                                 sorted(["meta_data", field]))
+                self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True),
+                              False)
+
+    def test_any_other_metadata_movement_is_not_a_settlement(self):
+        settled = gla_meta_entries(GLA_STAGED)
+        renamed = [dict(row) for row in settled]
+        renamed[0] = {"id": 8801, "key": "_renamed", "value": "yes"}
+        doubled = [dict(row) for row in settled]
+        doubled[1] = {**doubled[1], "value": "also changed"}
+        for label, entries in (
+            ("added", settled + [{"id": 9500, "key": "_added", "value": "v"}]),
+            ("removed", settled[1:]),
+            ("reordered", list(reversed(settled))),
+            ("identity_changed", renamed),
+            ("two_values_changed", doubled),
+            ("duplicated", settled + [{"id": GLA_ID, "key": GLA_KEY,
+                                       "value": GLA_STAGED}]),
+        ):
+            with self.subTest(label=label):
+                target, diagnostic = self._settling(meta_data=entries)
+                self.assertIsNotNone(diagnostic)
+                self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True),
+                              False)
+
+    def test_a_hand_built_diagnostic_cannot_fake_a_settlement(self):
+        target, diagnostic = self._settling()
+        for label, mutate in (
+            ("no_aggregate_mismatch",
+             lambda d: d["aggregate_protected_fingerprint"].__setitem__("matches", True)),
+            ("meta_status_matched",
+             lambda d: d["meta_data_projection"].__setitem__("status", "matched")),
+            ("no_meta_detail",
+             lambda d: d["meta_data_projection"].__setitem__("diagnostic", None)),
+            ("extra_changed_field",
+             lambda d: d.__setitem__("changed_protected_fields", ["meta_data", "price"])),
+            ("identity_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "identity_changed_position_count", 1)),
+            ("order_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "order_changed", True)),
+            ("counts_differ",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "readback_entry_count", 9)),
+            ("omitted_rows",
+             lambda d: d["meta_data_projection"]["diagnostic"]["omitted_from_report"]
+             .__setitem__("value_changed", 3)),
+            ("index_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"]["value_changed_entries"][0]
+             .__setitem__("readback_index", 9)),
+            ("id_dropped",
+             lambda d: d["meta_data_projection"]["diagnostic"]["value_changed_entries"][0]
+             .__setitem__("id", None)),
+            ("key_changed",
+             lambda d: d["meta_data_projection"]["diagnostic"]["value_changed_entries"][0]
+             .__setitem__("key", "_other_key")),
+            ("value_not_differing",
+             lambda d: d["meta_data_projection"]["diagnostic"]["value_changed_entries"][0]
+             .__setitem__("value_differs", False)),
+        ):
+            with self.subTest(label=label):
+                copy = json.loads(json.dumps(diagnostic))
+                mutate(copy)
+                self.assertIs(policy.is_gla_sync_settling(target, copy, True), False)
 
 
 # ---------------------------------------------------------------------------
@@ -2405,6 +2811,601 @@ class ConvergenceCommitTests(ConvergenceFixture):
             write.assert_not_called()
         self.assertEqual(self.sleeps, [])
         self.assertEqual(store.writes, [])
+
+
+# ---------------------------------------------------------------------------
+# Schema 4: staging a pending baseline -- the bounded read-only stability proof
+# ---------------------------------------------------------------------------
+class PendingBaselineFixture(ConvergenceFixture):
+    """The deadlocked shape, reproduced: a resource resting at the pending digest.
+
+    Live evidence on /products/1455/variations/1457 and the next five blank FRP
+    Pipe candidates: they sit there and stay there, long past the 90-second
+    transient window. Schema 3 refused to stage any of them.
+    """
+
+    def _store(self):
+        return FakeStore(
+            {
+                self.ENDPOINT: gla_variation_record(1455, 2056, GLA_TRANSIENT),
+                self.SECOND: gla_variation_record(1455, 2057, GLA_TRANSIENT),
+            },
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+
+    def _armed(self, script, targets=None):
+        store, plan_path = super()._armed(script, targets)
+        self.sleeps.clear()
+        return store, plan_path
+
+    def _stage_with_drift(self, store, patches, data=None):
+        """Stage while the store mutates the record before its Nth read of it.
+
+        Read 1 is staging's own first read; 2 and 3 are the stability observations.
+        """
+        original = store.api_get
+        seen = {"count": 0}
+
+        def drifting(endpoint, params=None, vault=None):
+            if endpoint == self.ENDPOINT:
+                seen["count"] += 1
+                patch = patches.get(seen["count"])
+                if patch:
+                    store.records[endpoint].update(patch)
+            return original(endpoint, params, vault)
+
+        path = self._input(data or self._request())
+        with mock.patch.object(policy.wc, "api_get", side_effect=drifting), \
+             mock.patch.object(policy.wc, "api_request", side_effect=store.api_request):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                policy.command_stage(argparse.Namespace(input=str(path)))
+        return json.loads(output.getvalue())
+
+
+class PendingBaselineStagingTests(PendingBaselineFixture):
+    def test_a_pending_baseline_stages_after_three_exactly_matching_reads(self):
+        """The repair itself: schema 3 refused this outright."""
+        store = self._store()
+        plan_path, result = self._stage(store, self._request())
+        self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
+        self.assertEqual(result["targets"][0]["gla_baseline_mode"], "pending_baseline")
+        self.assertIs(result["targets"][0]["gla_convergence_eligible"], False)
+        self.assertEqual(result["baseline_modes"],
+                         {"absent": 0, "settled_baseline": 0, "pending_baseline": 1})
+        # Three fresh reads of the same exact resource, paced only by the schedule.
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 3)
+        self.assertEqual(self.sleeps, [2, 4])
+        self.assertEqual(sum(self.sleeps), 6)
+        # Read-only: staging wrote nothing to the store.
+        self.assertEqual(store.writes, [])
+        proof = json.loads(plan_path.read_text(encoding="utf-8"))["targets"][0]
+        evidence = proof["gla_pending_stability"]
+        self.assertEqual(evidence, {
+            "mode": "pending_baseline", "observations": 3,
+            "schedule_seconds": [2, 4], "max_seconds": 6, "elapsed_seconds": 6.0,
+            "value_sha256": policy.GLA_TRANSIENT_VALUE_SHA256,
+            "meta_entry_index": 3, "meta_entry_id": GLA_ID, "stable": True,
+        })
+        policy.load_plan(str(plan_path))
+
+    def test_the_proof_holds_no_raw_metadata_value(self):
+        store = self._store()
+        plan_path, result = self._stage(store, self._request())
+        text = strip_fixed_vocabulary(
+            plan_path.read_text(encoding="utf-8") + json.dumps(result))
+        self.assertIn(GLA_KEY, text)
+        for token in (GLA_STAGED, GLA_TRANSIENT, SECRET_META_VALUE, SECRET_DESCRIPTION):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
+
+    def test_a_baseline_that_moves_between_observations_refuses_and_stages_nothing(self):
+        drifts = {
+            "settles_on_the_second_read": {"meta_data": gla_meta_entries(GLA_STAGED)},
+            "another_protected_field": {"weight": "99.9"},
+            "modification_stamp": {"date_modified_gmt": "2026-08-10T11:22:33"},
+            "metadata_entry_added": {
+                "meta_data": gla_meta_entries(GLA_TRANSIENT)
+                + [{"id": 9500, "key": "_added", "value": SECRET_META_VALUE}]},
+            "metadata_entry_removed": {
+                "meta_data": gla_meta_entries(GLA_TRANSIENT)[1:]},
+            "metadata_reordered": {
+                "meta_data": list(reversed(gla_meta_entries(GLA_TRANSIENT)))},
+            "entry_id_changed": {
+                "meta_data": meta_entries()
+                + [{"id": 63099, "key": GLA_KEY, "value": GLA_TRANSIENT}]},
+            "shipping_class": {"shipping_class": "some-other-class"},
+            "undiagnosed_value": {"meta_data": gla_meta_entries("error")},
+        }
+        for read_index in (2, 3):
+            for label, patch in drifts.items():
+                with self.subTest(read=read_index, label=label):
+                    store = self._store()
+                    with self.assertRaises(policy.ShippingPolicyError) as caught:
+                        self._stage_with_drift(store, {read_index: patch})
+                    self.assertEqual(store.writes, [])
+                    self.assertEqual(list(self.plan_dir.glob("*.json")), [])
+                    message = strip_fixed_vocabulary(str(caught.exception))
+                    self.assertNotIn(SECRET_META_VALUE, message)
+                    self.assertNotIn(GLA_TRANSIENT, message)
+
+    def test_a_drifting_baseline_never_leaves_a_partial_plan_behind(self):
+        store = self._store()
+        with self.assertRaises(policy.ShippingPolicyError):
+            self._stage_with_drift(
+                store, {3: {"meta_data": gla_meta_entries(GLA_STAGED)}},
+                data=self._both())
+        self.assertEqual(list(self.plan_dir.glob("*.json")), [])
+        self.assertEqual(store.writes, [])
+
+    def test_the_stability_schedule_is_the_only_pacing_and_is_never_exceeded(self):
+        store = self._store()
+        self._stage(store, self._request())
+        self.assertEqual(self.sleeps, list(policy.PENDING_STABILITY_SCHEDULE_SECONDS))
+        self.assertLessEqual(sum(self.sleeps), policy.PENDING_STABILITY_CEILING_SECONDS)
+
+    def test_an_absent_baseline_stages_with_no_proof_and_no_extra_read(self):
+        """Only a pending baseline pays for the proof."""
+        store = FakeStore(
+            {"/products/1423/variations/1424": variation_record(1423, 1424)},
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+        plan_path, result = self._stage(store, {
+            "action": "shipping_class_assign",
+            "targets": [{"kind": "variation", "product_id": 1423, "variation_id": 1424}],
+            "sources": {"policy": "manifest"},
+        })
+        self.assertEqual(result["targets"][0]["gla_baseline_mode"], "absent")
+        self.assertIsNone(result["targets"][0]["gla_pending_stability"])
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(store.calls.count(("GET", "/products/1423/variations/1424")), 1)
+
+    def test_a_settled_baseline_stages_with_no_proof_and_no_extra_read(self):
+        store = FakeStore(
+            {self.ENDPOINT: gla_variation_record(1455, 2056, GLA_STAGED)},
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+        _, result = self._stage(store, self._request())
+        self.assertEqual(result["targets"][0]["gla_baseline_mode"], "settled_baseline")
+        self.assertIsNone(result["targets"][0]["gla_pending_stability"])
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 1)
+
+
+class PendingBaselinePlanIntegrityTests(PendingBaselineFixture):
+    """A rehashed edit may not invent, move or flip a baseline."""
+
+    def _refuse(self, plan_path):
+        with mock.patch.object(policy.wc, "load_vault") as load, \
+             mock.patch.object(policy.wc, "api_get") as get, \
+             mock.patch.object(policy.wc, "api_request") as write:
+            with self.assertRaises(policy.ShippingPolicyError) as caught:
+                policy.command_commit(argparse.Namespace(
+                    plan=str(plan_path), approval="APPROVED"))
+            load.assert_not_called()
+            get.assert_not_called()
+            write.assert_not_called()
+        self.assertFalse(policy.lock_path(plan_path.resolve()).exists())
+        return str(caught.exception)
+
+    def test_a_rehashed_plan_cannot_flip_a_pending_target_to_settled(self):
+        store = self._store()
+        plan_path, _ = self._stage(store, self._request())
+        self._rewrite(plan_path, lambda plan: plan["targets"][0].update(
+            {"gla_baseline_mode": "settled_baseline", "gla_convergence_eligible": True,
+             "gla_pending_stability": None}), rehash=True)
+        self._refuse(plan_path)
+
+    def test_a_rehashed_plan_cannot_invent_a_pending_baseline(self):
+        """An absent-baseline target cannot be given a proof it never earned."""
+        store = FakeStore(
+            {"/products/1423/variations/1424": variation_record(1423, 1424)},
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+        plan_path, _ = self._stage(store, {
+            "action": "shipping_class_assign",
+            "targets": [{"kind": "variation", "product_id": 1423, "variation_id": 1424}],
+            "sources": {"policy": "manifest"},
+        })
+        self._rewrite(plan_path, lambda plan: plan["targets"][0].update(
+            {"gla_baseline_mode": "pending_baseline", "gla_convergence_eligible": False,
+             "gla_pending_stability": {
+                 "mode": "pending_baseline", "observations": 3,
+                 "schedule_seconds": [2, 4], "max_seconds": 6, "elapsed_seconds": 6.0,
+                 "value_sha256": policy.GLA_TRANSIENT_VALUE_SHA256,
+                 "meta_entry_index": 3, "meta_entry_id": GLA_ID, "stable": True}}),
+            rehash=True)
+        self._refuse(plan_path)
+
+    def test_a_rehashed_plan_cannot_weaken_the_proof_it_carries(self):
+        store = self._store()
+        plan_path, _ = self._stage(store, self._request())
+        original = json.loads(plan_path.read_text(encoding="utf-8"))
+        proof = original["targets"][0]["gla_pending_stability"]
+        for label, patch in (
+            ("dropped", None),
+            ("not_stable", {"stable": False}),
+            ("one_observation", {"observations": 1}),
+            ("no_observations", {"observations": 0}),
+            ("widened_schedule", {"schedule_seconds": [600, 600], "max_seconds": 1200}),
+            ("float_schedule", {"schedule_seconds": [2.0, 4.0]}),
+            ("shorter_schedule", {"schedule_seconds": [2], "max_seconds": 2}),
+            ("no_time_passed", {"elapsed_seconds": 0}),
+            ("less_than_the_schedule", {"elapsed_seconds": 5.9}),
+            ("absurd_elapsed", {"elapsed_seconds": 999999}),
+            ("settled_digest", {"value_sha256": policy.GLA_STAGED_VALUE_SHA256}),
+            ("blank_digest", {"value_sha256": "0" * 64}),
+            ("other_entry_id", {"meta_entry_id": 1}),
+            ("other_entry_index", {"meta_entry_index": 0}),
+            ("other_mode", {"mode": "settled_baseline"}),
+            ("extra_field", {"waived": True}),
+        ):
+            with self.subTest(label=label):
+                value = None if patch is None else {**proof, **patch}
+                self._rewrite(
+                    plan_path,
+                    lambda plan, v=value: plan["targets"][0].__setitem__(
+                        "gla_pending_stability", v),
+                    rehash=True)
+                self._refuse(plan_path)
+                # Restore for the next case.
+                self._rewrite(
+                    plan_path,
+                    lambda plan: plan["targets"][0].__setitem__(
+                        "gla_pending_stability", proof),
+                    rehash=True)
+
+    def test_an_unrehashed_edit_still_fails_the_hash_check_first(self):
+        store = self._store()
+        plan_path, _ = self._stage(store, self._request())
+        self._rewrite(plan_path, lambda plan: plan["targets"][0].__setitem__(
+            "gla_baseline_mode", "settled_baseline"), rehash=False)
+        self.assertIn("hash", self._refuse(plan_path).casefold())
+
+    def test_a_settled_target_may_not_carry_a_proof(self):
+        store = FakeStore(
+            {self.ENDPOINT: gla_variation_record(1455, 2056, GLA_STAGED)},
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+        plan_path, _ = self._stage(store, self._request())
+        self._rewrite(plan_path, lambda plan: plan["targets"][0].__setitem__(
+            "gla_pending_stability", {
+                "mode": "pending_baseline", "observations": 3,
+                "schedule_seconds": [2, 4], "max_seconds": 6, "elapsed_seconds": 6.0,
+                "value_sha256": policy.GLA_TRANSIENT_VALUE_SHA256,
+                "meta_entry_index": 3, "meta_entry_id": GLA_ID, "stable": True}),
+            rehash=True)
+        self._refuse(plan_path)
+
+
+class PendingBaselineCommitTests(PendingBaselineFixture):
+    def test_the_baseline_is_reproven_freshly_before_the_put(self):
+        """The plan is stale the moment the resource settles. Refuse, never write."""
+        store = self._store()
+        plan_path, _ = self._stage(store, self._request())
+        # The [2, 4] sleeps belong to the required pending-baseline STAGING
+        # stability proof. Clear them so this assertion measures commit preflight
+        # only: a stale plan must refuse immediately, without another wait.
+        self.assertEqual(self.sleeps, [2, 4])
+        self.sleeps.clear()
+        store.records[self.ENDPOINT]["meta_data"] = gla_meta_entries(GLA_STAGED)
+        message = self._commit_expecting_failure(store, plan_path)
+        self.assertIn("changed after review", message)
+        self.assertEqual(store.writes, [])
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self.sleeps, [])
+
+    def test_the_preflight_proof_is_exact_about_the_entry_itself(self):
+        """A unit check of the pre-write proof: same mode, index, id and digest."""
+        record = gla_variation_record(1455, 2056, GLA_TRANSIENT)
+        projection = policy.metadata_projection(record)
+        target = {
+            "before_meta_data_projection": projection,
+            "gla_baseline_mode": "pending_baseline",
+        }
+        self.assertEqual(
+            policy.prove_staged_baseline_live(target, record, self.ENDPOINT),
+            "pending_baseline")
+        for label, moved in (
+            ("settled", gla_variation_record(1455, 2056, GLA_STAGED)),
+            ("absent", variation_record(1455, 2056)),
+            ("undiagnosed", gla_variation_record(1455, 2056, "error")),
+            ("other_id", variation_record(1455, 2056, meta_data=meta_entries() + [
+                {"id": 63099, "key": GLA_KEY, "value": GLA_TRANSIENT}])),
+            ("other_index", variation_record(1455, 2056, meta_data=[
+                {"id": GLA_ID, "key": GLA_KEY, "value": GLA_TRANSIENT}]
+                + meta_entries())),
+        ):
+            with self.subTest(label=label):
+                with self.assertRaises(policy.ShippingPolicyError):
+                    policy.prove_staged_baseline_live(target, moved, self.ENDPOINT)
+
+    def test_an_unchanged_pending_state_is_success_immediately(self):
+        """Requirement, stated plainly: a pending baseline must NEVER wait for
+        settlement merely to call an unchanged pending state successful."""
+        store, plan_path = self._armed({})
+        result = self._commit(store, plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        row = result["outcome"][0]
+        self.assertIs(row["written"], True)
+        self.assertEqual(row["baseline_mode"], "pending_baseline")
+        self.assertIs(row["convergence_used"], False)
+        self.assertEqual(row["final_state"], "exact_staged_pending_state")
+        # No confirmation reads and no waiting at all.
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 2)
+        self.assertEqual(store.writes, [
+            ("PUT", self.ENDPOINT, {"shipping_class": policy.FREIGHT_CLASS_SLUG})])
+        self.assertEqual(self._lock(plan_path)["status"], "committed_verified")
+
+    def test_a_settling_write_is_confirmed_before_it_succeeds(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        result = self._commit(store, plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        row = result["outcome"][0]
+        self.assertEqual(row["baseline_mode"], "pending_baseline")
+        self.assertIs(row["convergence_used"], True)
+        self.assertEqual(row["convergence_attempts"], 2)
+        self.assertEqual(row["convergence_elapsed_seconds"], 6.0)
+        self.assertEqual(row["final_state"], "confirmed_stable_settled_state")
+        self.assertEqual(row["final_requirement"],
+                         "exact_staged_pending_state_or_confirmed_settled_state")
+        self.assertEqual(self.sleeps, [2, 4])
+        # The read-back plus both confirming reads. One write, and only one.
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 4)
+        self.assertEqual(store.writes, [
+            ("PUT", self.ENDPOINT, {"shipping_class": policy.FREIGHT_CLASS_SLUG})])
+        self.assertEqual(result["convergence"]["pending_settled_confirmed_targets"], 1)
+
+    def test_a_settlement_that_does_not_hold_fails_and_locks(self):
+        cases = {
+            "flips_back_on_the_first_confirmation": [
+                self._meta(GLA_STAGED), self._meta(GLA_TRANSIENT)],
+            "flips_back_on_the_second_confirmation": [
+                self._meta(GLA_STAGED), self._meta(GLA_STAGED),
+                self._meta(GLA_TRANSIENT)],
+            "moves_on_to_an_undiagnosed_value": [
+                self._meta(GLA_STAGED), self._meta("error")],
+            "another_protected_field_moves": [
+                self._meta(GLA_STAGED),
+                {**self._meta(GLA_STAGED), "weight": "99.9"}],
+            "a_metadata_entry_appears": [
+                self._meta(GLA_STAGED),
+                {"meta_data": gla_meta_entries(GLA_STAGED) + [
+                    {"id": 9500, "key": "_added", "value": SECRET_META_VALUE}]}],
+            "the_modification_stamp_moves_again": [
+                self._meta(GLA_STAGED),
+                {**self._meta(GLA_STAGED), "date_modified_gmt": "2026-08-10T12:00:00"}],
+            "the_class_drifts_away": [
+                self._meta(GLA_STAGED),
+                {**self._meta(GLA_STAGED), "shipping_class": "some-other-class"}],
+        }
+        for label, script in cases.items():
+            with self.subTest(label=label):
+                store, plan_path = self._armed({self.ENDPOINT: script})
+                message = self._commit_expecting_failure(store, plan_path)
+                lock = self._lock(plan_path)
+                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
+                self.assertEqual(lock["diagnostic"]["phase"],
+                                 "pending_settle_confirmation")
+                self.assertNotIn("COMMITTED", message)
+                # One write, then reads only. No retry, no rollback, no repair.
+                self.assertEqual(store.writes, [
+                    ("PUT", self.ENDPOINT,
+                     {"shipping_class": policy.FREIGHT_CLASS_SLUG})])
+                self.assertNotIn(SECRET_META_VALUE, json.dumps(lock))
+                self.assertNotIn(GLA_TRANSIENT,
+                                 strip_fixed_vocabulary(json.dumps(lock) + message))
+
+    def test_a_class_drift_during_the_confirmation_says_so(self):
+        store, plan_path = self._armed({self.ENDPOINT: [
+            self._meta(GLA_STAGED),
+            {**self._meta(GLA_STAGED), "shipping_class": "some-other-class"}]})
+        message = self._commit_expecting_failure(store, plan_path)
+        self.assertIn("no longer carries the approved shipping class", message)
+        self.assertIs(self._lock(plan_path)["diagnostic"]["shipping_class_matches_plan"],
+                      False)
+
+    def test_any_other_post_write_movement_fails_before_any_confirmation(self):
+        cases = {
+            "undiagnosed_value": self._meta("error"),
+            "another_protected_field": {**self._meta(GLA_TRANSIENT), "weight": "99.9"},
+            "metadata_entry_added": {"meta_data": gla_meta_entries(GLA_TRANSIENT) + [
+                {"id": 9500, "key": "_added", "value": SECRET_META_VALUE}]},
+            "metadata_entry_removed": {
+                "meta_data": gla_meta_entries(GLA_TRANSIENT)[1:]},
+            "metadata_reordered": {
+                "meta_data": list(reversed(gla_meta_entries(GLA_TRANSIENT)))},
+            "entry_id_changed": {"meta_data": meta_entries() + [
+                {"id": 63099, "key": GLA_KEY, "value": GLA_TRANSIENT}]},
+            "entry_duplicated": {"meta_data": gla_meta_entries(GLA_TRANSIENT) + [
+                {"id": GLA_ID, "key": GLA_KEY, "value": GLA_TRANSIENT}]},
+        }
+        for label, patch in cases.items():
+            with self.subTest(label=label):
+                store, plan_path = self._armed({self.ENDPOINT: [patch]})
+                self._commit_expecting_failure(store, plan_path)
+                lock = self._lock(plan_path)
+                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["diagnostic"]["phase"], "post_write")
+                # It failed on the read-back; no confirmation was ever attempted.
+                self.assertEqual(self.sleeps, [])
+                self.assertEqual(len(store.writes), 1)
+                self.assertNotIn(SECRET_META_VALUE, json.dumps(lock))
+
+    def test_a_pending_target_never_reaches_the_ninety_second_settled_wait(self):
+        """The settled path is 90 seconds; the pending path is 6. They are separate."""
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        self._commit(store, plan_path)
+        self.assertEqual(self.sleeps, [2, 4])
+        self.assertNotEqual(self.sleeps, list(policy.CONVERGENCE_SCHEDULE_SECONDS))
+        self.assertLessEqual(sum(self.sleeps),
+                             policy.PENDING_SETTLE_CONFIRM_CEILING_SECONDS)
+
+    def test_a_get_error_during_the_confirmation_is_sanitised_and_locks(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        original = store.api_get
+        seen = {"count": 0}
+
+        def failing_get(endpoint, params=None, vault=None):
+            if endpoint == self.ENDPOINT:
+                seen["count"] += 1
+                if seen["count"] >= 3:     # pre-write, read-back, then confirmation
+                    raise wc.WooError("GET failed with HTTP 500: " + SECRET_DESCRIPTION,
+                                      status=500, code="rest_error")
+            return original(endpoint, params, vault)
+
+        with mock.patch.object(policy.wc, "api_get", side_effect=failing_get), \
+             mock.patch.object(policy.wc, "api_request", side_effect=store.api_request), \
+             mock.patch.object(policy.wc, "load_vault", return_value=_vault()):
+            with self.assertRaises(policy.ShippingPolicyError):
+                policy.command_commit(argparse.Namespace(
+                    plan=str(plan_path), approval="APPROVED"))
+        lock = self._lock(plan_path)
+        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["reason_class"], "WooError")
+        self.assertEqual(lock["http_status"], 500)
+        self.assertNotIn(SECRET_DESCRIPTION, json.dumps(lock))
+        self.assertEqual(len(store.writes), 1)
+
+    def test_a_failed_confirmation_can_never_be_replayed(self):
+        store, plan_path = self._armed({self.ENDPOINT: [
+            self._meta(GLA_STAGED), self._meta(GLA_TRANSIENT)]})
+        self._commit_expecting_failure(store, plan_path)
+        store.after_write_gets = {}
+        store.writes.clear()
+        self.sleeps.clear()
+        self._commit_expecting_failure(store, plan_path)
+        self.assertEqual(store.writes, [])
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+
+    def test_the_second_target_starts_only_after_the_first_is_confirmed(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._meta(GLA_STAGED)] * 3}, targets=self._both())
+        result = self._commit(store, plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        first = store.calls.index(("PUT", self.ENDPOINT))
+        second = store.calls.index(("PUT", self.SECOND))
+        self.assertLess(first, second)
+        # Read-back, both confirming reads, then the second target's pre-write read.
+        self.assertEqual(store.calls[first + 1:second], [
+            ("GET", self.ENDPOINT), ("GET", self.ENDPOINT), ("GET", self.ENDPOINT),
+            ("GET", self.SECOND)])
+
+    def test_a_failed_confirmation_never_starts_the_second_target(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._meta(GLA_STAGED), self._meta(GLA_TRANSIENT)]},
+            targets=self._both())
+        self._commit_expecting_failure(store, plan_path)
+        self.assertNotIn(("PUT", self.SECOND), store.calls)
+        self.assertEqual(store.records[self.SECOND]["shipping_class"], "")
+        self.assertEqual(len(store.writes), 1)
+
+    def test_exactly_one_put_and_no_metadata_write_on_any_pending_path(self):
+        for label, script in (
+            ("unchanged", {}),
+            ("settles", {self.ENDPOINT: [self._meta(GLA_STAGED)] * 3}),
+            ("fails", {self.ENDPOINT: [self._meta(GLA_STAGED),
+                                       self._meta(GLA_TRANSIENT)]}),
+        ):
+            with self.subTest(label=label):
+                store, plan_path = self._armed(script)
+                try:
+                    self._commit(store, plan_path)
+                except policy.ShippingPolicyError:
+                    pass
+                self.assertEqual(len(store.writes), 1)
+                method, endpoint, payload = store.writes[0]
+                self.assertEqual(method, "PUT")
+                self.assertEqual(endpoint, self.ENDPOINT)
+                self.assertEqual(payload,
+                                 {"shipping_class": policy.FREIGHT_CLASS_SLUG})
+                # The assignment stands either way; nothing is ever rolled back.
+                self.assertEqual(store.records[self.ENDPOINT]["shipping_class"],
+                                 policy.FREIGHT_CLASS_SLUG)
+
+    def test_the_pending_paths_still_require_the_exact_approval_word(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        for approval in ("approved", "APPROVED ", "Approved", "", "yes"):
+            with self.subTest(approval=repr(approval)):
+                with mock.patch.object(policy.wc, "load_vault") as load, \
+                     mock.patch.object(policy.wc, "api_get") as get, \
+                     mock.patch.object(policy.wc, "api_request") as write:
+                    with self.assertRaises(policy.ShippingPolicyError):
+                        policy.command_commit(argparse.Namespace(
+                            plan=str(plan_path), approval=approval))
+                    load.assert_not_called()
+                    get.assert_not_called()
+                    write.assert_not_called()
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(store.writes, [])
+
+    def test_no_successful_pending_record_carries_a_raw_metadata_value(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        result = self._commit(store, plan_path)
+        text = strip_fixed_vocabulary(
+            json.dumps(result) + json.dumps(self.receipts)
+            + json.dumps(self._lock(plan_path)))
+        for token in (GLA_STAGED, GLA_TRANSIENT, SECRET_META_VALUE, SECRET_DESCRIPTION,
+                      "ck_abcdefghijklmnopqrstuvwxyz", "SKU-2056"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
+        self.assertIn(GLA_KEY, json.dumps(result))
+
+    def test_the_committed_receipt_reports_the_baselines_it_used(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        self._commit(store, plan_path)
+        evidence = next(text for action, text in self.receipts
+                        if action == "woocommerce_shipping_policy_committed")
+        self.assertIn("baseline_pending_baseline_targets=1", evidence)
+        self.assertIn("baseline_settled_baseline_targets=0", evidence)
+        self.assertIn("baseline_absent_targets=0", evidence)
+        self.assertIn("pending_settled_confirmed_targets=1", evidence)
+
+
+class SettledBaselineIsUnchangedTests(ConvergenceFixture):
+    """Schema 4 added a path. It must not have moved the one already proven."""
+
+    def test_the_settled_schedule_and_final_requirement_are_untouched(self):
+        self.assertEqual(policy.CONVERGENCE_SCHEDULE_SECONDS, (2, 4, 8, 16, 30, 30))
+        self.assertEqual(policy.CONVERGENCE_MAX_SECONDS, 90)
+        self.assertEqual(policy.CONVERGENCE_CEILING_SECONDS, 90)
+        self.assertEqual(policy.CONVERGENCE_FINAL_REQUIREMENT,
+                         "exact_staged_protected_state")
+        self.assertEqual(policy.CONVERGENCE_TIMEOUT_FINAL_STATE, "pending_not_accepted")
+
+    def test_a_settled_target_still_converges_over_the_full_ninety_seconds(self):
+        store, plan_path = self._armed({self.ENDPOINT: [
+            self._meta(GLA_TRANSIENT)] * 5 + [self._meta(GLA_STAGED)]})
+        result = self._commit(store, plan_path)
+        row = result["outcome"][0]
+        self.assertEqual(row["baseline_mode"], "settled_baseline")
+        self.assertIs(row["convergence_used"], True)
+        self.assertEqual(row["final_state"], "exact_staged_protected_state")
+        self.assertEqual(self.sleeps, [2, 4, 8, 16, 30])
+
+    def test_a_settled_target_still_times_out_rather_than_accepting_the_transient(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_TRANSIENT)] * 20})
+        message = self._commit_expecting_failure(store, plan_path)
+        self.assertIn("NOT accepted as success", message)
+        lock = self._lock(plan_path)
+        self.assertEqual(lock["reason_class"], "ConvergenceTimeout")
+        self.assertEqual(lock["convergence"]["final_state"], "pending_not_accepted")
+        self.assertEqual(sum(self.sleeps), 90)
+
+    def test_a_settled_target_is_never_confirmed_by_the_pending_path(self):
+        """A settled target whose entry goes to the transient value must use the
+        90-second wait, never the 6-second settled-state confirmation."""
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._meta(GLA_TRANSIENT), self._meta(GLA_STAGED)]})
+        result = self._commit(store, plan_path)
+        row = result["outcome"][0]
+        self.assertEqual(row["final_state"], "exact_staged_protected_state")
+        self.assertNotEqual(row["final_state"], "confirmed_stable_settled_state")
+        self.assertEqual(result["convergence"]["pending_settled_confirmed_targets"], 0)
 
 
 class ExactApprovalTests(unittest.TestCase):

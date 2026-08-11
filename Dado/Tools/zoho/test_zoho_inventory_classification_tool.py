@@ -17,6 +17,42 @@ from unittest import mock
 import zoho_inventory_classification_tool as classification
 
 
+# ---------------------------------------------------------------------------
+# The browser lane lock is PRODUCTION state (added 2026-08-10 with Dado's
+# Discord lane). The commissioned commands below are decorated with it, so
+# without this redirect a test run would take the real lock on the real
+# authenticated browser: measured at 25 acquisitions per Zoho suite run and 98
+# per WordPress run. Two consequences, both unacceptable in a safety suite --
+# a run while the other lane is mid-write would block 90s per acquisition and
+# report the browser being busy as a catastrophic suite failure, and a run
+# killed mid-test could leave live state behind. Redirect once per module so
+# the suites stay hermetic.
+# ---------------------------------------------------------------------------
+_LANE_LOCK_TMP = None
+_LANE_LOCK_ORIGINAL_DIR = None
+
+
+def setUpModule():
+    global _LANE_LOCK_TMP, _LANE_LOCK_ORIGINAL_DIR
+    import tempfile
+    from pathlib import Path as _Path
+
+    import ui_lane_lock
+
+    _LANE_LOCK_TMP = tempfile.TemporaryDirectory()
+    _LANE_LOCK_ORIGINAL_DIR = ui_lane_lock.LOCK_DIR
+    ui_lane_lock.LOCK_DIR = _Path(_LANE_LOCK_TMP.name)
+
+
+def tearDownModule():
+    import ui_lane_lock
+
+    if _LANE_LOCK_ORIGINAL_DIR is not None:
+        ui_lane_lock.LOCK_DIR = _LANE_LOCK_ORIGINAL_DIR
+    if _LANE_LOCK_TMP is not None:
+        _LANE_LOCK_TMP.cleanup()
+
+
 class FakeResponse:
     def __init__(self, payload=None, raw: bytes | None = None):
         self.raw = raw if raw is not None else json.dumps(payload).encode("utf-8")
