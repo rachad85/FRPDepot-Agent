@@ -178,6 +178,35 @@ Systems of record:
    on any failure, timeout or indeterminate result, with no retry and no rollback.
    The estimate scope stays `ZohoBooks.estimates.UPDATE` and nothing wider; there
    is deliberately no estimate DELETE, ALL or fullaccess scope.
+   — and, inside `zoho_customer_quote_tool.py`, the ONE additional narrow
+   ESTIMATE UPDATE Rachad commissioned on 2026-08-11:
+   `stage-tds-item9-quantity-correction` /
+   `commit-tds-item9-quantity-correction`. It may touch ONLY QT-000029
+   (`96274000001559037`, PO 104750 / J6276), ONLY line Item 9 /
+   `line_item_id` `96274000001559046` / item ID `96274000000030497` (FRP
+   ELBOW-12\"/150PSI/D411), and ONLY its quantity from 4 to 1. The live estimate
+   must still be exactly `sent`, hold the exact 11-line identity/order and the
+   exact CAD 13,680.38 starting total; the rate stays CAD 810.00, every line's
+   10% item discount and GST+QST stay unchanged, and the independently recomputed
+   target total is CAD 11,165.88. Staging requires a bounded read-only stable-state
+   rehearsal. Commit compares a fresh full fingerprint, locks before one PUT,
+   resends every line once with its own IDs, then verifies the status stayed
+   `sent`, Item 9 is quantity 1, every other business field is unchanged and the
+   totals match. Nothing else is reachable: no other estimate/line/field, no
+   create/delete/status/send/mail/approval/conversion route. Approval is exact
+   unpadded uppercase `APPROVED`; the 24-hour plan gets one attempt, no retry and
+   no rollback. Commissioning authorizes build/test/stage only, never commit.
+   STATUS 2026-08-11: BUILT and TESTED (584 Zoho tests passed, 3 expected skips).
+   Rachad approved plan SHA-256
+   `e718dc3fdb1801a42b3a1dd588d8e93e5fc7d5115abe63ca8a1bd1e61f073624` and
+   its one PUT landed. The verifier locked it `indeterminate` because the expected
+   quantity-derived gross subtotal `sub_total_exclusive_of_discount` moved from
+   13,220.64 to 10,790.64 but was not exempted. NO RETRY; the plan is permanently
+   replay-locked. Three fresh read-only GETs and a complete protected comparison
+   proved the live result exact and stable: status `sent`, 11 lines preserved,
+   Item 9 quantity 1, rate CAD 810.00, 10% discount, unchanged GST+QST, subtotal
+   CAD 9,711.57, tax CAD 1,454.31 and total CAD 11,165.88. The only additional
+   protected difference was that expected gross subtotal. Zero emails were sent.
    — and only via their stage-then-commit flow:
    every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
