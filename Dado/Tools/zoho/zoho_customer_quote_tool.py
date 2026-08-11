@@ -10,6 +10,9 @@ Allowed service writes:
   CORRECTION_TARGETS, and only to rewrite each line's 10% discount from the
   numeric form Zoho read as CAD 10 into the exact percentage string "10%".
   Commissioned by Rachad on 2026-08-10 after that misreading was proven live.
+- PUT  /books/v3/estimates/96274000001559037 (QT-000029) to change exactly one
+  field: the quantity of line item_order 9 from 4 to 1, at the customer's
+  written request. Commissioned by Rachad on 2026-08-11. See ITEM9_TARGET.
 
 Forbidden: sending/emailing, marking sent/accepted/declined, deletes, any other
 estimate update, Inventory writes, and any unapproved numeric value.
@@ -27,6 +30,7 @@ from pathlib import Path
 import re
 import secrets
 import sys
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -217,6 +221,106 @@ ESTIMATE_LINE_DERIVED_KEYS = (
     "line_item_taxes",
 )
 ESTIMATE_TAX_AMOUNT_KEYS = frozenset({"tax_amount", "tax_amount_formatted"})
+
+# ---------------------------------------------------------------------------
+# QT-000029 Item 9 quantity correction -- commissioned by Rachad 2026-08-11
+#
+# Jasmin Leblanc (Troy Dualam Services) asked for "Item 9 - 1 instead 4" on the
+# already-sent QT-000029. ONE estimate, ONE line, ONE field, ONE PUT. The stage
+# command takes no arguments at all: the estimate, the line and both quantities
+# are fixed in code, so there is no business value for a caller to supply and
+# nothing else in Zoho is reachable through this action.
+#
+# The starting state this correction requires is the VERIFIED RESULT of the
+# 2026-08-10 percentage-discount correction above (its corrected_* figures),
+# which is why the required current totals are asserted against that target's
+# approved numbers rather than restated by hand.
+# ---------------------------------------------------------------------------
+
+ITEM9_KIND = "tds_item9_quantity_correction"
+ITEM9_SCHEMA_VERSION = 1
+ITEM9_PLAN_LIFETIME_HOURS = 24
+ITEM9_ESTIMATE_ID = "96274000001559037"
+SENT_STATUS = "sent"
+# The bounded read-only stable-state rehearsal. Fixed count, fixed spacing and a
+# fixed ceiling so it is testable and can never turn into an unbounded poll.
+ITEM9_REHEARSAL_OBSERVATIONS = 3
+ITEM9_REHEARSAL_INTERVAL_SECONDS = Decimal("2")
+ITEM9_REHEARSAL_MAX_SECONDS = Decimal("30")
+# Rachad's exact instruction, quoted from the customer message. This is the only
+# source for the new quantity and it is fixed in code, so a plan file cannot
+# invent a different request.
+ITEM9_CUSTOMER_REQUEST = {
+    "channel": "Outlook mailbox info@frpdepots.com",
+    "from": "Jasmin Leblanc",
+    "received": "2026-08-11 12:29",
+    "quote": "Item 9 – 1 instead 4",
+    "field": "line_items[item_order=9].quantity",
+    "from_quantity": "4",
+    "to_quantity": "1",
+}
+ITEM9_RISK_NOTE = (
+    "One PUT to one fixed sent estimate, changing exactly one field: line item_order 9 "
+    "(FRP ELBOW-12\"/150PSI/D411) drops from quantity 4 to quantity 1. The rate, the 10% "
+    "percentage discount, the Quebec GST+QST tax and every other line are resent unchanged, "
+    "and the complete 11-line list is resent with every line_item_id so nothing is added, "
+    "removed, reordered or substituted. The estimate stays 'sent'; there is no status, "
+    "acceptance, conversion, attachment or mail route in this tool. The plan is locked before "
+    "the PUT and stays locked on any failure, timeout or indeterminate result; there is no "
+    "retry and no rollback."
+)
+ITEM9_TARGET: dict[str, Any] = {
+    "estimate_id": ITEM9_ESTIMATE_ID,
+    "estimate_number": "QT-000029",
+    "reference_number": "PO 104750 / J6276",
+    "customer_id": TDS_CUSTOMER_ID,
+    "customer_name": "Troy Dualam Services Inc.",
+    "status": SENT_STATUS,
+    "line_count": 11,
+    # The one reachable line, pinned three ways.
+    "line_item_id": "96274000001559046",
+    "item_id": "96274000000030497",
+    "item_order": 9,
+    "item_name": "FRP ELBOW-12\"/150PSI/D411",
+    "current_quantity": Decimal("4"),
+    "new_quantity": Decimal("1"),
+    "rate": Decimal("810.00"),
+    "line_discount": TDS_LINE_DISCOUNT,
+    "line_discount_percent": Decimal("10"),
+    "tax_id": TDS_GST_QST_TAX_ID,
+    # Required starting state -- the verified result of the discount correction.
+    "current_sub_total": CORRECTION_TARGETS[ITEM9_ESTIMATE_ID]["corrected_sub_total"],
+    "current_tax_total": CORRECTION_TARGETS[ITEM9_ESTIMATE_ID]["corrected_tax_total"],
+    "current_total": CORRECTION_TARGETS[ITEM9_ESTIMATE_ID]["corrected_total"],
+    # What this correction must produce, recomputed from scratch before staging.
+    "expected_sub_total": Decimal("9711.57"),
+    "expected_gst": Decimal("485.58"),
+    "expected_qst": Decimal("968.73"),
+    "expected_tax_total": Decimal("1454.31"),
+    "expected_total": Decimal("11165.88"),
+    "source_plan": CORRECTION_TARGETS[ITEM9_ESTIMATE_ID]["source_plan"],
+    "source_plan_sha256": CORRECTION_TARGETS[ITEM9_ESTIMATE_ID]["source_plan_sha256"],
+}
+# The only fields of the ONE target line that this correction may move. Both are
+# functions of the quantity and both are verified explicitly after the write;
+# every other field of every line stays inside the byte-exact fingerprint.
+ITEM9_TARGET_LINE_VOLATILE_KEYS = frozenset({"quantity", "quantity_formatted"})
+# Header totals a QUANTITY change moves that a DISCOUNT change does not, so
+# ESTIMATE_DERIVED_KEYS -- written for the discount correction and correct there
+# -- does not list them. Leaving them inside the byte-exact fingerprint is what
+# locked the 2026-08-11 item9 plan `indeterminate` AFTER its PUT had already
+# landed correctly: the gross subtotal moved 13,220.64 -> 10,790.64 exactly as
+# intended. They are exempted here and each is then asserted against the
+# INDEPENDENTLY RECOMPUTED gross by verify_item9_result, which is strictly
+# stronger than requiring them not to move.
+ITEM9_GROSS_SUBTOTAL_KEYS = (
+    "sub_total_exclusive_of_discount",
+    "bcy_sub_total_exclusive_of_discount",
+)
+ITEM9_REHEARSAL_KEYS = frozenset({
+    "observations", "interval_seconds", "max_seconds", "elapsed_seconds",
+    "prewrite_sha256", "observation_prewrite_sha256", "volatile_keys_observed", "stable",
+})
 
 
 class DraftToolError(RuntimeError):
@@ -1587,6 +1691,26 @@ def oauth_estimate_discount_write_allowed(
             )
     if not ID_RE.fullmatch(str(organization_id)):
         raise DraftToolError("REFUSED: the organization ID is invalid.")
+    return send_estimate_put(
+        access_token, api_domain, path, organization_id, payload, "estimate correction"
+    )
+
+
+def send_estimate_put(
+    access_token: str,
+    api_domain: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    label: str,
+) -> dict[str, Any]:
+    """The ONE estimate PUT transport in this module.
+
+    Reached only from an allowlist function that has already pinned the verb,
+    the estimate ID and every payload key. The query string is exactly the
+    organization id: no action, no status and no send parameter exists here or
+    anywhere else in this module. One attempt, no retry.
+    """
     request = Request(
         api_domain.rstrip("/") + path + "?" + urlencode({"organization_id": organization_id}),
         data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
@@ -1603,22 +1727,22 @@ def oauth_estimate_discount_write_allowed(
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
         raise DraftToolError(
-            f"Zoho estimate correction failed with HTTP {exc.code}: {detail}"
+            f"Zoho {label} failed with HTTP {exc.code}: {detail}"
         ) from exc
     except URLError as exc:
         raise DraftToolError(
-            f"Zoho estimate correction outcome is indeterminate: {exc.reason}"
+            f"Zoho {label} outcome is indeterminate: {exc.reason}"
         ) from exc
     try:
         result = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise DraftToolError(
-            "Zoho estimate correction returned invalid JSON; the outcome is indeterminate."
+            f"Zoho {label} returned invalid JSON; the outcome is indeterminate."
         ) from exc
     if not isinstance(result, dict) or result.get("code") != 0:
         message = result.get("message") if isinstance(result, dict) else "invalid response"
         raise DraftToolError(
-            "Zoho estimate correction returned an invalid or unknown result: " + str(message)
+            f"Zoho {label} returned an invalid or unknown result: " + str(message)
         )
     return result
 
@@ -1886,6 +2010,1227 @@ def command_commit_tds_discount_correction(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+# ---------------------------------------------------------------------------
+# QT-000029 Item 9 quantity correction -- implementation
+#
+# Everything below reaches exactly one estimate, exactly one line and exactly
+# one field. The stage command takes no arguments, so there is no caller-
+# supplied value anywhere in this action.
+# ---------------------------------------------------------------------------
+
+
+def monotonic_seconds() -> float:
+    """Indirection so the fixed rehearsal window is testable without waiting."""
+    return time.monotonic()
+
+
+def pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def require_item9_target(estimate_id: Any) -> tuple[str, dict[str, Any]]:
+    """The complete reachable surface: one ID, refused before any network."""
+    key = str(estimate_id if estimate_id is not None else "").strip()
+    if key != ITEM9_ESTIMATE_ID:
+        raise DraftToolError(
+            "REFUSED: the Item 9 quantity correction is commissioned for exactly one estimate -- "
+            f"{ITEM9_TARGET['estimate_number']} ({ITEM9_ESTIMATE_ID}). {key!r} is not it; "
+            "no Zoho call was made."
+        )
+    return key, ITEM9_TARGET
+
+
+def quantity_json(value: Decimal) -> Any:
+    """A whole quantity travels as a JSON integer, never as a formatted string."""
+    integral = value.to_integral_value()
+    return int(integral) if value == integral else float(value)
+
+
+def line_figures(quantity: Decimal, rate: Decimal) -> tuple[Decimal, Decimal, Decimal]:
+    """Gross, 10% discount and net for one line, half-up to cents."""
+    gross = (quantity * rate).quantize(CENT, rounding=ROUND_HALF_UP)
+    discount = (
+        gross * ITEM9_TARGET["line_discount_percent"] / Decimal("100")
+    ).quantize(CENT, rounding=ROUND_HALF_UP)
+    return gross, discount, gross - discount
+
+
+def item9_protected_state(estimate: dict[str, Any]) -> dict[str, Any]:
+    """correction_protected_state, minus what the ONE quantity change moves.
+
+    That is the target line's quantity fields plus the header gross subtotals in
+    ITEM9_GROSS_SUBTOTAL_KEYS. Every exempted key is a function of the single
+    approved change and every one is verified explicitly by verify_item9_result
+    against an independently recomputed figure. Every other field of every other
+    line -- and every non-quantity field of the target line -- stays byte-exact.
+    """
+    protected = correction_protected_state(estimate)
+    for key in ITEM9_GROSS_SUBTOTAL_KEYS:
+        protected.pop(key, None)
+    for line in protected.get("line_items_protected") or []:
+        if not isinstance(line, dict):
+            continue
+        if str(line.get("line_item_id") or "") == ITEM9_TARGET["line_item_id"]:
+            for key in ITEM9_TARGET_LINE_VOLATILE_KEYS:
+                line.pop(key, None)
+    return protected
+
+
+def item9_target_line(
+    lines: list[dict[str, Any]], target: dict[str, Any]
+) -> tuple[int, dict[str, Any]]:
+    matches = [
+        (index, line) for index, line in enumerate(lines)
+        if str(line.get("line_item_id") or "") == target["line_item_id"]
+    ]
+    if len(matches) != 1:
+        raise DraftToolError(
+            f"{target['estimate_number']} must carry exactly one line with line_item_id "
+            f"{target['line_item_id']}; Zoho returned {len(matches)}. Nothing staged."
+        )
+    return matches[0]
+
+
+def validate_item9_live_estimate(
+    estimate: dict[str, Any], target: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Exact identity, exact sent state and exact starting arithmetic, or nothing."""
+    for key, expected in (
+        ("estimate_id", target["estimate_id"]),
+        ("estimate_number", target["estimate_number"]),
+        ("reference_number", target["reference_number"]),
+        ("customer_id", target["customer_id"]),
+        ("status", target["status"]),
+    ):
+        actual = str(estimate.get(key) if estimate.get(key) is not None else "")
+        if actual != expected:
+            raise DraftToolError(
+                f"Live estimate {key} is {actual!r}, not the commissioned {expected!r}. Nothing staged."
+            )
+    if estimate.get("discount_type") != "item_level":
+        raise DraftToolError(
+            f"Live estimate discount_type is {estimate.get('discount_type')!r}, not 'item_level'."
+        )
+    if estimate.get("is_discount_before_tax") is not True:
+        raise DraftToolError("Live estimate is_discount_before_tax is not exactly true.")
+    for key, expected_total in (
+        ("sub_total", target["current_sub_total"]),
+        ("tax_total", target["current_tax_total"]),
+        ("total", target["current_total"]),
+    ):
+        actual_total = live_decimal(estimate.get(key), f"live {key}")
+        if actual_total != expected_total:
+            raise DraftToolError(
+                f"Live {key} is {actual_total}, not the required starting {expected_total}. "
+                f"{target['estimate_number']} is not in the state this correction was "
+                "commissioned against; nothing staged."
+            )
+    lines = live_estimate_lines(estimate, target)
+    orders: set[int] = set()
+    for index, line in enumerate(lines):
+        if str(line.get("tax_id") or "") != target["tax_id"]:
+            raise DraftToolError(
+                f"Live line {index + 1} carries tax_id {line.get('tax_id')!r}, not the Quebec "
+                f"GST+QST group {target['tax_id']}. Nothing staged."
+            )
+        order = line.get("item_order")
+        if isinstance(order, bool) or not isinstance(order, int):
+            raise DraftToolError(f"Live line {index + 1} has no integer item_order. Nothing staged.")
+        if order in orders:
+            raise DraftToolError(f"Live line {index + 1} repeats item_order {order}. Nothing staged.")
+        orders.add(order)
+        percent = returned_discount_percent(
+            line.get("discount"), f"live line {index + 1} discount"
+        )
+        if percent != target["line_discount_percent"]:
+            raise DraftToolError(
+                f"Live line {index + 1} discount is {line.get('discount')!r}, not 10 percent. "
+                "Nothing staged."
+            )
+        quantity = live_decimal(line.get("quantity"), f"live line {index + 1} quantity")
+        rate = live_decimal(line.get("rate"), f"live line {index + 1} rate")
+        gross, discount, net = line_figures(quantity, rate)
+        # The percent field alone is never conclusive -- Zoho echoes a real
+        # percentage as the bare number 10 too. The exact amount is what proves
+        # this line is 10% and not another flat CAD 10.00 (the 2026-08-10 bug).
+        actual_discount = live_decimal(
+            line.get("discount_amount"), f"live line {index + 1} discount_amount"
+        )
+        if actual_discount != discount:
+            raise DraftToolError(
+                f"Live line {index + 1} discount_amount is {actual_discount}, not the exact 10% "
+                f"({discount}) of its {gross} gross. It is not a percentage discount; nothing staged."
+            )
+        actual_net = live_decimal(line.get("item_total"), f"live line {index + 1} item_total")
+        if actual_net != net:
+            raise DraftToolError(
+                f"Live line {index + 1} item_total is {actual_net}, not the recomputed {net}. "
+                "Nothing staged."
+            )
+    _, target_line = item9_target_line(lines, target)
+    for key, expected in (("item_id", target["item_id"]), ("name", target["item_name"])):
+        if str(target_line.get(key) or "") != expected:
+            raise DraftToolError(
+                f"The target line {key} is {target_line.get(key)!r}, not the commissioned "
+                f"{expected!r}. Nothing staged."
+            )
+    if target_line.get("item_order") != target["item_order"]:
+        raise DraftToolError(
+            f"The target line item_order is {target_line.get('item_order')!r}, not the "
+            f"commissioned {target['item_order']}. Nothing staged."
+        )
+    for key, expected_value in (
+        ("quantity", target["current_quantity"]),
+        ("rate", target["rate"]),
+    ):
+        actual_value = live_decimal(target_line.get(key), f"target line {key}")
+        if actual_value != expected_value:
+            raise DraftToolError(
+                f"The target line {key} is {actual_value}, not the commissioned {expected_value}. "
+                "Nothing staged."
+            )
+    return lines
+
+
+def item9_expected(lines: list[dict[str, Any]], target: dict[str, Any]) -> dict[str, Any]:
+    """Recompute BOTH states from the live quantities and rates alone.
+
+    The current figures must reproduce the required starting totals exactly and
+    the new figures must reproduce the fixed approved totals exactly, or nothing
+    is staged. No approved number is ever copied through.
+    """
+    target_index, _ = item9_target_line(lines, target)
+    zero = Decimal("0")
+    current_gross = current_discount = current_net = zero
+    new_gross = new_discount = new_net = zero
+    expected_lines: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        quantity = live_decimal(line.get("quantity"), f"live line {index + 1} quantity")
+        rate = live_decimal(line.get("rate"), f"live line {index + 1} rate")
+        gross, discount, net = line_figures(quantity, rate)
+        current_gross += gross
+        current_discount += discount
+        current_net += net
+        after_quantity = target["new_quantity"] if index == target_index else quantity
+        next_gross, next_discount, next_net = line_figures(after_quantity, rate)
+        new_gross += next_gross
+        new_discount += next_discount
+        new_net += next_net
+        if index != target_index and after_quantity != quantity:
+            raise DraftToolError(f"Line {index + 1} is not the target line and must not move.")
+        expected_lines.append({
+            "line_item_id": str(line.get("line_item_id") or ""),
+            "item_order": line.get("item_order"),
+            "name": str(line.get("name") or ""),
+            "rate": format(rate, "f"),
+            "quantity_before": format(quantity, "f"),
+            "quantity": format(after_quantity, "f"),
+            "line_gross": money_text(next_gross),
+            "discount_amount": money_text(next_discount),
+            "item_total": money_text(next_net),
+            "changed": index == target_index,
+        })
+    if [row["changed"] for row in expected_lines].count(True) != 1:
+        raise DraftToolError("Exactly one line may change. Nothing staged.")
+    # The live starting arithmetic must reproduce itself, or the corrected
+    # figures cannot be predicted from it.
+    current_combined, current_gst, current_qst = tax_on(current_net)
+    if (
+        current_net != target["current_sub_total"]
+        or current_combined != target["current_tax_total"]
+        or current_gst + current_qst != current_combined
+        or current_net + current_combined != target["current_total"]
+    ):
+        raise DraftToolError(
+            f"The live lines recompute to sub_total {current_net} / tax {current_combined}, not "
+            f"the required starting {target['current_sub_total']} / {target['current_tax_total']}. "
+            "Nothing staged."
+        )
+    combined, gst, qst = tax_on(new_net)
+    if gst + qst != combined:
+        raise DraftToolError(
+            "The combined Quebec rate and its two components disagree on the corrected tax. Nothing staged."
+        )
+    total = new_net + combined
+    for key, computed, fixed in (
+        ("sub_total", new_net, target["expected_sub_total"]),
+        ("gst", gst, target["expected_gst"]),
+        ("qst", qst, target["expected_qst"]),
+        ("tax_total", combined, target["expected_tax_total"]),
+        ("total", total, target["expected_total"]),
+    ):
+        if computed != fixed:
+            raise DraftToolError(
+                f"The corrected {key} recomputes to {computed}, not the commissioned {fixed}. Nothing staged."
+            )
+    target_row = expected_lines[target_index]
+    before_gross, before_discount, before_net = line_figures(
+        target["current_quantity"], target["rate"]
+    )
+    after_gross, after_discount, after_net = line_figures(
+        target["new_quantity"], target["rate"]
+    )
+    if (
+        Decimal(target_row["item_total"]) != after_net
+        or current_net - new_net != before_net - after_net
+        or current_net - new_net != target["current_sub_total"] - target["expected_sub_total"]
+    ):
+        raise DraftToolError(
+            "The quantity-only delta does not account for the whole change in the subtotal. Nothing staged."
+        )
+    return {
+        "lines": expected_lines,
+        "target": {
+            "line_item_id": target["line_item_id"],
+            "item_order": target["item_order"],
+            "name": target["item_name"],
+            "rate": money_text(target["rate"]),
+            "quantity_before": format(target["current_quantity"], "f"),
+            "quantity_after": format(target["new_quantity"], "f"),
+            "line_gross_before": money_text(before_gross),
+            "line_gross_after": money_text(after_gross),
+            "discount_before": money_text(before_discount),
+            "discount_after": money_text(after_discount),
+            "item_total_before": money_text(before_net),
+            "item_total_after": money_text(after_net),
+            "net_delta": money_text(before_net - after_net),
+        },
+        "current": {
+            "list_subtotal": money_text(current_gross),
+            "discount_total": money_text(current_discount),
+            "sub_total": money_text(current_net),
+            "tax_total": money_text(current_combined),
+            "total": money_text(current_net + current_combined),
+        },
+        "list_subtotal": money_text(new_gross),
+        "discount_total": money_text(new_discount),
+        "sub_total": money_text(new_net),
+        "tax_total": money_text(combined),
+        "tax_gst": money_text(gst),
+        "tax_qst": money_text(qst),
+        "total": money_text(total),
+    }
+
+
+def item9_put_payload(
+    estimate: dict[str, Any], lines: list[dict[str, Any]], target: dict[str, Any]
+) -> dict[str, Any]:
+    """The complete PUT body: preserved live values, one changed number.
+
+    Zoho deletes existing lines that a PUT omits, so the COMPLETE live line list
+    is always resent in order, each with its own line_item_id and item_id.
+    """
+    payload: dict[str, Any] = {}
+    for key in CORRECTION_HEADER_KEYS:
+        value = estimate.get(key)
+        if key == "customer_id":
+            payload[key] = str(value or "")
+            continue
+        if isinstance(value, str) and value.strip():
+            payload[key] = value
+    payload["discount_type"] = "item_level"
+    payload["is_discount_before_tax"] = True
+    target_index, _ = item9_target_line(lines, target)
+    put_lines = []
+    for index, line in enumerate(lines):
+        put_line: dict[str, Any] = {}
+        for key in CORRECTION_LINE_PUT_KEYS:
+            if key in ("discount", "quantity"):
+                continue
+            value = line.get(key)
+            if value is None or value == "":
+                continue
+            put_line[key] = value
+        put_line["line_item_id"] = str(line.get("line_item_id") or "")
+        put_line["item_id"] = str(line.get("item_id") or "")
+        # A percentage discount MUST be the exact string. Echoing back the bare
+        # number Zoho returns is what took CAD 10.00 off every line on
+        # 2026-08-10; "10%" preserves the same 10 percent this line already has.
+        put_line["discount"] = TDS_LINE_DISCOUNT
+        if index == target_index:
+            put_line["quantity"] = quantity_json(target["new_quantity"])
+        else:
+            quantity = line.get("quantity")
+            live_decimal(quantity, f"live line {index + 1} quantity")
+            put_line["quantity"] = quantity
+        missing = sorted(CORRECTION_REQUIRED_LINE_KEYS - set(put_line))
+        if missing:
+            raise DraftToolError(
+                f"Live line {index + 1} cannot be resent intact; missing {', '.join(missing)}."
+            )
+        put_lines.append(put_line)
+    payload["line_items"] = put_lines
+    extra = sorted(set(payload) - CORRECTION_ALLOWED_PUT_KEYS)
+    if extra or not CORRECTION_REQUIRED_PUT_KEYS.issubset(payload):
+        raise DraftToolError("The Item 9 quantity payload is not the exact commissioned shape.")
+    return payload
+
+
+def require_item9_sources(sources: Any, target: dict[str, Any]) -> None:
+    """The staged evidence must be the exact closed schema, with the fixed request."""
+    if not isinstance(sources, dict) or set(sources) != {"source_plan", "customer_request"}:
+        raise DraftToolError("Plan source evidence is not the exact closed schema.")
+    plan_evidence = sources["source_plan"]
+    if not isinstance(plan_evidence, dict) or set(plan_evidence) != {
+        "path", "sha256", "line_items"
+    } or not isinstance(plan_evidence["line_items"], list):
+        raise DraftToolError("Plan source-plan evidence is invalid.")
+    if str(plan_evidence.get("sha256") or "") != target["source_plan_sha256"]:
+        raise DraftToolError("Plan does not cite the immutable original source plan.")
+    if sources["customer_request"] != ITEM9_CUSTOMER_REQUEST:
+        raise DraftToolError(
+            "Plan does not cite the exact customer request this correction was commissioned for."
+        )
+    if (
+        live_decimal(ITEM9_CUSTOMER_REQUEST["from_quantity"], "request from_quantity")
+        != target["current_quantity"]
+        or live_decimal(ITEM9_CUSTOMER_REQUEST["to_quantity"], "request to_quantity")
+        != target["new_quantity"]
+    ):
+        raise DraftToolError("The fixed customer request does not state the commissioned quantities.")
+
+
+def collect_item9_source_evidence(target: dict[str, Any]) -> dict[str, Any]:
+    sources = {
+        "source_plan": source_plan_evidence(target),
+        "customer_request": json_copy(ITEM9_CUSTOMER_REQUEST),
+    }
+    require_item9_sources(sources, target)
+    return sources
+
+
+def rehearse_item9_stable_state(
+    access_token: str, vault: dict[str, Any], estimate_id: str
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Bounded, read-only stable-state rehearsal of the untouched estimate.
+
+    A fixed number of fresh GETs inside a fixed window. Anything that moves
+    other than the already-proven volatile estimate_url refuses the staging, so
+    the pre-write fingerprint a commit depends on is known to hold still BEFORE
+    Rachad spends an approval on it. No write, no discovery-by-approval.
+    """
+    started = monotonic_seconds()
+    observations: list[dict[str, Any]] = []
+    elapsed = Decimal("0")
+    for index in range(ITEM9_REHEARSAL_OBSERVATIONS):
+        if index:
+            pause(float(ITEM9_REHEARSAL_INTERVAL_SECONDS))
+        observations.append(get_estimate(access_token, vault, estimate_id))
+        elapsed = Decimal(str(round(monotonic_seconds() - started, 3)))
+        if elapsed < 0 or elapsed > ITEM9_REHEARSAL_MAX_SECONDS:
+            raise DraftToolError(
+                f"The read-only stable-state rehearsal did not finish inside its fixed "
+                f"{ITEM9_REHEARSAL_MAX_SECONDS}-second window. Nothing staged."
+            )
+    first = observations[0]
+    baseline = correction_prewrite_state(first)
+    volatile_seen: set[str] = set()
+    for position, snapshot in enumerate(observations[1:], start=2):
+        current = correction_prewrite_state(snapshot)
+        if current != baseline:
+            moved = sorted(
+                key for key in set(current) | set(baseline)
+                if current.get(key) != baseline.get(key)
+            )
+            raise DraftToolError(
+                f"The live estimate is not stable: observation {position} moved field(s) "
+                f"{', '.join(moved) or 'unknown'} while nothing was written. Nothing staged."
+            )
+        for key in ESTIMATE_PREWRITE_VOLATILE_KEYS:
+            if snapshot.get(key) != first.get(key):
+                volatile_seen.add(key)
+    return first, {
+        "observations": ITEM9_REHEARSAL_OBSERVATIONS,
+        "interval_seconds": format(ITEM9_REHEARSAL_INTERVAL_SECONDS, "f"),
+        "max_seconds": format(ITEM9_REHEARSAL_MAX_SECONDS, "f"),
+        "elapsed_seconds": format(elapsed, "f"),
+        "prewrite_sha256": digest_for(baseline),
+        "observation_prewrite_sha256": [
+            digest_for(correction_prewrite_state(snapshot)) for snapshot in observations
+        ],
+        "volatile_keys_observed": sorted(volatile_seen),
+        "stable": True,
+    }
+
+
+def validate_item9_rehearsal(evidence: Any, before: dict[str, Any]) -> None:
+    """Closed schema, fixed window, and cryptographically bound to before_state."""
+    if not isinstance(evidence, dict) or set(evidence) != set(ITEM9_REHEARSAL_KEYS):
+        raise DraftToolError("Plan stable-state rehearsal evidence is not the exact closed schema.")
+    if evidence["stable"] is not True:
+        raise DraftToolError("Plan stable-state rehearsal did not record a stable estimate.")
+    if isinstance(evidence["observations"], bool) or evidence["observations"] != ITEM9_REHEARSAL_OBSERVATIONS:
+        raise DraftToolError(
+            f"Plan stable-state rehearsal must record exactly {ITEM9_REHEARSAL_OBSERVATIONS} observations."
+        )
+    if evidence["interval_seconds"] != format(ITEM9_REHEARSAL_INTERVAL_SECONDS, "f") or (
+        evidence["max_seconds"] != format(ITEM9_REHEARSAL_MAX_SECONDS, "f")
+    ):
+        raise DraftToolError("Plan stable-state rehearsal does not use the fixed window.")
+    elapsed = live_decimal(evidence["elapsed_seconds"], "rehearsal elapsed_seconds")
+    if elapsed < 0 or elapsed > ITEM9_REHEARSAL_MAX_SECONDS:
+        raise DraftToolError("Plan stable-state rehearsal window is invalid.")
+    volatile = evidence["volatile_keys_observed"]
+    if (
+        not isinstance(volatile, list)
+        or not all(isinstance(key, str) for key in volatile)
+        or volatile != sorted(volatile)
+        or len(set(volatile)) != len(volatile)
+        or set(volatile) - set(ESTIMATE_PREWRITE_VOLATILE_KEYS)
+    ):
+        raise DraftToolError(
+            "Plan stable-state rehearsal recorded field(s) moving that are not the proven "
+            "volatile estimate_url."
+        )
+    expected_digest = digest_for(correction_prewrite_state(before))
+    stated = str(evidence["prewrite_sha256"] or "")
+    if not HEX_64_RE.fullmatch(stated) or not secrets.compare_digest(stated, expected_digest):
+        raise DraftToolError(
+            "Plan stable-state rehearsal is not bound to the staged live estimate state."
+        )
+    digests = evidence["observation_prewrite_sha256"]
+    if not isinstance(digests, list) or len(digests) != ITEM9_REHEARSAL_OBSERVATIONS:
+        raise DraftToolError("Plan stable-state rehearsal does not carry one digest per observation.")
+    for index, digest in enumerate(digests):
+        if not isinstance(digest, str) or not HEX_64_RE.fullmatch(digest) or not secrets.compare_digest(
+            digest, expected_digest
+        ):
+            raise DraftToolError(
+                f"Plan stable-state rehearsal observation {index + 1} does not match the staged state."
+            )
+
+
+def build_item9_correction(
+    before: dict[str, Any], target: dict[str, Any], sources: dict[str, Any]
+) -> dict[str, Any]:
+    """The whole projection, derived from immutable inputs alone.
+
+    Commit re-runs this over the staged live state and refuses unless the result
+    is byte-identical to the reviewed plan, so no figure, endpoint, payload key
+    or fingerprint in a plan file can be tampered with.
+    """
+    require_item9_sources(sources, target)
+    lines = validate_item9_live_estimate(before, target)
+    cross_check_source_plan(lines, sources["source_plan"]["line_items"])
+    expected = item9_expected(lines, target)
+    protected = item9_protected_state(before)
+    return {
+        "estimate": {
+            "estimate_id": target["estimate_id"],
+            "estimate_number": target["estimate_number"],
+            "reference_number": target["reference_number"],
+            "customer_id": target["customer_id"],
+            "customer_name": target["customer_name"],
+            "status": target["status"],
+            "line_count": target["line_count"],
+            "before_state": json_copy(before),
+            "before_state_sha256": digest_for(before),
+            "protected_state": protected,
+            "protected_state_sha256": digest_for(protected),
+        },
+        "current": {
+            "sub_total": money_text(target["current_sub_total"]),
+            "tax_total": money_text(target["current_tax_total"]),
+            "total": money_text(target["current_total"]),
+        },
+        "change": {
+            "field": f"line_items[item_order={target['item_order']}].quantity",
+            "line_item_id": target["line_item_id"],
+            "item_id": target["item_id"],
+            "item": target["item_name"],
+            "from": format(target["current_quantity"], "f"),
+            "to": format(target["new_quantity"], "f"),
+            "rate_unchanged": money_text(target["rate"]),
+            "discount_unchanged": target["line_discount"],
+            "tax_unchanged": target["tax_id"],
+        },
+        "tax_method": {
+            "basis": "Half-up on the net subtotal; combined 14.975% and 5% + 9.975% must agree.",
+            "current_tax_reproduced": money_text(target["current_tax_total"]),
+        },
+        "expected": expected,
+        "put_endpoint": f"PUT /books/v3/estimates/{target['estimate_id']}",
+        "put_payload": item9_put_payload(before, lines, target),
+        "status_unchanged": SENT_STATUS,
+        "email_sent": False,
+    }
+
+
+def stage_item9_plan(
+    target: dict[str, Any], evidence: dict[str, Any], sources: dict[str, Any],
+    rehearsal: dict[str, Any], organization_id: str,
+) -> Path:
+    created = utc_now()
+    core = {
+        "tool": TOOL_NAME,
+        "kind": ITEM9_KIND,
+        "schema_version": ITEM9_SCHEMA_VERSION,
+        "nonce": secrets.token_hex(16),
+        "created_utc": created.isoformat(),
+        "expires_utc": (created + timedelta(hours=ITEM9_PLAN_LIFETIME_HOURS)).isoformat(),
+        "approval_required": APPROVAL_WORD,
+        "estimate_id": target["estimate_id"],
+        "books_organization_id": organization_id,
+        "risk": {
+            "atomic": True,
+            "single_put": True,
+            "email_sent": False,
+            "status_unchanged": SENT_STATUS,
+            "write_attempted": False,
+            "note": ITEM9_RISK_NOTE,
+        },
+        "source_evidence": sources,
+        "stable_state_evidence": rehearsal,
+        "live_evidence": evidence,
+    }
+    plan = dict(core)
+    plan["sha256"] = digest_for(core)
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = created.strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_{ITEM9_KIND}_{plan['sha256'][:16]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    zoho_tool.append_receipt(
+        "zoho_tds_item9_quantity_correction_plan_staged_read_only",
+        f"estimate={target['estimate_number']} ({target['estimate_id']}); plan={path}; "
+        f"sha256={plan['sha256']}; writes=0; method=GET_ONLY",
+    )
+    return path
+
+
+def print_item9_summary(plan: dict[str, Any], path: Path) -> None:
+    evidence = plan["live_evidence"]
+    estimate = evidence["estimate"]
+    expected = evidence["expected"]
+    change = evidence["change"]
+    rehearsal = plan["stable_state_evidence"]
+    print("=" * 78)
+    print("STAGED PLAN -- QT-000029 ITEM 9 QUANTITY CORRECTION (NOT YET APPROVED)")
+    print("=" * 78)
+    print(f"Estimate      : {estimate['estimate_number']} ({estimate['estimate_id']})")
+    print(f"Reference     : {estimate['reference_number']}")
+    print(f"Customer      : {estimate['customer_name']} ({estimate['customer_id']})")
+    print(f"Status        : {estimate['status']} (unchanged by this plan)")
+    print(f"Endpoint      : {evidence['put_endpoint']} (one PUT, no retry)")
+    print(f"Change        : {change['field']}")
+    print(f"                {change['item']}")
+    print(f"                quantity {change['from']} -> {change['to']}"
+          f"  (rate {change['rate_unchanged']}, discount {change['discount_unchanged']}, tax unchanged)")
+    print(f"Requested by  : {ITEM9_CUSTOMER_REQUEST['from']}, "
+          f"{ITEM9_CUSTOMER_REQUEST['channel']}, {ITEM9_CUSTOMER_REQUEST['received']}")
+    print(f"                \"{ITEM9_CUSTOMER_REQUEST['quote']}\"")
+    print("-" * 78)
+    print(f"{'#':>2}  {'Line':34} {'Qty':>6} {'Gross':>10} {'Disc 10%':>10} {'Net':>10}")
+    for index, line in enumerate(expected["lines"], start=1):
+        marker = "*" if line["changed"] else " "
+        print(
+            f"{index:>2}{marker} {line['name'][:33]:33} {line['quantity']:>6} "
+            f"{line['line_gross']:>10} {line['discount_amount']:>10} {line['item_total']:>10}"
+        )
+    print("-" * 78)
+    print(f"Current sub_total        : CAD {evidence['current']['sub_total']}")
+    print(f"Current total            : CAD {evidence['current']['total']}")
+    print(f"Line 9 net removed       : CAD {expected['target']['net_delta']}")
+    print(f"New sub_total            : CAD {expected['sub_total']}")
+    print(
+        f"New tax_total            : CAD {expected['tax_total']}"
+        f"  (GST {expected['tax_gst']} + QST {expected['tax_qst']})"
+    )
+    print(f"New total                : CAD {expected['total']}")
+    print("-" * 78)
+    print(f"Lines resent intact      : {len(evidence['put_payload']['line_items'])} "
+          f"(every line_item_id, nothing added, removed or reordered)")
+    print(f"Stable-state rehearsal   : {rehearsal['observations']} fresh GETs in "
+          f"{rehearsal['elapsed_seconds']}s (limit {rehearsal['max_seconds']}s); "
+          f"only volatile field(s) seen: "
+          f"{', '.join(rehearsal['volatile_keys_observed']) or 'none'}")
+    print(f"Email sent               : NO -- this tool has no mail transport")
+    print(f"Plan                     : {path}")
+    print(f"Plan sha256              : {plan['sha256']}")
+    print(f"Expires                  : {plan['expires_utc']}")
+    print("-" * 78)
+    print(
+        f"NO WRITE HAS BEEN MADE. Committing this plan needs Rachad's own one-word\n"
+        f"reply {APPROVAL_WORD} to THIS plan (exact uppercase). Dado never supplies it."
+    )
+    print("=" * 78)
+
+
+def command_stage_item9_quantity_correction(args: argparse.Namespace) -> None:
+    """GET-only. Takes no arguments: the estimate, line and quantities are fixed."""
+    target = ITEM9_TARGET
+    estimate_id, target = require_item9_target(target["estimate_id"])
+    sources = collect_item9_source_evidence(target)
+    vault = zoho_tool.load_vault()
+    zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
+    organization_id = books_organization_id(vault)
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    before, rehearsal = rehearse_item9_stable_state(access_token, vault, estimate_id)
+    zoho_tool.save_vault(vault)
+    evidence = build_item9_correction(before, target, sources)
+    validate_item9_rehearsal(rehearsal, before)
+    path = stage_item9_plan(target, evidence, sources, rehearsal, organization_id)
+    plan = read_json(str(path))
+    print_item9_summary(plan, path)
+
+
+def validate_item9_plan(plan: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    if (
+        plan.get("tool") != TOOL_NAME
+        or plan.get("kind") != ITEM9_KIND
+        or plan.get("schema_version") != ITEM9_SCHEMA_VERSION
+        or plan.get("approval_required") != APPROVAL_WORD
+    ):
+        raise DraftToolError("The plan belongs to a different tool, action or schema version.")
+    if not NONCE_RE.fullmatch(str(plan.get("nonce") or "")):
+        raise DraftToolError("Plan nonce is invalid.")
+    created = parse_plan_time(plan.get("created_utc"), "creation time")
+    expires = parse_plan_time(plan.get("expires_utc"), "expiry")
+    if expires - created != timedelta(hours=ITEM9_PLAN_LIFETIME_HOURS):
+        raise DraftToolError("Plan must have exactly a 24-hour lifetime.")
+    now = utc_now()
+    if created > now + timedelta(minutes=5):
+        raise DraftToolError("Plan creation time is in the future.")
+    if now >= expires:
+        raise DraftToolError("Plan expired. Stage a new plan for review.")
+    risk = plan.get("risk")
+    if not isinstance(risk, dict) or (
+        risk.get("atomic") is not True
+        or risk.get("single_put") is not True
+        or risk.get("email_sent") is not False
+        or risk.get("write_attempted") is not False
+        or risk.get("status_unchanged") != SENT_STATUS
+        or risk.get("note") != ITEM9_RISK_NOTE
+    ):
+        raise DraftToolError("Plan must disclose the exact single-atomic-PUT risk.")
+    estimate_id, target = require_item9_target(plan.get("estimate_id"))
+    if not ID_RE.fullmatch(str(plan.get("books_organization_id") or "")):
+        raise DraftToolError("Plan organization ID is invalid.")
+    sources = plan.get("source_evidence")
+    evidence = plan.get("live_evidence")
+    if not isinstance(sources, dict) or not isinstance(evidence, dict):
+        raise DraftToolError("Plan evidence is invalid.")
+    require_item9_sources(sources, target)
+    # The cited source plan is re-read from disk and re-hashed here, so a plan
+    # cannot carry a doctored copy of the lines it claims to be checked against.
+    if sources != collect_item9_source_evidence(target):
+        raise DraftToolError(
+            "Plan source evidence does not match the immutable artifacts on disk. Nothing written."
+        )
+    staged_estimate = evidence.get("estimate")
+    if not isinstance(staged_estimate, dict):
+        raise DraftToolError("Plan estimate evidence is invalid.")
+    before = staged_estimate.get("before_state")
+    if not isinstance(before, dict):
+        raise DraftToolError("Plan before-state evidence must be an object.")
+    if not secrets.compare_digest(
+        str(staged_estimate.get("before_state_sha256") or ""), digest_for(before)
+    ):
+        raise DraftToolError("Plan before-state evidence hash is invalid.")
+    validate_item9_rehearsal(plan.get("stable_state_evidence"), before)
+    # Re-derive EVERYTHING from the staged live state. A tampered payload,
+    # endpoint, fingerprint or corrected total cannot survive this.
+    if build_item9_correction(before, target, sources) != evidence:
+        raise DraftToolError(
+            "Plan evidence is not the canonical projection of the staged live estimate state."
+        )
+    if evidence["put_endpoint"] != f"PUT /books/v3/estimates/{estimate_id}":
+        raise DraftToolError("Plan endpoint is not the one commissioned estimate route.")
+    return estimate_id, target, evidence
+
+
+def load_item9_plan(path: Path) -> tuple[dict[str, Any], str, dict[str, Any], dict[str, Any]]:
+    plan = read_json(str(path))
+    saved = str(plan.get("sha256") or "")
+    core = dict(plan)
+    core.pop("sha256", None)
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise DraftToolError("Plan hash check failed. The plan changed after review.")
+    estimate_id, target, evidence = validate_item9_plan(plan)
+    return plan, estimate_id, target, evidence
+
+
+def require_item9_put_allowed(
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+) -> None:
+    """The complete write allowlist for the Item 9 quantity correction.
+
+    Only PUT. Only the ONE commissioned estimate. Only the commissioned keys,
+    with the complete line list, every line_item_id and item_id present in
+    order, every non-target field identical to the reviewed plan and exactly one
+    changed quantity. Pure validation -- it touches nothing. Commit runs it once
+    BEFORE the replay lock (so a bad payload is a free refusal, not a burned
+    plan) and the write function runs it again as the transport's own gate.
+    """
+    if method != "PUT":
+        raise DraftToolError("REFUSED: the Item 9 quantity correction is a PUT and nothing else.")
+    match = ESTIMATE_PUT_PATH_RE.fullmatch(str(path))
+    if not match or match.group(1) != ITEM9_ESTIMATE_ID:
+        raise DraftToolError(
+            f"REFUSED: the Item 9 quantity correction targets /books/v3/estimates/"
+            f"{ITEM9_ESTIMATE_ID} and nothing else. Creation, deletion, status, sending, mailing, "
+            "acceptance, conversion, attachment, template and every bulk route are unreachable."
+        )
+    target = ITEM9_TARGET
+    if not isinstance(payload, dict) or not isinstance(expected_payload, dict):
+        raise DraftToolError("REFUSED: the estimate PUT payload must be an object.")
+    extra = sorted(set(payload) - CORRECTION_ALLOWED_PUT_KEYS)
+    if extra:
+        raise DraftToolError(
+            "REFUSED: the estimate PUT payload names uncommissioned field(s): " + ", ".join(extra)
+        )
+    if not CORRECTION_REQUIRED_PUT_KEYS.issubset(payload):
+        raise DraftToolError(
+            "REFUSED: the estimate PUT payload must carry the preserved customer, number and date, "
+            "the item-level pre-tax discount flags and the complete line list."
+        )
+    if payload.get("discount_type") != "item_level" or payload.get("is_discount_before_tax") is not True:
+        raise DraftToolError("REFUSED: the correction keeps an item-level discount before tax.")
+    if str(payload.get("customer_id") or "") != target["customer_id"]:
+        raise DraftToolError("REFUSED: the estimate PUT names a different customer.")
+    if str(payload.get("estimate_number") or "") != target["estimate_number"]:
+        raise DraftToolError("REFUSED: the estimate PUT does not preserve the estimate number.")
+    if str(payload.get("reference_number") or "") != target["reference_number"]:
+        raise DraftToolError("REFUSED: the estimate PUT does not preserve the reference number.")
+    lines = payload.get("line_items")
+    if not isinstance(lines, list) or len(lines) != target["line_count"]:
+        raise DraftToolError("REFUSED: the estimate PUT must carry the complete live line list.")
+    expected_lines = expected_payload.get("line_items")
+    if not isinstance(expected_lines, list) or len(expected_lines) != target["line_count"]:
+        raise DraftToolError("REFUSED: the reviewed plan payload is not the commissioned shape.")
+    changed = 0
+    seen: set[str] = set()
+    for index, (line, reviewed) in enumerate(zip(lines, expected_lines)):
+        if not isinstance(line, dict) or not isinstance(reviewed, dict):
+            raise DraftToolError("REFUSED: every PUT line must be an object.")
+        unknown = sorted(set(line) - set(CORRECTION_LINE_PUT_KEYS))
+        if unknown:
+            raise DraftToolError(
+                "REFUSED: a PUT line names uncommissioned field(s): " + ", ".join(unknown)
+            )
+        if not CORRECTION_REQUIRED_LINE_KEYS.issubset(line):
+            raise DraftToolError("REFUSED: every PUT line must resend its own identity.")
+        line_item_id = str(line.get("line_item_id") or "")
+        if not ID_RE.fullmatch(line_item_id) or line_item_id in seen:
+            raise DraftToolError("REFUSED: the estimate PUT repeats or omits a line_item_id.")
+        seen.add(line_item_id)
+        # Order and identity are pinned line by line against the reviewed plan,
+        # so a line cannot be reordered, substituted or silently swapped.
+        if line_item_id != str(reviewed.get("line_item_id") or ""):
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} is not the reviewed line in the reviewed order."
+            )
+        if line.get("discount") != TDS_LINE_DISCOUNT:
+            raise DraftToolError(
+                f"REFUSED: every PUT line discount must be the exact string {TDS_LINE_DISCOUNT!r}."
+            )
+        if set(line) != set(reviewed):
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} does not carry the reviewed field set."
+            )
+        for key in line:
+            if line[key] == reviewed[key]:
+                continue
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} {key} does not match the reviewed plan."
+            )
+        is_target = line_item_id == target["line_item_id"]
+        quantity = live_decimal(line.get("quantity"), f"PUT line {index + 1} quantity")
+        if is_target:
+            if quantity != target["new_quantity"]:
+                raise DraftToolError(
+                    "REFUSED: the target line quantity must be exactly "
+                    f"{target['new_quantity']}."
+                )
+            changed += 1
+        elif str(line.get("item_id") or "") == "":
+            raise DraftToolError("REFUSED: every PUT line must resend its Zoho item_id.")
+    if changed != 1:
+        raise DraftToolError(
+            "REFUSED: the estimate PUT must carry the one commissioned target line exactly once."
+        )
+    for key in CORRECTION_ALLOWED_PUT_KEYS:
+        if key == "line_items":
+            continue
+        if payload.get(key) != expected_payload.get(key):
+            raise DraftToolError(
+                f"REFUSED: the estimate PUT {key} does not match the reviewed plan."
+            )
+    if set(payload) != set(expected_payload):
+        raise DraftToolError("REFUSED: the estimate PUT is not the reviewed payload.")
+    if not ID_RE.fullmatch(str(organization_id)):
+        raise DraftToolError("REFUSED: the organization ID is invalid.")
+
+
+def oauth_estimate_item9_quantity_write_allowed(
+    access_token: str,
+    api_domain: str,
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """The ONE write path for the Item 9 quantity correction, gated by its allowlist."""
+    require_item9_put_allowed(method, path, organization_id, payload, expected_payload)
+    return send_estimate_put(
+        access_token, api_domain, path, organization_id, payload, "estimate quantity correction"
+    )
+
+
+def verify_item9_result(
+    after: Any, evidence: dict[str, Any], label: str, *, full: bool = True
+) -> None:
+    """Post-state verification, applied to the PUT response AND a fresh GET.
+
+    `full` adds the byte-exact protected fingerprint, the preserved per-line
+    identity comparison and the tax-row breakdown. Those run against the FRESH
+    GET, which is the authoritative record.
+    """
+    if not isinstance(after, dict):
+        raise DraftToolError(f"{label} returned no estimate record.")
+    estimate = evidence["estimate"]
+    expected = evidence["expected"]
+    for key, want in (
+        ("estimate_id", estimate["estimate_id"]),
+        ("estimate_number", estimate["estimate_number"]),
+        ("reference_number", estimate["reference_number"]),
+        ("customer_id", estimate["customer_id"]),
+        ("status", estimate["status"]),
+    ):
+        actual = str(after.get(key) if after.get(key) is not None else "")
+        if actual != want:
+            raise DraftToolError(
+                f"{label} {key} is {actual!r}, not the preserved {want!r}. Stop and reconcile."
+            )
+    if after.get("discount_type") != "item_level" or after.get("is_discount_before_tax") is not True:
+        raise DraftToolError(f"{label} no longer shows an item-level discount before tax.")
+    lines = after.get("line_items")
+    if not isinstance(lines, list) or len(lines) != estimate["line_count"]:
+        raise DraftToolError(
+            f"{label} carries {len(lines) if isinstance(lines, list) else 'no'} lines, not the "
+            f"preserved {estimate['line_count']}. Stop and reconcile."
+        )
+    before_lines = estimate["before_state"].get("line_items") or []
+    for index, (line, want_line) in enumerate(zip(lines, expected["lines"])):
+        if not isinstance(line, dict):
+            raise DraftToolError(f"{label} line {index + 1} is not an object.")
+        if str(line.get("line_item_id") or "") != want_line["line_item_id"]:
+            raise DraftToolError(
+                f"{label} line {index + 1} is line_item_id {line.get('line_item_id')!r}, not the "
+                f"preserved {want_line['line_item_id']!r}. Stop and reconcile."
+            )
+        before_line = before_lines[index] if index < len(before_lines) else {}
+        quantity = live_decimal(line.get("quantity"), f"{label} line {index + 1} quantity")
+        if quantity != Decimal(want_line["quantity"]):
+            raise DraftToolError(
+                f"{label} line {index + 1} quantity is {quantity}, not the approved "
+                f"{want_line['quantity']}. Stop and reconcile."
+            )
+        if full:
+            for key in ("item_id", "name", "description", "unit", "tax_id", "item_order"):
+                if str(before_line.get(key) or "") != str(line.get(key) or ""):
+                    raise DraftToolError(
+                        f"{label} line {index + 1} {key} moved from {before_line.get(key)!r} to "
+                        f"{line.get(key)!r}. Stop and reconcile."
+                    )
+            if live_decimal(before_line.get("rate"), f"staged line {index + 1} rate") != live_decimal(
+                line.get("rate"), f"{label} line {index + 1} rate"
+            ):
+                raise DraftToolError(f"{label} line {index + 1} rate moved. Stop and reconcile.")
+            if want_line["changed"] and "quantity_formatted" in before_line:
+                if "quantity_formatted" not in line:
+                    raise DraftToolError(
+                        f"{label} line {index + 1} dropped quantity_formatted. Stop and reconcile."
+                    )
+                if line.get("quantity_formatted") == before_line.get("quantity_formatted"):
+                    raise DraftToolError(
+                        f"{label} line {index + 1} still shows the old formatted quantity "
+                        f"{before_line.get('quantity_formatted')!r}. Stop and reconcile."
+                    )
+        percent = returned_discount_percent(
+            line.get("discount"), f"{label} line {index + 1} discount"
+        )
+        if percent != Decimal(TDS_LINE_DISCOUNT[:-1]):
+            raise DraftToolError(
+                f"{label} line {index + 1} discount is {line.get('discount')!r}, not 10 percent."
+            )
+        for key, want in (
+            ("discount_amount", want_line["discount_amount"]),
+            ("item_total", want_line["item_total"]),
+        ):
+            actual_value = live_decimal(line.get(key), f"{label} line {index + 1} {key}")
+            if actual_value != Decimal(want):
+                raise DraftToolError(
+                    f"{label} line {index + 1} {key} is {actual_value}, not the approved {want}. "
+                    "Stop and reconcile."
+                )
+    for key in ("sub_total", "tax_total", "total"):
+        actual_value = live_decimal(after.get(key), f"{label} {key}")
+        if actual_value != Decimal(expected[key]):
+            raise DraftToolError(
+                f"{label} {key} is {actual_value}, not the approved {expected[key]}. Stop and reconcile."
+            )
+    if not full:
+        return
+    before_state = estimate["before_state"]
+    if "discount_total" in before_state:
+        actual_value = live_decimal(after.get("discount_total"), f"{label} discount_total")
+        if actual_value != Decimal(expected["discount_total"]):
+            raise DraftToolError(
+                f"{label} discount_total is {actual_value}, not the approved {expected['discount_total']}."
+            )
+    if "discount_percent" in before_state:
+        if live_decimal(after.get("discount_percent"), f"{label} discount_percent") != live_decimal(
+            before_state.get("discount_percent"), "staged discount_percent"
+        ):
+            raise DraftToolError(f"{label} discount_percent moved. Stop and reconcile.")
+    if "uninvoiced_amount" in before_state:
+        actual_value = live_decimal(after.get("uninvoiced_amount"), f"{label} uninvoiced_amount")
+        if actual_value != Decimal(expected["total"]):
+            raise DraftToolError(
+                f"{label} uninvoiced_amount is {actual_value}, not the expected {expected['total']}."
+            )
+    # The gross subtotal before discount. Zoho recomputes it from quantity x rate,
+    # so a correct quantity change MUST move it -- it is exempt from the byte-exact
+    # fingerprint and asserted here instead, against the gross this tool derived
+    # from the live quantities and rates alone.
+    gross = Decimal(expected["list_subtotal"])
+    if "sub_total_exclusive_of_discount" in before_state:
+        actual_value = live_decimal(
+            after.get("sub_total_exclusive_of_discount"),
+            f"{label} sub_total_exclusive_of_discount",
+        )
+        if actual_value != gross:
+            raise DraftToolError(
+                f"{label} sub_total_exclusive_of_discount is {actual_value}, not the recomputed "
+                f"{gross}. Stop and reconcile."
+            )
+    if (
+        "bcy_sub_total_exclusive_of_discount" in before_state
+        and "sub_total_exclusive_of_discount" in before_state
+        and live_decimal(
+            before_state.get("bcy_sub_total_exclusive_of_discount"),
+            "staged bcy_sub_total_exclusive_of_discount",
+        )
+        == live_decimal(
+            before_state.get("sub_total_exclusive_of_discount"),
+            "staged sub_total_exclusive_of_discount",
+        )
+    ):
+        actual_value = live_decimal(
+            after.get("bcy_sub_total_exclusive_of_discount"),
+            f"{label} bcy_sub_total_exclusive_of_discount",
+        )
+        if actual_value != gross:
+            raise DraftToolError(
+                f"{label} bcy_sub_total_exclusive_of_discount is {actual_value}, not the "
+                f"recomputed {gross}. Stop and reconcile."
+            )
+    # Base-currency mirrors, checked only where the staged record proves CAD is
+    # the base currency (so a foreign-currency estimate can never false-fail).
+    for bcy_key, plain_key in (
+        ("bcy_sub_total", "sub_total"), ("bcy_tax_total", "tax_total"), ("bcy_total", "total")
+    ):
+        if bcy_key in before_state and plain_key in before_state:
+            if live_decimal(before_state.get(bcy_key), f"staged {bcy_key}") != live_decimal(
+                before_state.get(plain_key), f"staged {plain_key}"
+            ):
+                continue
+            actual_value = live_decimal(after.get(bcy_key), f"{label} {bcy_key}")
+            if actual_value != Decimal(expected[plain_key]):
+                raise DraftToolError(
+                    f"{label} {bcy_key} is {actual_value}, not the approved {expected[plain_key]}."
+                )
+    tax_rows = after.get("taxes")
+    if not isinstance(tax_rows, list) or len(tax_rows) != 2:
+        raise DraftToolError(f"{label} must preserve the two GST/QST tax rows.")
+    component_amounts: dict[str, Decimal] = {}
+    for row in tax_rows:
+        if not isinstance(row, dict):
+            raise DraftToolError(f"{label} returned an invalid tax row.")
+        name = str(row.get("tax_name") or "").upper()
+        component = "GST" if name.startswith("GST") else "QST" if name.startswith("QST") else ""
+        if not component or component in component_amounts:
+            raise DraftToolError(f"{label} did not preserve one GST row and one QST row.")
+        component_amounts[component] = live_decimal(
+            row.get("tax_amount"), f"{label} {component} tax_amount"
+        )
+    for component, want in (
+        ("GST", Decimal(expected["tax_gst"])),
+        ("QST", Decimal(expected["tax_qst"])),
+    ):
+        if component_amounts.get(component) != want:
+            raise DraftToolError(
+                f"{label} {component} is {component_amounts.get(component)}, not the approved {want}."
+            )
+    protected = item9_protected_state(after)
+    if protected != estimate["protected_state"] or not secrets.compare_digest(
+        digest_for(protected), str(estimate["protected_state_sha256"])
+    ):
+        moved = sorted(
+            key for key in set(protected) | set(estimate["protected_state"])
+            if protected.get(key) != estimate["protected_state"].get(key)
+        )
+        raise DraftToolError(
+            f"{label} changed protected field(s) that must not move: {', '.join(moved) or 'unknown'}. "
+            "Stop and reconcile."
+        )
+
+
+def command_commit_item9_quantity_correction(args: argparse.Namespace) -> None:
+    plan_path = contained_correction_plan(args.plan)
+    plan, estimate_id, target, evidence = load_item9_plan(plan_path)
+    # Approval is checked before the lock, the vault, the token and the network.
+    require_exact_approval(args.approval)
+    number = target["estimate_number"]
+    lock = correction_lock_path(plan["sha256"])
+    if lock.exists():
+        raise DraftToolError(
+            "REFUSED: this plan has already entered commit and cannot be replayed. "
+            "No Zoho call was made."
+        )
+    try:
+        vault = zoho_tool.load_vault()
+        scopes = [str(scope) for scope in vault.get("scopes") or []]
+        zoho_tool.validate_scopes(scopes)
+        if ESTIMATE_UPDATE_SCOPE not in scopes:
+            raise DraftToolError(
+                f"Saved Zoho connection lacks {ESTIMATE_UPDATE_SCOPE}. Run "
+                "PREPARE_DADO_ZOHO_ACCESS.bat, create the grant in the Zoho API Console, then "
+                "REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. No PUT was issued."
+            )
+        organization_id = books_organization_id(vault)
+        if organization_id != str(plan["books_organization_id"]):
+            raise DraftToolError(
+                "REFUSED: the live FRP Depot Books organization does not match the plan."
+            )
+        access_token, vault = zoho_tool.refresh_access_token(vault)
+        current = get_estimate(access_token, vault, estimate_id)
+        staged_before = evidence["estimate"]["before_state"]
+        current_prewrite = correction_prewrite_state(current)
+        staged_prewrite = correction_prewrite_state(staged_before)
+        if current_prewrite != staged_prewrite or not secrets.compare_digest(
+            digest_for(current_prewrite), digest_for(staged_prewrite)
+        ):
+            moved = sorted(
+                key for key in set(current_prewrite) | set(staged_prewrite)
+                if current_prewrite.get(key) != staged_prewrite.get(key)
+            )
+            raise DraftToolError(
+                f"Estimate {number} changed after review ({', '.join(moved) or 'unknown'}). "
+                "No PUT was issued and this plan is not locked; stage a new plan."
+            )
+        current_lines = validate_item9_live_estimate(current, target)
+        # Rebuild the body from the FRESH live record. The allowlist below then
+        # compares the reviewed payload against reality field by field rather
+        # than against itself.
+        fresh_payload = item9_put_payload(current, current_lines, target)
+        if fresh_payload != evidence["put_payload"]:
+            raise DraftToolError(
+                f"The reviewed payload no longer matches what the live {number} would produce. "
+                "No PUT was issued and this plan is not locked; stage a new plan."
+            )
+        # The write allowlist runs here too, so a payload it would reject is a
+        # free refusal rather than a permanently locked plan.
+        require_item9_put_allowed(
+            "PUT", f"/books/v3/estimates/{estimate_id}", organization_id,
+            evidence["put_payload"], fresh_payload,
+        )
+    except Exception as exc:
+        zoho_tool.append_receipt(
+            "zoho_tds_item9_quantity_correction_refused_before_lock",
+            f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
+            f"write_attempted=false; locked=false; email_sent=false",
+        )
+        raise DraftToolError(
+            f"The Item 9 quantity correction was refused BEFORE any write and BEFORE the replay "
+            f"lock. Estimate: {number} ({estimate_id}). No PUT was issued and no email was sent. "
+            f"Reason: {exc}"
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": ITEM9_KIND,
+        "status": "in_flight",
+        "estimate_id": estimate_id,
+        "started_utc": utc_now().isoformat(),
+    }, exclusive=True)
+    write_attempted = False
+    try:
+        write_attempted = True
+        result = oauth_estimate_item9_quantity_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "PUT",
+            f"/books/v3/estimates/{estimate_id}",
+            organization_id,
+            evidence["put_payload"],
+            fresh_payload,
+        )
+        verify_item9_result(result.get("estimate"), evidence, "PUT response", full=False)
+        verified = get_estimate(access_token, vault, estimate_id)
+        verify_item9_result(verified, evidence, "Fresh read-back", full=True)
+        zoho_tool.save_vault(vault)
+    except Exception as exc:
+        write_correction_lock(lock, {
+            "plan_sha256": plan["sha256"],
+            "kind": ITEM9_KIND,
+            "status": "indeterminate",
+            "estimate_id": estimate_id,
+            "write_attempted": write_attempted,
+            "plan_locked_indeterminate": True,
+            "updated_utc": utc_now().isoformat(),
+            "reason": str(exc)[:2000],
+            "no_retry": True,
+        })
+        zoho_tool.append_receipt(
+            "zoho_tds_item9_quantity_correction_indeterminate_no_retry",
+            f"estimate={number} ({estimate_id}); write_attempted={str(write_attempted).lower()}; "
+            f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
+        )
+        raise DraftToolError(
+            f"The Item 9 quantity correction is indeterminate and this plan is permanently locked "
+            f"against retry. Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live "
+            f"estimate state is unconfirmed. No email was sent; this tool has no mail transport. "
+            f"Reason: {exc} Read the live estimate in Zoho and reconcile before staging anything new."
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": ITEM9_KIND,
+        "status": "committed_verified",
+        "estimate_id": estimate_id,
+        "updated_utc": utc_now().isoformat(),
+        "no_retry": True,
+    })
+    zoho_tool.append_receipt(
+        "zoho_tds_item9_quantity_correction_committed_verified",
+        f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
+        f"status={target['status']}; total={evidence['expected']['total']}; email_sent=false",
+    )
+    print(json.dumps({
+        "status": "COMMITTED_AND_VERIFIED",
+        "kind": ITEM9_KIND,
+        "estimate_id": estimate_id,
+        "estimate_number": number,
+        "estimate_status": target["status"],
+        "plan": str(plan_path),
+        "plan_sha256": plan["sha256"],
+        "changed_field": evidence["change"]["field"],
+        "quantity_before": evidence["change"]["from"],
+        "quantity_after": evidence["change"]["to"],
+        "sub_total": evidence["expected"]["sub_total"],
+        "tax_total": evidence["expected"]["tax_total"],
+        "total": evidence["expected"]["total"],
+        "lines_preserved": evidence["estimate"]["line_count"],
+        "email_sent": False,
+        "atomic": True,
+        "replay_locked": True,
+    }, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=TOOL_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -1911,6 +3256,14 @@ def build_parser() -> argparse.ArgumentParser:
     commit_correction.add_argument("--plan", required=True)
     commit_correction.add_argument("--approval", required=True)
     commit_correction.set_defaults(func=command_commit_tds_discount_correction)
+    # No --estimate-id and no business-value argument: the estimate, the line and
+    # both quantities are fixed in code.
+    stage_item9 = commands.add_parser("stage-tds-item9-quantity-correction")
+    stage_item9.set_defaults(func=command_stage_item9_quantity_correction)
+    commit_item9 = commands.add_parser("commit-tds-item9-quantity-correction")
+    commit_item9.add_argument("--plan", required=True)
+    commit_item9.add_argument("--approval", required=True)
+    commit_item9.set_defaults(func=command_commit_item9_quantity_correction)
     return parser
 
 

@@ -182,6 +182,16 @@ DERIVED_TOTAL_FIELDS = (
     "balance", "discount_total", "discount_amount", "roundoff_value",
 )
 DUE_DERIVED_FIELDS = ("due_days", "is_overdue", "days_to_due")
+# The gross subtotal before line discounts, and the base-currency mirrors of the
+# header totals. Zoho recomputes all of them from quantity x rate, so a CORRECT
+# line-value revision must move them -- yet DERIVED_TOTAL_FIELDS never listed
+# them. That is the defect that locked the 2026-08-11 QT-000029 quantity
+# correction `indeterminate` in the sibling estimate tool AFTER its PUT had
+# landed correctly. They leave the fingerprint only on a line-value change, and
+# build_totals then predicts each one wherever Zoho's result is deterministic so
+# verify_totals asserts it against a recomputed figure.
+GROSS_SUBTOTAL_FIELDS = ("sub_total_exclusive_of_discount",)
+BCY_TOTAL_FIELDS = ("bcy_sub_total", "bcy_discount_total", "bcy_tax_total", "bcy_total")
 
 # Line keys resent verbatim from the live line so the PUT cannot drop identity
 # or linkage. Anything not listed is left to Zoho, which keeps it because the
@@ -1149,6 +1159,8 @@ def unprotected_keys(payload: dict[str, Any]) -> list[str]:
     if payload["line_changes"]:
         keys.add("line_items")
         keys.update(DERIVED_TOTAL_FIELDS)
+        keys.update(GROSS_SUBTOTAL_FIELDS)
+        keys.update(BCY_TOTAL_FIELDS)
     return sorted(keys)
 
 
@@ -1280,6 +1292,21 @@ def deterministic_line_total(
     except InvalidOperation:
         return None
     return (gross - amount).quantize(Decimal(1).scaleb(-precision), rounding=ROUND_HALF_UP)
+
+
+def deterministic_line_gross(
+    quantity: Decimal, rate: Decimal, precision: int
+) -> Decimal | None:
+    """quantity x rate before any discount, or None if rounding makes it unsafe.
+
+    Zoho's gross subtotal is a sum of per-line grosses, but summing rounded lines
+    and rounding a summed total can differ by a cent. When any line needs
+    rounding at all, the prediction is withheld rather than guessed - the same
+    rule build_totals already applies to the taxed and inclusive-tax cases.
+    """
+    exact = quantity * rate
+    rounded = exact.quantize(Decimal(1).scaleb(-precision), rounding=ROUND_HALF_UP)
+    return rounded if rounded == exact else None
 
 
 def build_revision(
@@ -1441,6 +1468,7 @@ def build_revision(
     line_evidence: list[dict[str, Any]] = []
     line_change_evidence: list[dict[str, Any]] = []
     sub_total_parts: list[Decimal | None] = []
+    gross_parts: list[Decimal | None] = []
     for index, line in enumerate(lines):
         line_item_id = str(line["line_item_id"])
         item_id = str(line.get("item_id") or "")
@@ -1540,6 +1568,9 @@ def build_revision(
             quantity, rate, discount, precision
         )
         sub_total_parts.append(computed)
+        gross_parts.append(
+            None if is_inclusive_tax else deterministic_line_gross(quantity, rate, precision)
+        )
         line_evidence.append({
             "index": index,
             "line_item_id": line_item_id,
@@ -1559,7 +1590,9 @@ def build_revision(
         )
 
     # -- totals --------------------------------------------------------
-    totals = build_totals(invoice, payload, sub_total_parts, put_lines, lines, is_inclusive_tax)
+    totals = build_totals(
+        invoice, payload, sub_total_parts, gross_parts, put_lines, lines, is_inclusive_tax
+    )
 
     # -- assembled payload --------------------------------------------
     if set(put) - ALLOWED_PUT_KEYS:
@@ -1612,6 +1645,7 @@ def build_totals(
     invoice: dict[str, Any],
     payload: dict[str, Any],
     sub_total_parts: list[Decimal | None],
+    gross_parts: list[Decimal | None],
     put_lines: list[dict[str, Any]],
     lines: list[dict[str, Any]],
     is_inclusive_tax: bool,
@@ -1651,7 +1685,33 @@ def build_totals(
         after["tax_total"] = money_text(Decimal(0))
         after["total"] = money_text(expected_sub_total)
         after["balance"] = money_text(expected_sub_total)
+    # The gross subtotal leaves the byte-exact fingerprint on any line-value
+    # change, so it is predicted here wherever every line's quantity x rate is
+    # exact at the invoice precision, and asserted by verify_totals.
+    gross_deterministic = bool(gross_parts) and all(part is not None for part in gross_parts)
+    if gross_deterministic and "sub_total_exclusive_of_discount" in invoice:
+        after["sub_total_exclusive_of_discount"] = money_text(
+            sum((part for part in gross_parts if part is not None), Decimal(0))
+        )
+    # Base-currency mirrors, asserted only where the LIVE invoice proves the base
+    # currency equals the document currency, so a foreign-currency invoice can
+    # never false-fail on a figure this tool has no exchange rate to predict.
+    for bcy_key, plain_key in (
+        ("bcy_sub_total", "sub_total"),
+        ("bcy_tax_total", "tax_total"),
+        ("bcy_total", "total"),
+    ):
+        if bcy_key not in invoice or plain_key not in invoice or plain_key not in after:
+            continue
+        if _zero(invoice.get(bcy_key), f"invoice {bcy_key}") == _zero(
+            invoice.get(plain_key), f"invoice {plain_key}"
+        ):
+            after[bcy_key] = after[plain_key]
     basis_parts = []
+    if not gross_deterministic:
+        basis_parts.append(
+            "a line total needs rounding: the gross subtotal is not predicted here"
+        )
     if is_inclusive_tax:
         basis_parts.append("invoice prices are tax-inclusive, so line totals are not predicted")
     if not untaxed:
