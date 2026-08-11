@@ -76,6 +76,9 @@ SOURCE_MODES = {
     "uncategorize": "regular",
     "update_transfer_accounts": "regular",
 }
+CATEGORIZE_RESULT_CONTAINERS = (
+    "banktransaction", "bank_transaction", "transaction", "categorized_transaction",
+)
 AFTER_SOURCE_MODES = {
     "match": "regular",
     "categorize": "regular",
@@ -1437,6 +1440,9 @@ def require_airwallex_usd_recovery_facts(
         "new source account currency": (
             from_account["before_state"]["currency"].upper(), spec["from_currency"],
         ),
+        "new source account status": (
+            normalized_status(from_account["before_state"]["status"]), "active",
+        ),
         "destination account ID": (to_account["before_state"]["account_id"], spec["to_account_id"]),
         "destination account name": (to_account["before_state"]["name"], spec["to_account_name"]),
         "destination account currency": (
@@ -1566,6 +1572,28 @@ def require_ids_in_source(source: dict[str, Any], ids: list[str], label: str) ->
     missing = [item for item in ids if item not in values]
     if missing:
         raise BankingToolError(f"{label} ID(s) are not linked in the live source transaction: {', '.join(missing)}")
+
+
+def require_categorize_accounts_active(targets: list[dict[str, Any]]) -> None:
+    """Refuse a categorize onto an inactive or deleted account.
+
+    Zoho rejects those with HTTP 400 code 11015, and the account GET already
+    carries the answer - so checking it here costs nothing, while letting it
+    through burns the plan's single-use lock and forces a live reconcile on a
+    write that was never going to land. 2026-08-11: from_account
+    96274000000149257 staged with is_active False recorded in its own snapshot.
+    """
+    inactive = [
+        f"{row['role']} {row['requested_id']}"
+        for row in targets
+        if row["record_type"] == "account"
+        and normalized_status(row["before_state"]["status"]) != "active"
+    ]
+    if inactive:
+        raise BankingToolError(
+            "Categorization requires active accounts; Zoho rejects inactive or deleted "
+            "accounts with code 11015. Inactive: " + ", ".join(inactive)
+        )
 
 
 def summary_for(
@@ -1740,6 +1768,7 @@ def command_stage(args: argparse.Namespace, action: str) -> None:
             ("to_account", payload["to_account_id"]),
         ):
             targets.append(account_snapshot(get_account(access_token, vault, account_id), account_id, role))
+        require_categorize_accounts_active(targets)
         if source["before_state"]["account_id"] not in {payload["from_account_id"], payload["to_account_id"]}:
             raise BankingToolError("Categorization must use the source bank account as from_account_id or to_account_id.")
     elif action == "unmatch":
@@ -2478,6 +2507,117 @@ def verify_invoice_match_readback(
     }
 
 
+def categorized_result_id(post_result: Any) -> str:
+    """The transaction ID Zoho's categorize response reports, or "" if unreadable.
+
+    A categorize CONSUMES the imported feed line and returns a DIFFERENT record:
+    2026-08-11, line 96274000001423074 became transfer 96274000001558075 and the
+    old ID stopped resolving. Reading the response is the only way to learn the
+    new ID, so a readback of the staged source ID can never confirm success.
+    Ambiguity is not resolved by guessing - two differing IDs return "".
+    """
+    if not isinstance(post_result, dict):
+        return ""
+    candidates: set[str] = set()
+    rows = [post_result] + [
+        post_result[name] for name in CATEGORIZE_RESULT_CONTAINERS
+        if isinstance(post_result.get(name), dict)
+    ]
+    for row in rows:
+        value = str(first_value(row, ("transaction_id", "bank_transaction_id"), "")).strip()
+        if POSITIVE_ID_RE.fullmatch(value):
+            candidates.add(value)
+    return candidates.pop() if len(candidates) == 1 else ""
+
+
+def get_categorized_result(
+    access_token: str, vault: dict[str, Any], transaction_id: str
+) -> dict[str, Any]:
+    """Authoritative read of the record a categorize produced.
+
+    Deliberately NOT get_bank_transaction: that falls back to the uncategorized
+    feed on 404, which both drags in the authenticated UI session and would read
+    the very state a successful categorize removes.
+    """
+    transaction_id = positive_id(transaction_id, "resulting transaction_id")
+    query = urlencode({
+        "organization_id": positive_id(vault["books_organization_id"], "organization_id"),
+    })
+    result = zoho_tool.api_get(
+        access_token,
+        str(vault["api_domain"]),
+        f"/books/v3/banktransactions/{transaction_id}?{query}",
+    )
+    for key in CATEGORIZE_RESULT_CONTAINERS:
+        row = result.get(key)
+        if isinstance(row, dict):
+            return json_copy(row)
+    raise BankingToolError(f"Zoho did not return resulting bank transaction {transaction_id}.")
+
+
+def verify_categorize_result(
+    plan: dict[str, Any],
+    access_token: str,
+    vault: dict[str, Any],
+    post_result: dict[str, Any],
+) -> dict[str, str]:
+    """Verify the record the categorize produced, not the line it consumed."""
+    source_id = plan["source_snapshot"]["requested_id"]
+    resulting_id = categorized_result_id(post_result)
+    if not resulting_id:
+        raise BankingToolError(
+            "Zoho accepted the categorize but its response carried no single resulting "
+            f"transaction ID, so the outcome for imported line {source_id} is unverified "
+            "here. Reconcile the live transfer before staging anything else."
+        )
+    current = get_categorized_result(access_token, vault, resulting_id)
+    payload = plan["payload"]
+    before = plan["source_snapshot"]["before_state"]
+    actual_type = str(first_value(current, ("transaction_type",), "")).strip()
+    if actual_type != payload["transaction_type"]:
+        raise BankingToolError(
+            f"Resulting transaction {resulting_id} is {actual_type!r}, not the approved "
+            f"{payload['transaction_type']!r}."
+        )
+    checks: dict[str, tuple[Any, Any]] = {
+        "amount": (
+            decimal_value(first_value(current, ("amount",)), "resulting amount"),
+            decimal_value(before["amount"], "approved source amount"),
+        ),
+        "date": (
+            date_text(first_value(current, ("date",)), "resulting date"),
+            before["date"],
+        ),
+        "currency": (
+            str(first_value(current, ("currency_code", "currency"), "")).upper(),
+            before["currency"].upper(),
+        ),
+    }
+    mismatched = [label for label, (actual, want) in checks.items() if actual != want]
+    if mismatched:
+        raise BankingToolError(
+            f"Resulting transaction {resulting_id} does not preserve the approved "
+            + ", ".join(mismatched)
+            + "."
+        )
+    values = collect_scalar_strings(current)
+    for field in ("from_account_id", "to_account_id"):
+        if payload[field] not in values:
+            raise BankingToolError(
+                f"Resulting transaction {resulting_id} does not show approved {field}."
+            )
+    for field in ("reference_number", "description"):
+        if field in payload and str(current.get(field, "")) != payload[field]:
+            raise BankingToolError(
+                f"Resulting transaction {resulting_id} did not preserve approved {field}."
+            )
+    return {
+        "status": actual_type,
+        "resulting_transaction_id": resulting_id,
+        "consumed_imported_line": source_id,
+    }
+
+
 def verify_readback(plan: dict[str, Any], current: dict[str, Any]) -> dict[str, str]:
     source_id = plan["source_snapshot"]["requested_id"]
     action = plan["action"]
@@ -2545,6 +2685,7 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
         "started_utc": utc_now().isoformat(),
     }, exclusive=True)
     write_attempted = False
+    post_result: dict[str, Any] | None = None
     try:
         vault = zoho_tool.load_vault()
         scopes = [str(scope) for scope in vault.get("scopes") or []]
@@ -2614,7 +2755,7 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
                 plan["payload"],
             )
         else:
-            api_post_allowed(
+            post_result = api_post_allowed(
                 access_token,
                 str(vault["api_domain"]),
                 expected_action,
@@ -2631,6 +2772,8 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
         )
         if invoice_only_match:
             verified = verify_invoice_match_readback(plan, access_token, vault)
+        elif expected_action == "categorize":
+            verified = verify_categorize_result(plan, access_token, vault, post_result or {})
         else:
             readback = get_bank_transaction(
                 access_token, vault, plan["source_snapshot"]["requested_id"],
@@ -2640,14 +2783,23 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
         zoho_tool.save_vault(vault)
     except Exception as exc:
         status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_lock(lock, {
+        record = {
             "plan_sha256": plan["sha256"],
             "action": expected_action,
             "status": status,
             "updated_utc": utc_now().isoformat(),
             "reason": str(exc)[:2000],
             "no_retry": True,
-        })
+        }
+        # An indeterminate that Zoho ACCEPTED is a different reconcile from one it
+        # rejected, so say which - and name the record it created when it can be
+        # read, because that ID is what a live reconcile has to look for.
+        if post_result is not None:
+            record["zoho_accepted_the_write"] = True
+            resulting_id = categorized_result_id(post_result)
+            if resulting_id:
+                record["resulting_transaction_id"] = resulting_id
+        write_lock(lock, record)
         zoho_tool.append_receipt(
             "zoho_banking_commit_failed_permanently_locked",
             f"action={expected_action}; status={status}; plan={plan_path}; sha256={plan['sha256']}",
@@ -2656,7 +2808,7 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
             f"Banking {expected_action} commit is {status} and permanently locked against replay. "
             "Reconcile live Zoho state before staging another plan: " + str(exc)
         ) from exc
-    write_lock(lock, {
+    success = {
         "plan_sha256": plan["sha256"],
         "action": expected_action,
         "status": "committed_verified",
@@ -2664,7 +2816,10 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
         "verified_status": verified["status"],
         "updated_utc": utc_now().isoformat(),
         "no_retry": True,
-    })
+    }
+    if "resulting_transaction_id" in verified:
+        success["resulting_transaction_id"] = verified["resulting_transaction_id"]
+    write_lock(lock, success)
     zoho_tool.append_receipt(
         "zoho_banking_reconciliation_committed_verified",
         f"action={expected_action}; transaction_id={plan['source_snapshot']['requested_id']}; "

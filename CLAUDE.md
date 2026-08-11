@@ -87,6 +87,67 @@ engineer.
      `open: embedded null character in path`; that broke the 11:00 inbox sweep.
      Regression test:
      `TestLifecycleGuardModule::test_local_binary_does_not_fall_back_to_remote_reader`.
+  *** PROMPTS THAT NEVER EXPIRE (2026-08-11) — re-apply after updates. ***
+  File: `%LOCALAPPDATA%\hermes\hermes-agent\plugins\platforms\discord\adapter.py`,
+  function `_read_discord_prompt_timeout`. Rachad: choice prompts died far faster
+  on Discord than on Telegram while he was mid-task on another lane.
+  THE ASYMMETRY, measured not assumed — ONE question, TWO independent clocks:
+  (1) the GATEWAY clarify entry (`agent.clarify_timeout`, default 3600s) and
+  (2) on Discord ONLY, a `discord.ui.View` timeout (`approvals.discord_prompt_timeout`,
+  default 300s). Telegram's `send_clarify` builds a bare `InlineKeyboardMarkup`
+  with NO client-side expiry at all, so its buttons live the full hour. Discord's
+  fired `on_timeout` at 5 min, greyed the embed to "⏱ Prompt expired — no action
+  taken" and disabled every button — while the gateway entry sat waiting another
+  55 minutes. 12x shorter, same question. That gap is what he was hitting.
+  THE PATCH: `<= 0` AND the word sentinels `never`/`unlimited`/`infinite`/
+  `none`/`off` now return `None` (unlimited), and `<= 0` is checked BEFORE the
+  min clamp. Without that ordering a configured `0` fell through
+  `if seconds < MIN` and became a **30-second** prompt — worse than the default
+  and the exact opposite of the ask. The numeric form mirrors
+  `clarify_timeout`'s own "<= 0 = unlimited" convention so the two clocks cannot
+  disagree. Positive values still clamp to [30, 900];
+  `ModelPickerView`/`ChoicePickerView` keep their 120s (self-initiated pickers,
+  deliberately untouched).
+  *** WRITE THE WORD `never` IN CONFIG, NEVER A BARE 0. *** This function is
+  re-read per view, but a RUNNING gateway still holds the previously-imported
+  code, so a config edit lands before a patched function does. Under the
+  pre-patch body `0` reads as 30 seconds — editing config to ask for "never"
+  would have made prompts expire 10x FASTER until someone restarted. A word is
+  unparseable to the old body, so it takes the malformed-value branch and keeps
+  the unchanged 300s default: no regression window, restart whenever suits.
+  Verified live at the time of the change: both running gateways resolved 300s
+  while the patched code resolved unlimited.
+  Regression tests (13 new, 19 in file):
+  `tests/gateway/test_discord_prompt_timeout_config.py` —
+  `::test_zero_or_negative_means_unlimited`,
+  `::test_unlimited_is_checked_before_the_min_clamp`,
+  `::test_word_sentinels_mean_unlimited`,
+  `::test_yaml_bool_false_is_unlimited_but_true_is_not` (YAML 1.1 folds a bare
+  `off` to False before we see it), and
+  `::test_word_sentinel_is_safe_against_a_pre_patch_gateway`, which replays the
+  old body inline so the no-regression-window property is executable, not a
+  comment.
+  THE 15-MINUTE COMMENT IN THE OLD CODE WAS WRONG and is now corrected in place:
+  ~15 min is the lifetime of one interaction TOKEN, not a cap on how long a button
+  on a normal bot message stays clickable — each click opens a NEW interaction with
+  a fresh token. Verified against the vendored discord.py: `View._start_listening_
+  from_store` only schedules the expiry task `if self.timeout`, and `ViewStore.
+  add_view` holds the view in `_views[message_id]` with no TTL. So a `None` view is
+  clickable for the life of the gateway process.
+  CONFIG (both dado and aze profiles, 2026-08-11): `agent.clarify_timeout: 0`,
+  `approvals.discord_prompt_timeout: never`, `approvals.timeout: 86400`.
+  Each profile's own config.yaml is read (`get_config_path()` is HERMES_HOME-
+  scoped), so the patch changes NOTHING for a profile that does not opt in.
+  *** approvals.timeout MUST NOT BE 0. *** Unlike clarify, `approval.py` computes
+  `_deadline = _now + max(timeout, 0)`, so 0 is an INSTANT fail-closed deny of
+  every command, not an unlimited wait. 24h is the practical "never" there.
+  ESCAPE HATCHES, because an unanswered prompt now pins its agent thread forever:
+  `/new` (clear_session), `/stop` (approvals only — the wait loop polls
+  `is_interrupted()`), a gateway restart, and for dado the 4am daily
+  `session_reset`. Aze's `session_reset.mode` is `none`, so that profile has no
+  automatic release. The gateway dispatches turns on a
+  `ThreadPoolExecutor(max_workers=10)`, so ~10 forgotten prompts across all lanes
+  would wedge it — this is the real cost of unlimited, and it is Rachad's call.
 - Python: STILL no `py` launcher, and it cannot be installed — a Software
   Restriction Policy (HKLM\SOFTWARE\Policies\Microsoft\Windows\Safer) blocks
   running downloaded installers, so winget/python.org .exe fails with 1625.
@@ -598,6 +659,49 @@ engineer.
       approving it refuses before any write until the blocker above is resolved. The encrypted vault and profile .env
       were not touched, ZERO Zoho writes were made, ZERO templates were created
       and ZERO emails were sent.
+      2026-08-11: two defects fixed in `zoho_banking_reconciliation_tool.py`, both
+      found while checking an unrelated tripwire alert. NOT a new commission — no
+      capability added, no guard relaxed, transport surface unchanged (still exactly
+      2 `urlopen` call sites, one POST, one PUT, no DELETE/PATCH; the new read goes
+      through the existing `zoho_tool.api_get`).
+      *** THE ZOHO CONTRACT FACT, measured live and worth keeping: A CATEGORIZE
+      CONSUMES THE IMPORTED FEED LINE AND CREATES A DIFFERENT RECORD. *** On
+      2026-08-11 line `96274000001423074` became transfer `96274000001558075` and
+      the old ID stopped resolving entirely.
+      (a) VERIFICATION COULD NEVER CONFIRM SUCCESS. `AFTER_SOURCE_MODES["categorize"]`
+      read back the PRE-WRITE source ID; `get_bank_transaction` 404s on it, falls back
+      to the uncategorized feed, finds zero rows, throws — and since `write_attempted`
+      is already true the commit recorded `indeterminate` and permanently locked a
+      write that HAD LANDED. A successful categorize could not reach
+      `committed_verified`. Now `verify_categorize_result` takes the resulting ID from
+      the POST response (`categorized_result_id`, which returns "" rather than guess
+      when the response carries no single ID) and verifies THAT record via
+      `get_categorized_result` — a direct GET, deliberately NOT `get_bank_transaction`,
+      whose feed fallback would both re-read the state a success removes and drag in
+      the authenticated UI session. Checked: type equals the approved
+      `transaction_type`; amount/date/currency equal the source before-state; both
+      approved account IDs present; `reference_number`/`description` preserved where
+      staged. The lock now carries `resulting_transaction_id`, and a FAILED commit
+      that Zoho nonetheless accepted records `zoho_accepted_the_write` plus that ID —
+      an indeterminate Zoho ACCEPTED needs a different reconcile from one it rejected.
+      (b) STAGING NEVER CHECKED THE ACCOUNTS WERE ACTIVE, though the account GET
+      already answers it: the 09:50 plan stored `is_active: False` IN ITS OWN SNAPSHOT,
+      staged anyway, and Zoho rejected it 400/11015 "Inactive or deleted accounts".
+      Nothing reached the books, but it burned a single-use plan and lock.
+      `require_categorize_accounts_active` now refuses both accounts at staging, and
+      the Airwallex recovery fixed-fact list gained `new source account status` — it
+      had always asserted the DESTINATION was active and never the source.
+      WHY IT SHIPPED: `recovery_accounts()` pinned the source account `"status":
+      "inactive"` and every recovery test passed with it — the live broken state
+      captured as a fixture — and there was no categorize commit-success test at all.
+      Both corrected; the fixture is `active`, matching live after Rachad reactivated
+      the account between the two attempts.
+      Tests: 43 in the banking suite (3 new), 587 across the whole Zoho suite, all
+      passing; WooCommerce 618 passed / 1 skipped. Both fixes were mutation-checked —
+      removing either makes the suite fail (3 and 8 failures respectively).
+      NO live Zoho call was made from this session: BUILD AND TESTS ONLY, zero writes,
+      zero plans staged, zero emails. The two locked plans from 2026-08-11 stay locked
+      and MUST NOT be retried — the transfer already exists.
 - [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
       existing-product image-alt-only extension to `woocommerce_change_tool.py`.
       Every plan must carry the complete gallery with unchanged IDs and order;

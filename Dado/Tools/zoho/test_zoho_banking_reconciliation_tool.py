@@ -743,23 +743,36 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
     def test_successful_commit_reserves_refetches_writes_once_verifies_and_receipts(self) -> None:
         original = self.source()
         path, _ = self.stage_categorize(source=original)
-        readback = self.source(
-            status="categorized", transaction_type="owner_drawings",
-            from_account_id="10", to_account_id="30",
-        )
-        reads = [original, readback]
+        # A categorize CONSUMES the imported line and produces a DIFFERENT record,
+        # so verification reads what was created, never the ID that was staged.
+        produced = {
+            "transaction_id": "101",
+            "date": "2026-08-07",
+            "transaction_type": "owner_drawings",
+            "status": "categorized",
+            "amount": 125.00,
+            "from_account_id": "10",
+            "to_account_id": "30",
+            "description": "Reviewed bank expense",
+            "currency_code": "CAD",
+        }
         accounts = {"10": self.account("10", "Desjardins Operating"), "30": self.account("30", "Reviewed Category")}
         with mock.patch.object(
-            banking, "get_bank_transaction", side_effect=reads
+            banking, "get_bank_transaction", side_effect=[original]
         ) as get_transaction, mock.patch.object(
+            banking, "get_categorized_result", return_value=produced
+        ) as get_result, mock.patch.object(
             banking, "get_account", side_effect=lambda token, vault, account_id: accounts[account_id]
         ) as get_account, mock.patch.object(
-            banking, "api_post_allowed", return_value={"code": 0}
+            banking, "api_post_allowed",
+            return_value={"code": 0, "banktransaction": produced},
         ) as post, contextlib.redirect_stdout(io.StringIO()) as stdout:
             banking.command_commit(
                 argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
             )
-        self.assertEqual(get_transaction.call_count, 2)
+        self.assertEqual(get_transaction.call_count, 1)
+        get_result.assert_called_once()
+        self.assertEqual(get_result.call_args.args[2], "101")
         self.assertEqual(get_account.call_count, 2)
         post.assert_called_once()
         self.assertEqual(post.call_args.args[2], "categorize")
@@ -769,9 +782,94 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         self.assertTrue(result["replay_locked"])
         lock = json.loads(banking.lock_path(result["plan_sha256"]).read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "committed_verified")
+        # The lock names the record that now exists, which is what a later
+        # reconcile has to look for.
+        self.assertEqual(lock["resulting_transaction_id"], "101")
         receipt_actions = [call.args[0] for call in self.append_receipt.call_args_list]
         self.assertIn("zoho_banking_reconciliation_committed_verified", receipt_actions)
         self.save_vault.assert_called_once_with(self.vault)
+
+    def test_categorize_refuses_an_inactive_account_and_stages_nothing(self) -> None:
+        """Zoho answers a categorize onto an inactive account with 400 code 11015.
+
+        The account GET already carries that answer and the plan lock is
+        single-use, so the refusal belongs before anything is staged. 2026-08-11:
+        from_account 96274000000149257 was staged with is_active False recorded in
+        its own snapshot, and the burnt plan could never be retried.
+        """
+        for role, account_id in (("from_account", "10"), ("to_account", "30")):
+            with self.subTest(role=role):
+                accounts = {
+                    "10": self.account("10", "Desjardins Operating"),
+                    "30": self.account("30", "Reviewed Category"),
+                }
+                accounts[account_id] = self.account(
+                    account_id, accounts[account_id]["account_name"], status="inactive"
+                )
+                staged_before = set(self.plan_dir.glob("*.json"))
+                with self.assertRaisesRegex(
+                    banking.BankingToolError, f"Inactive: {role} {account_id}"
+                ):
+                    self.stage("categorize", {
+                        "source_transaction_id": "100",
+                        "payload": {
+                            "from_account_id": "10",
+                            "to_account_id": "30",
+                            "transaction_type": "owner_drawings",
+                            "description": "Reviewed bank expense",
+                        },
+                        "sources": self.sources(),
+                        "evidence": self.evidence(),
+                    }, {"100": self.source()}, accounts)
+                self.assertEqual(set(self.plan_dir.glob("*.json")), staged_before)
+
+    def test_indeterminate_lock_records_that_zoho_accepted_the_write(self) -> None:
+        """An indeterminate Zoho ACCEPTED needs a different reconcile from one it
+        rejected, and the ID it created is what that reconcile has to look for."""
+        original = self.source()
+        path, _ = self.stage_categorize(source=original)
+        accounts = {"10": self.account("10", "Desjardins Operating"), "30": self.account("30", "Reviewed Category")}
+        with mock.patch.object(
+            banking, "get_bank_transaction", side_effect=[original]
+        ), mock.patch.object(
+            banking, "get_categorized_result",
+            return_value={"transaction_id": "101", "transaction_type": "deposit"},
+        ), mock.patch.object(
+            banking, "get_account", side_effect=lambda token, vault, account_id: accounts[account_id]
+        ), mock.patch.object(
+            banking, "api_post_allowed",
+            return_value={"code": 0, "banktransaction": {"transaction_id": "101"}},
+        ), contextlib.redirect_stdout(io.StringIO()):
+            with self.assertRaisesRegex(banking.BankingToolError, "indeterminate"):
+                banking.command_commit(
+                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                )
+        digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
+        lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "indeterminate")
+        self.assertTrue(lock["zoho_accepted_the_write"])
+        self.assertEqual(lock["resulting_transaction_id"], "101")
+        self.assertTrue(lock["no_retry"])
+
+    def test_categorized_result_id_reads_one_ID_and_refuses_ambiguity(self) -> None:
+        for label, response in (
+            ("container", {"banktransaction": {"transaction_id": "101"}}),
+            ("top level", {"transaction_id": "101"}),
+            ("agreeing", {"transaction_id": "101", "banktransaction": {"transaction_id": "101"}}),
+        ):
+            with self.subTest(response=label):
+                self.assertEqual(banking.categorized_result_id(response), "101")
+        for label, response in (
+            ("no ID at all", {"code": 0}),
+            ("two different IDs", {
+                "transaction_id": "101", "banktransaction": {"transaction_id": "102"},
+            }),
+            ("not an ID", {"banktransaction": {"transaction_id": "not-an-id"}}),
+            ("zero", {"banktransaction": {"transaction_id": "0"}}),
+            ("not an object", "not a dict"),
+        ):
+            with self.subTest(response=label):
+                self.assertEqual(banking.categorized_result_id(response), "")
 
     def test_changed_source_or_target_blocks_post_after_single_use_reservation(self) -> None:
         original = self.source()
@@ -1406,7 +1504,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 "account_id": "96274000000149257",
                 "account_name": "AWX_FRPDepot Inc._USD",
                 "currency_code": "USD",
-                "status": "inactive",
+                "status": "active",
             },
             "96274000001409012": {
                 "account_id": "96274000001409012",
@@ -1428,6 +1526,36 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         }
         value.update(changes)
         return value
+
+    RESULT_ID = "96274000001558075"
+
+    @classmethod
+    def recovery_result(cls, **changes) -> dict:
+        """The record a successful categorize PRODUCES.
+
+        Live on 2026-08-11 the imported line 96274000001423074 was consumed and
+        transfer 96274000001558075 appeared in its place, so the result carries
+        its own ID and the staged source ID stops resolving.
+        """
+        value = {
+            "transaction_id": cls.RESULT_ID,
+            "date": "2026-07-23",
+            "transaction_type": "transfer_fund",
+            "status": "categorized",
+            "amount": 21642.71,
+            "from_account_id": "96274000000149257",
+            "to_account_id": "96274000001409012",
+            "reference_number": "Closing Balance From Airwallex Account",
+            "description": "Funds transfer received /FRPDepot Inc. /",
+            "currency_id": "96274000000000081",
+            "currency_code": "USD",
+        }
+        value.update(changes)
+        return value
+
+    @classmethod
+    def recovery_post_response(cls, **changes) -> dict:
+        return {"code": 0, "banktransaction": cls.recovery_result(**changes)}
 
     def recovery_input(self, **changes) -> dict:
         value = {
@@ -1583,7 +1711,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         self.assertEqual(summary["transaction_type"], "transfer_fund")
         self.assertEqual(summary["from_account"], {
             "account_id": "96274000000149257", "name": "AWX_FRPDepot Inc._USD",
-            "currency": "USD", "status": "inactive",
+            "currency": "USD", "status": "active",
         })
         self.assertEqual(summary["to_account"], {
             "account_id": "96274000001409012",
@@ -1657,11 +1785,18 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         cad_accounts["96274000001409012"]["currency_code"] = "CAD"
         self.assert_recovery_refused("destination account currency", accounts=cad_accounts)
 
-        inactive_destination = self.recovery_accounts()
-        inactive_destination["96274000001409012"]["status"] = "inactive"
-        self.assert_recovery_refused(
-            "destination account status", accounts=inactive_destination
-        )
+        # Either account inactive is refused before anything is staged, because
+        # Zoho answers a categorize onto one with HTTP 400 code 11015 and the
+        # burnt plan lock is not recoverable - 2026-08-11.
+        for role, account_id in (
+            ("to_account", "96274000001409012"),
+            ("from_account", "96274000000149257"),
+        ):
+            inactive = self.recovery_accounts()
+            inactive[account_id]["status"] = "inactive"
+            self.assert_recovery_refused(
+                f"Inactive: {role} {account_id}", accounts=inactive
+            )
 
     def test_recovery_refuses_missing_tampered_or_unlocked_historical_plan(self) -> None:
         self.install_recovery_evidence(install_plan=False)
@@ -1769,11 +1904,15 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 self.assertFalse(banking.lock_path(saved).exists())
 
     def commit_recovery(
-        self, path: Path, *, reads, accounts=None, post=None, superseded=None, posted=None
+        self, path: Path, *, reads, accounts=None, post=None, superseded=None, posted=None,
+        result=None,
     ):
         accounts = self.recovery_accounts() if accounts is None else accounts
-        posted = posted or mock.MagicMock(**(post or {"return_value": {"code": 0}}))
+        posted = posted or mock.MagicMock(
+            **(post or {"return_value": self.recovery_post_response()})
+        )
         queue = list(reads)
+        result_row = self.recovery_result() if result is None else result
 
         def get_transaction(token, vault, transaction_id, mode):
             if transaction_id == self.SPEC["superseded_transfer_transaction_id"]:
@@ -1782,8 +1921,15 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 raise banking.BankingRecordAbsent("absent")
             return queue.pop(0)
 
+        def get_result(token, vault, transaction_id):
+            if isinstance(result_row, Exception):
+                raise result_row
+            return result_row
+
         with mock.patch.object(
             banking, "get_bank_transaction", side_effect=get_transaction
+        ), mock.patch.object(
+            banking, "get_categorized_result", side_effect=get_result
         ), mock.patch.object(
             banking, "get_account",
             side_effect=lambda token, vault, account_id: accounts[account_id],
@@ -1835,7 +1981,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             from_account_id="96274000000149257", to_account_id="96274000001409012",
         )
         drifted_accounts = self.recovery_accounts()
-        drifted_accounts["96274000000149257"]["status"] = "active"
+        drifted_accounts["96274000000149257"]["status"] = "inactive"
 
         cases = [
             (
@@ -1860,22 +2006,55 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 }},
             ),
             (
-                "readback still uncategorized", "indeterminate",
-                {"reads": [source, self.recovery_source()]},
+                "result still uncategorized", "indeterminate",
+                {"reads": [source, readback],
+                 "result": self.recovery_result(transaction_type="uncategorized")},
             ),
             (
-                "readback wrong type", "indeterminate",
-                {"reads": [source, self.recovery_source(
-                    status="categorized", transaction_type="deposit",
-                    from_account_id="96274000000149257", to_account_id="96274000001409012",
-                )]},
+                "result wrong type", "indeterminate",
+                {"reads": [source, readback],
+                 "result": self.recovery_result(transaction_type="deposit")},
+            ),
+            (
+                "result amount drifted", "indeterminate",
+                {"reads": [source, readback],
+                 "result": self.recovery_result(amount=21642.72)},
+            ),
+            (
+                "result lost the approved account", "indeterminate",
+                {"reads": [source, readback],
+                 "result": self.recovery_result(from_account_id="96274000000000999")},
+            ),
+            (
+                "result reference not preserved", "indeterminate",
+                {"reads": [source, readback],
+                 "result": self.recovery_result(reference_number="something else")},
+            ),
+            (
+                "response carried no resulting ID", "indeterminate",
+                {"reads": [source, readback], "post": {"return_value": {"code": 0}}},
+            ),
+            (
+                "response carried two different IDs", "indeterminate",
+                {"reads": [source, readback], "post": {"return_value": {
+                    "code": 0,
+                    "transaction_id": "96274000001558075",
+                    "banktransaction": {"transaction_id": "96274000001558076"},
+                }}},
+            ),
+            (
+                "resulting record unreadable", "indeterminate",
+                {"reads": [source, readback],
+                 "result": banking.BankingToolError("Zoho did not return resulting bank transaction")},
             ),
         ]
         for label, expected_status, kwargs in cases:
             with self.subTest(case=label):
                 path, _ = self.stage_recovery(source=source)
                 digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-                posted = mock.MagicMock(**(kwargs.pop("post", None) or {"return_value": {"code": 0}}))
+                posted = mock.MagicMock(
+                    **(kwargs.pop("post", None) or {"return_value": self.recovery_post_response()})
+                )
                 with self.assertRaisesRegex(banking.BankingToolError, expected_status):
                     self.commit_recovery(path, posted=posted, **kwargs)
                 if expected_status == "aborted_before_write":
