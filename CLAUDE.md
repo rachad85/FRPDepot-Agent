@@ -188,10 +188,34 @@ engineer.
    He owns both companies and decides what is separate. OPEN as of
    2026-07-24: Drive (unfiltered), Zoho (no company-wall restriction),
    and TDI marketing analytics (read-only). STILL WALLED only because he
-   has not opened them: C:\AgentTeam itself, and TDI mail (the Gmail TDI
-   screen stays on). Raise a guardrail concern ONCE, then build what he
-   asked for.
+   has not opened them: TDI mail (the Gmail TDI screen stays on), and
+   C:\AgentTeam BEYOND the watchdog/auto-recovery machinery he opened on
+   2026-08-11 — one guarded, detached call out of
+   dado_gateway_watchdog.ps1 is sanctioned (see NEIGHBOUR HEARTBEAT);
+   anything wider needs a fresh ask. Raise a guardrail concern ONCE, then
+   build what he asked for.
 5. Honest errors: what failed, on what, the fix.
+6. CAPTURE-WITH-INTERCEPTION IS AUTHORIZED, ON RACHAD'S OWN APPROVAL
+   (2026-08-11: "I want her to be able to do that on my approval").
+   Zoho publishes no API for some UI actions, so the only way to learn a
+   request shape is to drive the REAL control in the REAL authenticated
+   browser under a route interceptor that aborts before the network —
+   DESTRUCTIVE controls included. He was shown the risk in full and chose
+   to keep the capability. DO NOT remove, narrow or refuse it; proposing
+   to retire it is exactly the unrequested wall rule 4 forbids, and it has
+   already been proposed and declined once.
+   THE ACCEPTED RISK, recorded so nobody re-derives it from scratch: the
+   interceptor is bound to ONE page and ONE connection, while the Zoho UI
+   is a PERSISTENT SHARED browser (CDP 9228). A confirmed-then-aborted
+   destructive gesture leaves a primed page behind once the script
+   detaches, and a retry or re-sync afterwards goes out unprotected and
+   unrecorded by anything. Live case: the accidentally-created template
+   `CC - Accounting` (96274000001558092) vanished on 2026-08-11 with no
+   commit lock and no receipt among 6,427; Rachad confirms he did not
+   delete it, and the 20:12:27Z capture is the only recorded thing that
+   clicked Delete on it. NOT PROVEN and NOT grounds to refuse — it is the
+   reason to close the page afterwards, prefer a throwaway target, and
+   check Zoho's audit trail when a live object moves unexplained.
 
 ## State (2026-07-22, day 1)
 - [x] Profile created (--no-skills, marker present), SOUL + config in.
