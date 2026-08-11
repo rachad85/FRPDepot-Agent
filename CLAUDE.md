@@ -863,6 +863,64 @@ engineer.
       by another gateway) is told NOT to just restart, because a restart cannot fix
       it and would end whatever is running on the surviving lane.
       Tests: 33, all passing.
+- [x] NEIGHBOUR HEARTBEAT — DADO WATCHES AZE'S WATCHDOG (2026-08-11, Rachad
+      asked for it after the incident below). THE ONLY PLACE THIS TREE REACHES
+      INTO C:\AgentTeam, and it reaches for exactly one path.
+      WHY: Aze's 5-minute watchdog was found REFUSING TO START ANYTHING for ~24h
+      (Aug 10 13:38 -> Aug 11 13:33). `hermes gateway install` recreated
+      `Hermes_Gateway_aze.vbs` in the Startup folder; TDI's
+      `Assert-TdiManagedStartSafety` throws on any active `^Hermes_Gateway.*\.vbs$`
+      and exited 42 every run. Nothing showed it: `aze_watchdog_launch.cmd` ended
+      in an unconditional `exit /b 0`, so Task Scheduler read 0x0, and the log was
+      `>` truncated every 5 minutes, destroying the evidence. She survived only
+      because her process happened to stay alive; when stopped, nothing recovered
+      her. That is the 2026-07-25 shape again. Third recurrence on record (Jul 29,
+      Aug 7, Aug 10) — it WILL come back on the next `hermes update`.
+      TDI-SIDE (all logic, state, logging and alerting live there, not here):
+      `Sync\aze_urgent_alert.py` (stdlib-only Telegram, marker
+      `AZE_NEEDS_ATTENTION.txt` — deliberately NOT Dado's, since `--clear`
+      deletes it and a shared name would erase her unread alert),
+      `Sync\aze_health_check.py` (watchdog_blocked / gateway_down /
+      chat_lane_down), `Sync\aze_heartbeat_check.py`, plus 35 tests. The launcher
+      now propagates its real exit code and appends to
+      `always_on_watchdog.history.log`.
+      THIS SIDE: `dado_gateway_watchdog.ps1` gained ONE guarded call to
+      `C:\AgentTeam\Sync\aze_heartbeat_check.py`. Three deliberate choices, do not
+      undo them: (a) it runs BEFORE the disable-flag check — that flag means
+      "Rachad stopped DADO on purpose" and is no reason to stop watching Aze;
+      (b) it is DETACHED fire-and-forget, so Dado's own recovery can never wait on
+      a neighbour's monitor; (c) its stdout is DISCARDED, so no TDI detail can
+      reach an FRP log, git history or the nightly conduct bundle. A missing file
+      means TDI is not installed here and is silently skipped.
+      WHY A HEARTBEAT AT ALL: `aze_health_check.py` runs from inside Aze's
+      watchdog, so it can report a blocked run but never its own absence. Only a
+      SEPARATE scheduler can notice hers stopped — hence Dado's task, which is a
+      different task on a different cycle. Verified live end-to-end: blocked run
+      paged on the 2nd sample, stale heartbeat paged on the 2nd sample, and both
+      cleared on recovery.
+      *** RECIPROCAL — AZE WATCHES DADO'S WATCHDOG TOO (2026-08-11, same ask). ***
+      Adding the above made `dado_gateway_watchdog.ps1` the single point the whole
+      chain hangs off, and nothing watched IT: if the "FRPDepot Dado Gateway
+      Keep-Alive" task stopped, Dado would lose auto-recovery AND Aze would lose
+      her monitor, silently. So it is now mutual.
+      `dado_gateway_watchdog.ps1` stamps `40_Logs\dado_watchdog_heartbeat.txt`
+      (gitignored, so no 5-minute commit churn and nothing enters the nightly
+      bundle). `Dado\Tools\watch\dado_heartbeat_check.py` reads its AGE and pages
+      through Dado's own alerter — a Dado problem should arrive from Dado's bot.
+      `aze_watchdog_launch.cmd` invokes it guarded + detached with output
+      discarded, the exact mirror of the containment in the other direction.
+      *** THE STAMP IS FIRST IN THE FILE, BEFORE THE DISABLE-FLAG EXIT. ***
+      STOP_DADO stops the GATEWAY, not the task. If the stamp sat after that exit,
+      every deliberate stop would read as a dead watchdog and page Rachad for
+      something he did on purpose. A test pins it, and it was verified live with
+      the flag set. Both alert texts also say outright that the flag does NOT
+      explain a stale heartbeat, so the obvious guess cannot wave away a real
+      failure.
+      NEITHER SIDE CAN REPORT BOTH SCHEDULERS BEING DEAD — inherent to mutual
+      monitoring, stated rather than hidden. Both checkers go silent when the
+      OTHER tree is absent (`not_installed`), so a single-company PC never pages.
+      Tests: 15 (dado) + 35 (aze), all passing. Verified live in both directions:
+      stale heartbeat paged on the 2nd sample and cleared on recovery.
 - [x] GitHub remote wired + pushing (2026-07-23): see Machine/runtime
       section above.
 

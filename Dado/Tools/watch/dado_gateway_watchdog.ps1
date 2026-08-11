@@ -27,6 +27,9 @@ $Hermes      = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\her
 $VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
 $Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
 $LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
+# Rachad asked (2026-08-11) for this cross-check. It is the ONLY thing in this
+# tree that reaches into TDI's, and it reaches for exactly one file.
+$NeighbourHeartbeat = 'C:\AgentTeam\Sync\aze_heartbeat_check.py'
 
 function Write-Log([string]$Message) {
     try {
@@ -40,6 +43,68 @@ function Write-Log([string]$Message) {
 function Test-GatewayUp {
     $listener = Get-NetTCPConnection -State Listen -LocalPort $Port -ErrorAction SilentlyContinue
     return [bool]$listener
+}
+
+# 0a. Heartbeat: proof that THIS watchdog ran at all.
+#
+#     Everything below can report Dado's health, and step 0b reports Aze's - but
+#     none of it can report its own absence. If this scheduled task is disabled
+#     or deleted, Dado loses auto-recovery AND Aze loses her monitor, and the
+#     silence looks identical to health from every angle. Aze's watchdog is a
+#     separate task on a separate cycle, so it watches the AGE of this file.
+#
+#     STAMPED FIRST, BEFORE THE DISABLE-FLAG EXIT BELOW. A deliberate STOP_DADO
+#     stops the GATEWAY, not this task - if the stamp sat after that exit, every
+#     deliberate stop would read as a dead watchdog and page Rachad for
+#     something he did on purpose. The MTIME is the signal; the text inside is
+#     only context for a human.
+try {
+    $hb = Join-Path $Root 'Dado\40_Logs\dado_watchdog_heartbeat.txt'
+    $hbDir = Split-Path $hb -Parent
+    if (-not (Test-Path $hbDir)) { New-Item -ItemType Directory -Force -Path $hbDir | Out-Null }
+    Set-Content -Path $hb -Encoding utf8 -Value (
+        "ran at " + (Get-Date).ToString('yyyy-MM-ddTHH:mm:sszzz'))
+} catch {
+    # Never let bookkeeping take down the keep-alive.
+}
+
+# 0b. Neighbour check, BEFORE anything else in this file.
+#
+#    Aze's watchdog can report a run that refused to act, but it cannot report
+#    its own absence: if her scheduled task is disabled or deleted, nothing runs
+#    and the silence looks exactly like health. Hers stamps a heartbeat file on
+#    every run; this task is a SEPARATE scheduler on a separate 5-minute cycle,
+#    which is the only reason it can notice hers has stopped. (2026-08-10 to
+#    -08-11 she had no auto-recovery for 24 hours and every signal read green.)
+#
+#    THREE DELIBERATE CHOICES:
+#    a) It runs BEFORE the disable-flag check below. That flag means "Rachad
+#       stopped DADO on purpose" - it is not a reason to stop watching Aze, and
+#       this task keeps firing either way.
+#    b) It is DETACHED, fire-and-forget. Dado's own recovery must never wait on
+#       a neighbour's monitor; if that script ever hangs, this line has already
+#       returned.
+#    c) Its output is discarded, and all of its own state, logging and alerting
+#       live inside TDI's tree. No TDI detail reaches an FRP log, git history or
+#       the nightly conduct bundle. This side knows one fact: the path.
+#    Absent file = TDI is not installed here = silently skipped.
+if ((Test-Path $NeighbourHeartbeat) -and (Test-Path $VenvPython)) {
+    try {
+        if ($WhatIfOnly) {
+            # A rehearsal must stay a rehearsal: --dry-run sends nothing and
+            # touches no alert state. Shown on the console, never written to
+            # Dado's log file.
+            & $VenvPython $NeighbourHeartbeat --dry-run 2>&1 |
+                ForEach-Object { Write-Host "neighbour-heartbeat: $_" }
+        } else {
+            Start-Process -WindowStyle Hidden -FilePath $VenvPython `
+                -ArgumentList $NeighbourHeartbeat | Out-Null
+        }
+    } catch {
+        # Never let a neighbour's monitor take down Dado's keep-alive. Message
+        # only - no stdout, so nothing from TDI's side can land in this log.
+        Write-Log "NEIGHBOUR HEARTBEAT CHECK FAILED: $($_.Exception.Message)"
+    }
 }
 
 # 1. An operator stop wins over everything.
