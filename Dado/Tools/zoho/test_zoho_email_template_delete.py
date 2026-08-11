@@ -7,21 +7,30 @@ through a commissioned path rather than by hand.
 
 So the weight of these tests is on the refusals: any other template, a renamed
 row, a default template, a template with attachments, a delete that also removed
-something else. The happy path is deliberately NOT reachable yet - the native
-Delete request has never been captured, and the tool refuses BEFORE its replay
-lock so an honest refusal never burns a plan.
+something else. The native Delete request was captured under an
+abort-everything interceptor on 2026-08-11 and is pinned in the tool, so the
+interceptor tests below pin what may reach the network: exactly one DELETE to
+one URL with an empty body, once.
 
 Kept in its own module: the main email-template suite was being edited
 concurrently when this was written.
 """
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import zoho_email_template_tool as tool
 
+pathlib_root = Path("C:/FRPDepot")
 
+
+CAPTURE_ARTIFACT = (
+    pathlib_root / "Dado" / "20_Working" / "zoho_email_template_capture"
+    / "native_delete_request.json"
+)
 SOURCE_ID = "96274000000000014"
 TARGET_ID = tool.DELETE_TARGET_TEMPLATE_ID
 
@@ -107,25 +116,155 @@ class DeleteReadBackTests(unittest.TestCase):
 
 
 class DeleteContractGateTests(unittest.TestCase):
-    def test_commit_refuses_while_the_native_request_is_uncaptured(self) -> None:
-        self.assertFalse(tool.DELETE_CONTRACT_CAPTURED)
-        with self.assertRaisesRegex(tool.EmailTemplateError, "never been captured"):
-            tool.require_delete_contract_commissioned()
+    def test_the_gate_refuses_whenever_the_contract_is_not_pinned(self) -> None:
+        """The contract IS pinned now, so the gate is exercised by unpinning it.
+
+        Asserting the flag's current value would only restate the build; what has
+        to hold is that an unpinned contract still stops the delete dead.
+        """
+        self.assertTrue(tool.DELETE_CONTRACT_CAPTURED)
+        with mock.patch.object(tool, "DELETE_CONTRACT_CAPTURED", False):
+            with self.assertRaisesRegex(tool.EmailTemplateError, "never been captured"):
+                tool.require_delete_contract_commissioned()
+            with self.assertRaisesRegex(tool.EmailTemplateError, "never been captured"):
+                tool.delete_template_via_ui("110002157575")
+
+    def test_the_pinned_contract_matches_what_the_capture_recorded(self) -> None:
+        captured = json.loads(
+            (CAPTURE_ARTIFACT).read_text(encoding="utf-8")
+        )["requests_attempted"]
+        self.assertEqual(len(captured), 1)
+        request = captured[0]
+        self.assertEqual(request["method"], tool.DELETE_METHOD)
+        self.assertEqual(request["path"], tool.DELETE_PATH)
+        self.assertEqual(request["post_data_sha256"], tool.DELETE_EMPTY_BODY_SHA256)
+        self.assertIsNone(request["post_data"])
 
     def test_the_gate_runs_before_any_replay_lock_is_written(self) -> None:
         """An honest refusal must cost nothing - the plan stays committable."""
         import inspect
         source = inspect.getsource(tool.command_commit_delete)
         gate = source.index("require_delete_contract_commissioned()")
+        # Nothing may lock the plan before the gate. The lock DOES exist after
+        # it - immediately before the one irreversible action - which is the
+        # point: every refusal above it leaves the plan committable.
         self.assertNotIn("write_lock(", source[:gate])
-        # And no lock is written after it either, while no transport exists.
-        self.assertNotIn("write_lock(", source)
+        self.assertIn("write_lock(", source[gate:])
+        # And the lock must still precede the actual delete.
+        self.assertLess(
+            source.index("write_lock(", gate), source.index("delete_template_via_ui(", gate)
+        )
 
-    def test_the_module_still_carries_no_delete_transport(self) -> None:
+    def test_the_delete_surface_stays_exactly_one_bounded_verb(self) -> None:
+        """Superseded by the commission, and TIGHTENED rather than dropped.
+
+        This used to assert the module carried no DELETE at all. It now carries
+        exactly one, pinned to one path, and still no other write transport.
+        """
         text = Path(tool.__file__).read_text(encoding="utf-8")
-        self.assertNotIn('"DELETE"', text)
+        self.assertEqual(text.count('"DELETE"'), 1)
         self.assertNotIn("urlopen", text)
         self.assertEqual(text.count('method="PUT"'), 0)
+        self.assertTrue(tool.DELETE_PATH.endswith(TARGET_ID))
+        # The path is built from the fixed ID, so it cannot be pointed elsewhere.
+        self.assertIn(tool.DELETE_TARGET_TEMPLATE_ID, tool.DELETE_PATH)
+
+
+class FakeRoute:
+    def __init__(self) -> None:
+        self.continued = False
+        self.aborted = False
+
+    def continue_(self) -> None:
+        self.continued = True
+
+    def abort(self, _reason: str) -> None:
+        self.aborted = True
+
+
+class FakeRequest:
+    def __init__(self, method: str, url: str, post_data=None) -> None:
+        self.method = method
+        self.url = url
+        self.post_data = post_data
+
+
+ORG = "110002157575"
+GOOD_URL = (
+    f"https://books.zohocloud.ca/api/v3/settings/emailtemplates/{TARGET_ID}"
+    f"?organization_id={ORG}"
+)
+
+
+class DeleteInterceptorTests(unittest.TestCase):
+    """Nothing but the captured request may ever reach the network."""
+
+    def run_one(self, request, state=None):
+        state = state if state is not None else {}
+        route = FakeRoute()
+        tool.delete_interceptor(ORG, state)(route, request)
+        return route, state
+
+    def test_the_captured_request_is_released_once(self) -> None:
+        route, state = self.run_one(FakeRequest("DELETE", GOOD_URL))
+        self.assertTrue(route.continued)
+        self.assertTrue(state["allowed"])
+        self.assertEqual(state["request"]["method"], "DELETE")
+
+    def test_reads_pass_and_are_not_counted_as_the_write(self) -> None:
+        route, state = self.run_one(FakeRequest("GET", GOOD_URL))
+        self.assertTrue(route.continued)
+        self.assertNotIn("allowed", state)
+
+    def test_a_second_delete_is_aborted(self) -> None:
+        state: dict = {}
+        first, _ = self.run_one(FakeRequest("DELETE", GOOD_URL), state)
+        second, state = self.run_one(FakeRequest("DELETE", GOOD_URL), state)
+        self.assertTrue(first.continued)
+        self.assertTrue(second.aborted)
+        self.assertIn("more than one", state["failure"])
+
+    def test_every_deviation_from_the_captured_request_is_aborted(self) -> None:
+        other_id = "96274000000000014"
+        cases = {
+            "another template": FakeRequest(
+                "DELETE",
+                f"https://books.zohocloud.ca/api/v3/settings/emailtemplates/{other_id}"
+                f"?organization_id={ORG}",
+            ),
+            "another organization": FakeRequest(
+                "DELETE",
+                f"https://books.zohocloud.ca/api/v3/settings/emailtemplates/{TARGET_ID}"
+                "?organization_id=999",
+            ),
+            "another host": FakeRequest(
+                "DELETE",
+                f"https://books.zoho.com/api/v3/settings/emailtemplates/{TARGET_ID}"
+                f"?organization_id={ORG}",
+            ),
+            "another path": FakeRequest(
+                "DELETE",
+                f"https://books.zohocloud.ca/api/v3/invoices/{TARGET_ID}"
+                f"?organization_id={ORG}",
+            ),
+            "a POST instead": FakeRequest("POST", GOOD_URL),
+            "a body attached": FakeRequest("DELETE", GOOD_URL, post_data="{}"),
+            "no query at all": FakeRequest(
+                "DELETE",
+                f"https://books.zohocloud.ca/api/v3/settings/emailtemplates/{TARGET_ID}",
+            ),
+            "plain http": FakeRequest(
+                "DELETE",
+                f"http://books.zohocloud.ca/api/v3/settings/emailtemplates/{TARGET_ID}"
+                f"?organization_id={ORG}",
+            ),
+        }
+        for label, request in cases.items():
+            with self.subTest(case=label):
+                route, state = self.run_one(request)
+                self.assertTrue(route.aborted, f"{label} was not aborted")
+                self.assertFalse(route.continued)
+                self.assertFalse(state.get("allowed"))
 
 
 class DeletePlanTests(unittest.TestCase):

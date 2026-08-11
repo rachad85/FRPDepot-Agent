@@ -40,9 +40,11 @@ precondition for it. An existing ``CC - All`` does block it.
 
 Everything else is permanently unreachable. There is no generic browser action,
 no generic HTTP write helper, and no caller-supplied selector, URL, module,
-name, address or source template. Template update, delete, rename, set-default,
+name, address or source template. Template update, rename, set-default,
 clone-to-another-module, customer/vendor association, attachment change and PDF
-templates are not implemented. No email, reminder, notification, SMTP, Graph or
+templates are not implemented. DELETE is implemented for exactly ONE hard-coded
+template -- the CC - Accounting an unapproved live write created on 2026-08-11 --
+and for no other: see DELETE_TARGET_TEMPLATE_ID and require_delete_target. No email, reminder, notification, SMTP, Graph or
 Zoho transaction-email route exists anywhere in this module: the only network
 verbs it can issue are same-origin browser GETs on two exact Books settings
 paths and read-only OAuth GETs through ``zoho_tool.api_get``.
@@ -128,9 +130,10 @@ and nothing else was touched.
 The write is one intercepted, fully validated POST per target, allowed exactly
 once, with no retry. Everything else stays permanently unreachable: no generic
 browser action, no generic HTTP write helper, no caller-supplied selector, URL,
-module, name, address or source template; no update, delete, rename,
-set-default, clone-to-another-module, customer/vendor association, attachment or
-PDF-template route; and no email, reminder, notification, SMTP, Graph or Zoho
+module, name, address or source template; no update, rename, set-default,
+clone-to-another-module, customer/vendor association, attachment or
+PDF-template route; no delete of anything but the ONE hard-coded template named
+above; and no email, reminder, notification, SMTP, Graph or Zoho
 transaction-email route anywhere in this module.
 """
 from __future__ import annotations
@@ -179,7 +182,7 @@ def holds_zoho_browser(purpose: str):
 
 
 TOOL_NAME = "FRP Depot Zoho Books Invoice Email Template Tool"
-TOOL_VERSION = "2.1.0"
+TOOL_VERSION = "2.2.0"
 # Bumped with the tool version on every commission that changes what a plan may
 # mean. v2.0.0/schema 3 closed the old New-form blocker; v2.1.0/schema 4 adds the
 # one-target create_all_only action, so a plan staged under the previous build
@@ -363,18 +366,31 @@ DELETE_ACTIONS = (DELETE_ACCIDENTAL_ACCOUNTING,)
 # not first observed under an abort-everything interceptor. Guessing
 # `DELETE /api/v3/settings/emailtemplates/{id}` because it looks RESTful is the
 # precise failure this tree already has a rule against: measured, not guessed.
-# The capture itself is NOT built yet either - deliberately, because it drives
-# the live browser and is Rachad's call to authorize, exactly as the Clone
-# capture was on 2026-08-11. Until the captured request is pinned here, commit
-# refuses BEFORE the replay lock, so the staged plan stays committable.
-DELETE_CONTRACT_CAPTURED = False
+# *** CAPTURED 2026-08-11, authorized by Rachad, and pinned here. ***
+# The row menu holds exactly ["Edit", "Delete"]; Delete only OPENS Zoho's
+# confirmation modal, and the request fires on confirming with "Yes" inside it.
+# Under an abort-everything interceptor the confirmed control emitted exactly
+# this and nothing else, and it never reached the network:
+#     DELETE https://books.zohocloud.ca/api/v3/settings/emailtemplates/<id>
+#            ?organization_id=<org>      with NO body
+# It is indeed the REST-shaped endpoint - but it is pinned because it was
+# MEASURED, not because it looked obvious. Artifact:
+# Dado\20_Working\zoho_email_template_capture\native_delete_request.json
+DELETE_CONTRACT_CAPTURED = True
+DELETE_METHOD = "DELETE"
+DELETE_PATH = f"/api/v3/settings/emailtemplates/{DELETE_TARGET_TEMPLATE_ID}"
+# sha256 of the empty string: the captured request carried no body at all, and
+# anything else is drift.
+DELETE_EMPTY_BODY_SHA256 = (
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+)
+DELETE_MENU_ITEM = "Delete"
+DELETE_CONFIRM_LABEL = "Yes"
+DELETE_EXPECTED_MENU_ITEMS = ("Edit", "Delete")
 DELETE_NOT_CAPTURED = (
     "REFUSED: the native Delete request has never been captured, so this tool "
     "cannot prove what it would send, and it will not guess a REST-shaped delete "
-    "endpoint. The next step is a blocked capture of Zoho's own Delete control "
-    "under an abort-everything interceptor - the same way the Clone Save request "
-    "was captured - and that needs Rachad's authorization because it drives the "
-    "live browser. Nothing was deleted and this plan is still usable."
+    "endpoint. Nothing was deleted and this plan is still usable."
 )
 
 # Exactly the keys Zoho's live detail endpoint returned for the source template
@@ -1291,6 +1307,176 @@ def verify_template_deleted(
         "deleted_template_name": DELETE_TARGET_NAME,
         "surviving_template_ids": sorted(after_by_id),
     }
+
+
+def delete_interceptor(organization_id: str, state: dict[str, Any]):
+    """Let exactly ONE request through: the captured DELETE, and nothing else.
+
+    Everything that is not a read is aborted before the network. The one
+    commissioned delete is released only after its method, host, path, query and
+    EMPTY body have each been proven to equal the captured contract, and only
+    once. Only method, URL and body are inspected; headers and cookies never are.
+    """
+    expected_query = urlencode({"organization_id": organization_id})
+
+    def intercept(route: Any, request: Any) -> None:
+        if request.method in {"GET", "HEAD"}:
+            route.continue_()
+            return
+        parsed = urlsplit(request.url)
+        body = request.post_data or ""
+        matches = (
+            request.method == DELETE_METHOD
+            and parsed.scheme == UI_SCHEME
+            and parsed.hostname == UI_HOST
+            and parsed.path == DELETE_PATH
+            and parsed.query == expected_query
+            and hashlib.sha256(body.encode("utf-8")).hexdigest() == DELETE_EMPTY_BODY_SHA256
+        )
+        if not matches:
+            state.setdefault("blocked", []).append({
+                "method": request.method,
+                "host": parsed.hostname or "",
+                "path": parsed.path,
+            })
+            route.abort("blockedbyclient")
+            return
+        state["seen"] = int(state.get("seen") or 0) + 1
+        if state.get("allowed") or state["seen"] > 1:
+            state["failure"] = state.get("failure") or (
+                "Zoho emitted more than one delete request. Only one validated "
+                "delete is ever allowed, so the extra was aborted."
+            )
+            route.abort("blockedbyclient")
+            return
+        # Validation is complete BEFORE the request is released to the network.
+        state["allowed"] = True
+        state["request"] = {
+            "method": request.method,
+            "path": parsed.path,
+            "query": parsed.query,
+            "body_sha256": DELETE_EMPTY_BODY_SHA256,
+        }
+        route.continue_()
+
+    return intercept
+
+
+def delete_target_row(page: Any) -> Any:
+    """The one row for the fixed template, proven not to be the Default row.
+
+    The disclosure button is taken from INSIDE this row: the page now carries one
+    per template, so a page-wide lookup could open the wrong row's menu - and the
+    wrong row is the organization default.
+    """
+    rows = [
+        row for row in (
+            page.locator("tr").filter(
+                has_text=re.compile(re.escape(DELETE_TARGET_NAME))
+            ).nth(index)
+            for index in range(
+                page.locator("tr").filter(
+                    has_text=re.compile(re.escape(DELETE_TARGET_NAME))
+                ).count()
+            )
+        )
+        if row.is_visible()
+    ]
+    if len(rows) != 1:
+        raise EmailTemplateError(
+            f"Expected exactly one visible row containing {DELETE_TARGET_NAME!r}; "
+            f"found {len(rows)}. Nothing was clicked."
+        )
+    text = rows[0].inner_text()
+    if re.search(rf"\b{re.escape(SOURCE_TEMPLATE_NAME)}\b", text):
+        raise EmailTemplateError(
+            f"The located row also mentions {SOURCE_TEMPLATE_NAME!r}. Refusing to "
+            "open a menu that might belong to the default template."
+        )
+    return rows[0]
+
+
+def delete_template_via_ui(organization_id: str) -> dict[str, Any]:
+    """Drive Zoho's own Delete control and release the one validated request."""
+    require_delete_contract_commissioned()
+    state: dict[str, Any] = {"seen": 0, "allowed": False, "failure": "", "blocked": []}
+    # Imported HERE, not at module scope: the suite patches
+    # playwright.sync_api.sync_playwright, and that only intercepts a call-time
+    # import. This is the exact gap that let an unapproved live write through on
+    # 2026-08-11, so the create path's shape is followed to the letter.
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise EmailTemplateError(NO_SESSION) from exc
+
+    with sync_playwright() as pw:
+        try:
+            browser = pw.chromium.connect_over_cdp(CDP_ENDPOINT, timeout=10_000)
+        except Exception as exc:
+            raise EmailTemplateError(NO_SESSION) from exc
+        page = _authenticated_books_page(browser)
+        intercept = delete_interceptor(organization_id, state)
+        # Armed BEFORE the first navigation: from here nothing unvalidated can
+        # reach the network.
+        page.route("**/*", intercept)
+        try:
+            page.goto(SETTINGS_URL, wait_until="domcontentloaded", timeout=60_000)
+            page.wait_for_timeout(6_000)
+            settings = urlsplit(page.url)
+            if settings.scheme != UI_SCHEME or settings.hostname != UI_HOST:
+                raise EmailTemplateError(
+                    "Zoho Books navigation left the approved host (sign-in, consent "
+                    "or CAPTCHA). Nothing was deleted."
+                )
+            row = delete_target_row(page)
+            _one_visible(
+                row.get_by_role("button", name=ROW_DISCLOSURE_LABEL, exact=True),
+                f"{DELETE_TARGET_NAME}-row {ROW_DISCLOSURE_LABEL!r} control",
+            ).click(timeout=10_000)
+            page.wait_for_timeout(900)
+            _one_visible(
+                page.locator(MENU_ITEM_SELECTOR).filter(
+                    has_text=re.compile(rf"^{re.escape(DELETE_MENU_ITEM)}$")
+                ),
+                f"exact {DELETE_MENU_ITEM!r} menu item",
+            ).click(timeout=10_000)
+            page.wait_for_timeout(2_500)
+            # Delete only OPENS the confirmation modal; the request fires on
+            # confirming, and the control is taken from INSIDE the modal so a
+            # row's own Delete can never be hit instead.
+            modal = page.locator(".modal.show")
+            if modal.count() != 1:
+                raise EmailTemplateError(
+                    f"Expected exactly one open confirmation modal; found "
+                    f"{modal.count()}. Nothing was confirmed."
+                )
+            _one_visible(
+                modal.get_by_role("button", name=DELETE_CONFIRM_LABEL, exact=True),
+                f"exact {DELETE_CONFIRM_LABEL!r} confirm control inside the modal",
+            ).click(timeout=10_000)
+            page.wait_for_timeout(4_000)
+        finally:
+            # A confirmation modal must never be left standing on the shared
+            # page: a stray click there would be a second, unapproved deletion.
+            # A hash-route goto does NOT reload an SPA - that is why the capture's
+            # own goto left one standing - so a real reload is what clears it.
+            # No synthetic key events here on purpose: this module forbids them,
+            # because typing was a rejected CC fallback, and the reload alone is
+            # sufficient to clear the modal.
+            try:
+                page.reload(wait_until="domcontentloaded", timeout=60_000)
+                page.wait_for_timeout(3_000)
+            except Exception:
+                pass
+            page.unroute("**/*", intercept)
+    if state.get("failure"):
+        raise EmailTemplateError(str(state["failure"]))
+    if not state.get("allowed"):
+        raise EmailTemplateError(
+            "Zoho never emitted the captured delete request, so nothing was sent. "
+            "Blocked instead: " + json.dumps(state.get("blocked") or [])
+        )
+    return dict(state["request"])
 
 
 def validate_android_confirmation(raw: dict[str, Any]) -> dict[str, Any]:
@@ -2770,15 +2956,65 @@ def command_commit_delete(args: argparse.Namespace) -> None:
     # SAME plan can be committed once the contract is pinned.
     require_delete_contract_commissioned()
 
-    # Deliberately no replay lock above this line. The delete transport is
-    # written only together with the capture that proves its shape, so reaching
-    # here means the flag was flipped without one - and that is a build error,
-    # not a plan to burn.
-    raise EmailTemplateError(
-        "REFUSED: DELETE_CONTRACT_CAPTURED is set but no validated delete transport "
-        "exists in this build. Implement it with the captured request, never "
-        "separately. Nothing was deleted and the plan is untouched."
+    # The lock goes in LAST, immediately before the one irreversible action, so
+    # every refusal above cost nothing and left the plan committable.
+    lock = lock_path(plan["sha256"])
+    write_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "action": DELETE_ACCIDENTAL_ACCOUNTING,
+        "status": "in_flight",
+        "target_template_id": DELETE_TARGET_TEMPLATE_ID,
+        "started_utc": utc_now().isoformat(),
+    }, exclusive=True)
+
+    try:
+        released = delete_template_via_ui(org_id)
+        rows_after = invoice_template_rows(ui_list_templates(org_id))
+        verified = verify_template_deleted(rows_after, plan["live_evidence"]["invoice_templates"])
+        # Default itself must be untouched by all of this.
+        _, final_detail, _ = read_live_state(org_id)
+        if final_detail["email_template_id"] != plan["live_evidence"]["source_template_id"]:
+            raise EmailTemplateError("The source Default template changed during the delete.")
+    except Exception as exc:
+        write_lock(lock, {
+            "plan_sha256": plan["sha256"],
+            "action": DELETE_ACCIDENTAL_ACCOUNTING,
+            "status": "indeterminate",
+            "target_template_id": DELETE_TARGET_TEMPLATE_ID,
+            "reason": str(exc)[:2000],
+            "updated_utc": utc_now().isoformat(),
+            "no_retry": True,
+        })
+        zoho_tool.append_receipt(
+            "zoho_email_template_delete_failed_permanently_locked",
+            f"plan={plan_path}; sha256={plan['sha256']}; target={DELETE_TARGET_TEMPLATE_ID}",
+        )
+        raise EmailTemplateError(
+            "Email-template delete is indeterminate and permanently locked against "
+            "replay. Reconcile live Zoho state before staging another plan: " + str(exc)
+        ) from exc
+
+    write_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "action": DELETE_ACCIDENTAL_ACCOUNTING,
+        "status": "committed_verified",
+        "deleted_template_id": DELETE_TARGET_TEMPLATE_ID,
+        "updated_utc": utc_now().isoformat(),
+        "no_retry": True,
+    })
+    zoho_tool.append_receipt(
+        "zoho_email_template_deleted_verified",
+        f"template={DELETE_TARGET_TEMPLATE_ID} ({DELETE_TARGET_NAME}); plan={plan_path}",
     )
+    print(json.dumps({
+        "status": "COMMITTED_AND_VERIFIED",
+        "action": DELETE_ACCIDENTAL_ACCOUNTING,
+        "plan_sha256": plan["sha256"],
+        "released_request": released,
+        "deleted": verified,
+        "replay_locked": True,
+        "emails_sent": 0,
+    }, ensure_ascii=False, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -781,9 +781,18 @@ class EmailTemplateToolTests(unittest.TestCase):
                       'document.cookie', '.cookies', 'localStorage',
                       'sessionStorage', 'storage_state', 'request.headers',
                       'all_headers', 'add_init_script',
-                      '"PUT"', '"DELETE"', '"PATCH"'):
+                      '"PUT"', '"PATCH"'):
             with self.subTest(token=token):
                 self.assertNotIn(token, source)
+        # DELETE was commissioned on 2026-08-11 to remove the template an
+        # unapproved live write created. It is BOUNDED, not merely allowed:
+        # exactly one occurrence, and only as the pinned method constant against
+        # one hard-coded template path.
+        self.assertEqual(source.count('"DELETE"'), 1)
+        self.assertEqual(emailtool.DELETE_METHOD, "DELETE")
+        self.assertTrue(
+            emailtool.DELETE_PATH.endswith(emailtool.DELETE_TARGET_TEMPLATE_ID)
+        )
         # Exactly one fetch call site, and it is the read.
         self.assertEqual(source.count("await fetch("), 1)
         self.assertEqual(source.count('method: "GET"'), 1)
@@ -794,10 +803,10 @@ class EmailTemplateToolTests(unittest.TestCase):
         self.assertEqual(emailtool.CLONE_SAVE_METHOD, "POST")
         # One handler, one abort call site, and continue_ only twice: reads, and
         # the one validated Save.
-        self.assertEqual(source.count("route.continue_()"), 2)
-        self.assertEqual(source.count('route.abort("blockedbyclient")'), 3)
+        self.assertEqual(source.count("route.continue_()"), 4)
+        self.assertEqual(source.count('route.abort("blockedbyclient")'), 5)
         self.assertEqual(source.count("def clone_save_interceptor"), 1)
-        self.assertEqual(source.count("page.route("), 1)
+        self.assertEqual(source.count("page.route("), 2)
         for token in ('method: "POST"', "method='POST'", 'method="POST"',
                       'fetch(url, {method: CLONE', 'sync_playwright().start'):
             with self.subTest(token=token):
@@ -1417,7 +1426,7 @@ class EmailTemplateToolTests(unittest.TestCase):
         self.add_accounting()
         plan = json.loads(self.stage_all_only().read_text(encoding="utf-8"))
         self.assertEqual(plan["schema_version"], 4)
-        self.assertEqual(plan["tool_version"], "2.1.0")
+        self.assertEqual(plan["tool_version"], "2.2.0")
         self.assertEqual(plan["action"], "create_all_only")
         self.assertEqual(plan["approval_required"], "APPROVED")
         self.assertIs(plan["email_sent"], False)
@@ -1595,13 +1604,16 @@ class EmailTemplateToolTests(unittest.TestCase):
         source = inspect.getsource(emailtool)
         for token in ('/send', 'sendmail', 'smtp', 'graph.microsoft', 'outlook',
                       '/reminder', '/associate', 'markasdefault', 'force_delete',
-                      '"PUT"', '"DELETE"', '"PATCH"', 'urlopen'):
+                      '"PUT"', '"PATCH"', 'urlopen'):
             with self.subTest(token=token):
                 self.assertNotIn(token, source)
         self.assertEqual(source.count("await fetch("), 1)
         self.assertEqual(source.count('method: "GET"'), 1)
-        self.assertEqual(source.count("route.continue_()"), 2)
-        self.assertEqual(source.count("page.route("), 1)
+        # Two interceptors now: the Clone Save POST and the commissioned DELETE.
+        # Each passes reads through and releases at most one validated write.
+        self.assertEqual(source.count("route.continue_()"), 4)
+        self.assertEqual(source.count("page.route("), 2)
+        self.assertEqual(source.count("def delete_interceptor"), 1)
         self.assertEqual(emailtool.CLONE_SAVE_METHOD, "POST")
 
     # -- duplicate protection ---------------------------------------------
@@ -2090,7 +2102,10 @@ class EmailTemplateToolTests(unittest.TestCase):
         move together and every earlier value is refused.
         """
         self.assertEqual(emailtool.SCHEMA_VERSION, 4)
-        self.assertEqual(emailtool.TOOL_VERSION, "2.1.0")
+        # 2.2.0 commissioned the DELETE path, so any plan staged while the
+        # tool could only refuse fails closed instead of silently becoming
+        # executable.
+        self.assertEqual(emailtool.TOOL_VERSION, "2.2.0")
         plan = self.stage()
         for change in ({"schema_version": 3}, {"schema_version": 2},
                        {"schema_version": 1}, {"tool_version": "2.0.0"},
