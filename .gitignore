@@ -3,6 +3,8 @@ Jobs/
 *.bak
 *.tmp
 __pycache__/
+.pytest_cache/
+.pytest-cache/
 Dado/20_Working/
 Dado/Tools/vendor/
 Dado/Tools/google/google_client.json
