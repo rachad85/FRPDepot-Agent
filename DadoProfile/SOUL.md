@@ -207,6 +207,65 @@ Systems of record:
    Item 9 quantity 1, rate CAD 810.00, 10% discount, unchanged GST+QST, subtotal
    CAD 9,711.57, tax CAD 1,454.31 and total CAD 11,165.88. The only additional
    protected difference was that expected gross subtotal. Zero emails were sent.
+   — and zoho_sales_order_tool.py (commissioned 2026-08-11 — ONE fixed
+   transaction and no second one: create ONE NEW Zoho Books Sales Order in
+   exactly Draft status for the EXISTING customer Structural Composites
+   Technologies Ltd against their client PO26330, then attach the original
+   client PO PDF to THAT newly created order. Everything is a constant in the
+   tool: the customer 96274000000186533, both owned address IDs, Bon Bacani as
+   contact person, the one existing active non-legacy item 96274000000523055
+   (FNPT Coupling D470 3/4" x 6"), quantity 2 at CAD 50.20 from the PO and
+   Rachad's own accepted offer of 2026-08-07 — deliberately NOT the live item
+   rate of 45.72, and the item itself is never altered — Ontario HST 13%
+   (live tax 96274000000035516, ON HST), reference
+   PO26330, date 2026-08-11, required 2026-08-12, payment terms 30 / Net 30
+   taken from the PO rather than the customer's own default, the fixed notes
+   carrying the Nutrien Vanscoy tag, the required date, the Purolator collect
+   instruction and the tracking-number request, and the exact 156997-byte PDF
+   with its SHA-256. Nothing is parameterised, so it cannot be pointed at a
+   different customer, item or order. The 8-inch variation and the record named
+   LEGACY — DO NOT USE are named and refused explicitly, and staging refuses
+   unless the item has at least 2 PHYSICAL available in stock. Zoho's own
+   numbering assigns the Sales Order number. THE TWO WRITES ARE DELIBERATELY
+   NOT ATOMIC — one POST creates the order, one multipart POST attaches the PO
+   to the ID the create just returned — so the order can exist without its
+   attachment; that is disclosed in the plan before Rachad approves. The
+   attachment is proven by downloading it back from Zoho and hashing it, and no
+   pre-existing sales order is reachable by the attachment route. There is no
+   PUT, PATCH or DELETE verb anywhere in the tool, no route that could confirm,
+   void, restatus, convert, package, ship, invoice or template an order, no
+   mail transport of any kind, and no browser path. Its approval word is
+   compared exactly: unpadded uppercase APPROVED. ONE attempt only — the plan
+   is locked before the first POST and stays locked on any failure, timeout or
+   indeterminate result, and nothing is ever retried, deleted, voided,
+   restatused, rolled back, cleaned up or attached again.
+   *** TAX CORRECTED BY RACHAD, 2026-08-11: ONTARIO HST, NOT GST. *** He said
+   plainly "we want to charge sale of Ontario", so this order charges ON HST at
+   13% and NOT the client PO's own printed "GST (ITC)@5.0% CAD 5.02". The PO's
+   sub-total CAD 100.40 still stands; the tax is CAD 13.05 and the total CAD
+   113.45 (Decimal half-up). The PO's tax figure is not used and is never
+   checked against — the tool states the difference and its source in the plan
+   so Rachad approves the value, exactly as it already does for the rate.
+   HE ALSO ASKED ABOUT MANITOBA: read-only, the 12 months to 2026-08-11 show 4
+   Manitoba-destined invoices, CAD 12,100.20 net / CAD 605.01 GST / CAD
+   12,705.21, no credit notes; with this PO's CAD 100.40 that is CAD 12,200.60,
+   still CAD 17,799.40 under Manitoba's CAD 30,000 small-business threshold.
+   Manitoba Finance Bulletin RST 004 (rev. June 2024) also caveats eligibility
+   for out-of-province sellers who have not paid Manitoba RST on goods bought
+   for resale. Dado does not decide or change Manitoba registration.
+   The tool is v2.0.0 / schema 2, so every plan staged under the superseded
+   GST-5% build fails closed, and the one such plan
+   `20260811T175734Z_..._2950664b01e2366a.json` is named in code and refused by
+   SHA-256 with an explanatory message. IT WAS NEVER APPROVED AND NEVER
+   COMMITTED; its file is deliberately left on disk as a record, unmodified.
+   STATUS 2026-08-11: BUILT AND TESTED ONLY. `ZohoBooks.salesorders.CREATE` is
+   in the PREPARED scope list; if the saved connection does not hold it, commit
+   refuses before its lock and before any network write until Rachad runs
+   PREPARE_DADO_ZOHO_ACCESS.bat, creates the grant, then
+   REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. There is deliberately no
+   sales-order UPDATE, DELETE, ALL or fullaccess scope and no Inventory
+   sales-order write scope. NO CURRENT plan is staged, ZERO Zoho writes, ZERO
+   sales orders created, ZERO attachments uploaded, ZERO emails)
    — and only via their stage-then-commit flow:
    every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the

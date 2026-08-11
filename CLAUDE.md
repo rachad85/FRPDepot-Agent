@@ -654,11 +654,52 @@ engineer.
       closed. Tests: 103 in the email-template suite, 421 across the whole Zoho
       suite, all passing. NO NEW SCOPE was needed — the tool reads through
       the existing authenticated UI session and existing read-only OAuth GETs.
-      One read-only plan
-      (`20260810T231950Z_create_accounting_test_2fa2a591d4936ffe.json`) is STAGED;
-      approving it refuses before any write until the blocker above is resolved. The encrypted vault and profile .env
-      were not touched, ZERO Zoho writes were made, ZERO templates were created
-      and ZERO emails were sent.
+      2026-08-11: Rachad chose option (1), and after the blocked `Clone` capture
+      proved Zoho only REORDERS HTML ATTRIBUTES around the PAY NOW button while
+      preserving the whole tree, he answered `YES`. The Clone create path is now
+      implemented and tested; tool is v2.0.0 / schema 3, so plans staged under
+      the old New-form blocker fail closed. The contract: the `Default` row's
+      exact `Show dropdown menu` -> exact `Clone` -> fixed name + fixed Cc option
+      -> Save emits ONE `POST /api/v3/settings/emailtemplates`, body SHA-256
+      `f6e9d14c...`, whose payload is a FLAT EIGHT-KEY object — a DIFFERENT schema
+      from the `New` form's nested `language_content`, so the two are decoded
+      separately and neither may stand in for the other. `New` is never clicked;
+      it stays pinned negative evidence recorded in every plan. The accepted
+      equivalence is ATTRIBUTE ORDER AND NOTHING ELSE: both bodies are 2,131
+      chars, parse to exactly 106 canonical events, every event equal;
+      `same_canonical_html` preserves tags, nesting, attribute names/values,
+      quoting, data/whitespace nodes, entities, comments and declarations exactly,
+      REFUSES duplicate attributes and REFUSES malformed markup. The plan's source
+      fingerprint still protects the live `Default` body byte-for-byte. Commit
+      takes the shared Zoho browser mutex BEFORE the plan replay lock (busy lane =
+      free refusal), arms an interceptor that aborts every non-read request, and
+      releases exactly ONE fully validated POST, once, no retry.
+      *** AN UNAPPROVED LIVE WRITE HAPPENED DURING THAT BUILD. *** Mutation-testing
+      deleted `@holds_zoho_browser` to prove it was load-bearing. It was — but with
+      it gone, `test_busy_browser_refuses_for_free_and_leaves_the_plan_reusable`
+      (which calls `command_commit` directly and deliberately does NOT patch
+      `create_template_via_ui`) had nothing left between it and the live session,
+      and the suite's fake vault carries the REAL org id and real `Default` id. It
+      drove the real browser and created live invoice template `CC - Accounting`,
+      ID `96274000001558092`, with no approval from Rachad. It is a faithful fixed
+      clone (CC exactly accounting@, BCC empty, non-default, body canonically
+      identical) and NO email was sent. It has NOT been deleted — there is no
+      delete route and that is Rachad's call. LESSON: patching the read transport
+      was never enough, because the create path opens its OWN playwright session;
+      the test module now patches `sync_playwright` itself at module scope.
+      *** THAT ACCIDENT ALSO EXPOSED A REAL DEFECT. *** `placeholder` was in
+      `SOURCE_CLONE_FIELDS`, i.e. required byte-equal to the source — but Zoho
+      DERIVES it from the template's own name (`Default` -> `mt_default`,
+      `CC - Accounting` -> `mt_cc_accounting`), so a faithful clone can never carry
+      the source's. Every successful create would have failed its own read-back and
+      orphaned a template behind a permanently locked plan. Now checked by
+      `derived_placeholder`. No test written against the old assumption could have
+      caught it.
+      Tests: 147 email-template, 643 whole Zoho suite, 19 `test_ui_lane_lock`, 618
+      WooCommerce (1 PHP-only skip), all passing; eight mutations each caught.
+      NO PLAN IS STAGED: `stage --action create_accounting_test` now correctly
+      refuses because the target already exists. The encrypted vault and profile
+      .env were not touched and ZERO emails were sent.
       2026-08-11: two defects fixed in `zoho_banking_reconciliation_tool.py`, both
       found while checking an unrelated tripwire alert. NOT a new commission — no
       capability added, no guard relaxed, transport surface unchanged (still exactly
@@ -702,6 +743,137 @@ engineer.
       NO live Zoho call was made from this session: BUILD AND TESTS ONLY, zero writes,
       zero plans staged, zero emails. The two locked plans from 2026-08-11 stay locked
       and MUST NOT be retried — the transfer already exists.
+      2026-08-11: `zoho_sales_order_tool.py` commissioned — Rachad instructed Dado to
+      proceed client PO26330 from Structural Composites Technologies Ltd, create the
+      Sales Order and attach the original PO. ONE fixed transaction, nothing
+      parameterised: commands are `stage-sct-po26330` (no arguments at all) and
+      `commit-sct-po26330 --plan --approval`, action
+      `create_sct_po26330_draft_sales_order_with_attachment`. Customer
+      `96274000000186533`, addresses `96274000000186536`/`96274000000186538`, contact
+      person Bon Bacani `96274000000509126`, item `96274000000523055` (SKU
+      `FNPTCOUPLING-DERAKANE470-3/4"6"`) qty 2 at CAD 50.20, GST
+      `96274000000035512` 5%, reference `PO26330`, date 2026-08-11, required
+      2026-08-12, payment terms 30 / Net 30, fixed notes, CAD 100.40 / 5.02 / 105.42.
+      *** THE RATE IS DELIBERATELY NOT THE LIVE ITEM RATE. *** The item sells at CAD
+      45.72; this order is CAD 50.20 because the client PO and Rachad's own emailed
+      offer of 2026-08-07 both say so. The tool reads and displays the live rate but
+      never substitutes it and never alters the item.
+      *** TWO TRAPS IN THE ITEM LIST, both named and refused in code. *** The 3/4" x 8"
+      variation `96274000000523057` happens to sell at exactly CAD 50.20 — the PO price
+      — and has ZERO physical stock; and `96274000000508303` is literally named
+      `LEGACY — DO NOT USE` (also CAD 50.20, zero stock) and is the item the historical
+      SO-00020 used. Only `96274000000523055` has stock (exactly 2), and staging refuses
+      unless `actual_available_stock` >= 2 — the PHYSICAL figure, not the committed
+      projection.
+      *** SO-00020 IS NOT A DUPLICATE. *** It carries the identical CAD 105.42 total but
+      has no PO reference and used the legacy item. The duplicate sweep therefore matches
+      ONLY on a normalized reference of `26330`/`po26330` (any customer) or a still-OPEN
+      same-customer order naming the PO in its text — never on an amount. A closed
+      historical order is never even read in detail, and SO-00020 is not touched.
+      *** THE OPTIONAL-FIELD CONTRACT IS PROVED LIVE, NOT ASSUMED. *** The supplied
+      `zoho_readback.json` is a KEY PROJECTION written by `zoho_crosscheck.py`, not a
+      full Zoho response — its header keeps 19 hand-picked keys — so the absence of
+      `shipment_date`, `contact_persons` or `documents` in that artifact proves NOTHING.
+      Do not read a projection as a contract. Instead stage GET-reads one fixed existing
+      order (SO-00041 `96274000001071007`, read-only, never written) and asks which keys
+      it actually exposes. Presence is positive proof and enables the field; ABSENCE IS
+      "NOT PROVEN", so the field is omitted rather than guessed — and because Zoho omits
+      keys it has no value for, that asymmetry is deliberate. `payment_terms` is the one
+      key that is not optional: the PO says Net 30 explicitly, so if the live contract
+      does not expose it, nothing is staged. When `shipment_date` is unproven the required
+      date still lives in the fixed notes (`Required: 2026-08-12`), which are byte-exact
+      in both directions, and the plan says which placement was used.
+      *** CREATION AND ATTACHMENT ARE DELIBERATELY NOT ATOMIC. *** One JSON POST
+      `/books/v3/salesorders`, then one multipart POST
+      `/books/v3/salesorders/{new_id}/attachment` where `{new_id}` comes ONLY from the
+      create response — a pre-existing order ID is refused by the route guard. So the
+      order CAN exist without its attachment; the plan and the stage summary say so
+      before Rachad approves. The attachment is proven by GETting it back and hashing the
+      returned bytes against the fixed SHA-256; a JSON message instead of the file, or an
+      empty body, is not a verification. Attachment metadata on the order GET is checked
+      too where exposed. Zoho's own numbering assigns the order number
+      (`salesorder_number` is absent from the allowlist and read-back refuses a number
+      that IS the PO number); `ignore_auto_number_generation` appears once in the whole
+      module, inside the refused-key list.
+      Transport: exactly ONE `urlopen` call site behind a method allowlist of
+      `("GET", "POST")`, so no update or delete verb exists even to be misused. Exactly
+      five route families are constructible, asserted as a set by a test that parses the
+      module's AST. No mail/SMTP/Graph/Outlook/recipient path, no browser or CDP path.
+      Fingerprint drift, a late duplicate, a changed contract or a missing scope all
+      refuse BEFORE the exclusive lock, so they are FREE refusals that leave the approved
+      plan still committable — the lock is taken only immediately before the first POST.
+      Scope `ZohoBooks.salesorders.CREATE` was added to the PREPARED list ONLY — NOT YET
+      LIVE: Rachad must run PREPARE_DADO_ZOHO_ACCESS.bat, create the grant, then
+      REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. No sales-order UPDATE/DELETE/
+      ALL/fullaccess scope and no Inventory sales-order write scope exists.
+      Tests: 95 new (`test_zoho_sct_po26330_sales_order.py`, 1 skipped where Windows
+      refuses to create a symlink), 806 across the whole Zoho suite, all passing;
+      WooCommerce 618 passed / 1 skipped. Containment tests scan the module with
+      comments and docstrings STRIPPED — a raw-text scan only ever proves the prose
+      mentions what it refuses. Eight deliberate mutations (tolerant approval, dropped
+      CREATE-scope check, attachment to any ID, unverified attachment hash, disabled
+      duplicate sweep, unrequired Draft status, unrequired physical stock, non-exclusive
+      lock) were each caught by the suite. Two pre-existing tests were EXTENDED, not
+      weakened, because this commission superseded them: both asserted
+      `ZohoBooks.salesorders.CREATE` was uncommissioned, and each now pins the broader
+      sales-order scopes as still refused.
+      A live-read defect was also fixed in the sweep guard: an empty `page_context`
+      dict was treated as "last page", which would report a PARTIAL order-book read as a
+      complete one. An absent `has_more_page` now fails closed.
+      BUILD AND TESTS ONLY — the encrypted vault, .env and live profile were not
+      touched, NO plan was staged, and there were ZERO Zoho writes, ZERO sales orders
+      created, ZERO attachments uploaded and ZERO emails.
+      2026-08-11 (same day, later): *** RACHAD CORRECTED THE TAX — ONTARIO HST 13%,
+      NOT GST 5%. *** His words: "we want to charge sale of Ontario". The tool now
+      charges live tax `96274000000035516` `ON HST` at 13%: sub-total CAD 100.40
+      (still the client PO's own), tax CAD 13.05, total CAD 113.45, Decimal
+      ROUND_HALF_UP. Every non-tax fact above is unchanged — customer, PO reference,
+      item, quantity 2, rate CAD 50.20, dates, addresses, Bon, Net 30, notes, stock
+      rule, PDF path/hash/size, attachment behaviour and every guard.
+      *** THE PO'S OWN TAX FIGURE IS NOW A SECOND DELIBERATE DEPARTURE. *** The rate
+      already differed from the live item rate; now the tax differs from the client
+      PO, which prints `GST (ITC)@5.0% CAD 5.02`. Both departures are stated with
+      their source in the staged plan, and `build_totals` no longer checks the tax
+      against the PO at all — only the sub-total is the PO's figure. Keeping the PO's
+      printed GST as a named constant (`CLIENT_PO_TAX_LABEL` / `CLIENT_PO_TAX_TOTAL`)
+      is deliberate: the difference is disclosed, not silently applied.
+      MANITOBA, which he asked about in the same breath: read-only, the 12 months to
+      2026-08-11 hold 4 Manitoba-destined Books invoices — CAD 12,100.20 net, CAD
+      605.01 GST, CAD 12,705.21 total, zero credit notes. With this PO's CAD 100.40
+      that is CAD 12,200.60, CAD 17,799.40 below Manitoba's CAD 30,000 threshold.
+      Manitoba Finance Bulletin RST 004 (rev. June 2024) states that threshold but
+      also caveats out-of-province sellers who have not paid Manitoba RST on goods
+      bought for resale; and CRA GST/HST Memorandum 3-3-3 (April 2026) paras 13-16
+      say that where the PURCHASER set the freight terms and account and the supplier
+      merely calls that carrier for pickup, the supplier does not retain the carrier
+      and delivery stays at the supplier's premises — PO26330 says Puro Collect on
+      SCT account 3763800. This tool neither decides nor alters any registration.
+      TOOL IS v2.0.0 / SCHEMA 2, so the one plan staged under the GST-5% build fails
+      closed. It is additionally named by SHA-256 (`SUPERSEDED_PLAN_SHA256`) so a
+      retry is told WHY rather than only that the plan is invalid. That plan,
+      `20260811T175734Z_create_sct_po26330_draft_sales_order_with_attachment_2950664b01e2366a.json`,
+      WAS NEVER APPROVED AND NEVER COMMITTED (no lock file was ever written); its
+      file is deliberately left on disk, byte-unmodified, as the record.
+      Tests: 100 in the SCT file (5 new, 1 pre-existing Windows symlink skip), 812
+      across the whole Zoho suite, all passing; WooCommerce 618 passed / 1 PHP-only
+      skip; `test_ui_lane_lock` 19. Three mutations were each caught: reverting the
+      version/schema bump (5 failures), deleting the superseded-SHA guard (1), and
+      putting GST 5% back (59). The strongest regression test copies the REAL
+      superseded plan file into a patched plan folder and drives a full
+      `command_commit` with the real approval word — it refuses, writes nothing,
+      locks nothing, and the original file is proven unchanged afterwards.
+      ALSO FIXED, and it was stale rather than wrong-by-design: `zoho_tool.py`
+      connect/reauthorize/check each printed "... and order write scopes: ABSENT"
+      while `ZohoBooks.salesorders.CREATE` sat in SCOPES — and `command_check`
+      only reaches that line after proving the saved connection holds every scope
+      in SCOPES, so the claim was false exactly when it printed. Those three lines
+      now disclose the one commissioned sales-order write and keep ABSENT for what
+      genuinely is absent (sales-order UPDATE/DELETE, estimate/invoice DELETE,
+      status/send/void/approval/payment/convert, stock adjustment). NO scope list
+      and NO guard changed — only the narration, pinned by a new test.
+      BUILD AND TESTS ONLY, again: no live stage, ZERO Zoho writes, ZERO sales
+      orders created, ZERO attachments uploaded, ZERO emails, vault and .env
+      untouched, live profile files untouched.
 - [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
       existing-product image-alt-only extension to `woocommerce_change_tool.py`.
       Every plan must carry the complete gallery with unchanged IDs and order;
