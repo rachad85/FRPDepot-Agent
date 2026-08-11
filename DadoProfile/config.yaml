@@ -4,6 +4,15 @@ model:
   base_url: ''
   api_mode: chat_completions
 agent:
+  # PROMPTS THAT NEVER EXPIRE (Rachad, 2026-08-11). 0 = unlimited here;
+  # `clarify_timeout` uses the "<= 0 means unlimited" convention. Default is
+  # 3600s. Pairs with approvals.discord_prompt_timeout below - one question is
+  # governed by TWO independent clocks and both must be unlimited. Full
+  # reasoning: CLAUDE.md, "PROMPTS THAT NEVER EXPIRE (2026-08-11)".
+  # MIRRORED FROM LIVE 2026-08-11: this key existed only in the live profile,
+  # so a runtime import copying this file over live would have silently
+  # reverted the fix Rachad asked for.
+  clarify_timeout: 0
   max_turns: 60
   service_tier: normal
   verbose: false
@@ -107,6 +116,20 @@ platforms:
 _config_version: 33
 approvals:
   destructive_slash_confirm: false
+  # UNLIMITED Discord button view (-> discord.ui.View timeout=None, never
+  # expires). Telegram's inline keyboard already had no client-side expiry;
+  # Discord greyed the identical prompt out after 5 minutes. Requires the
+  # local patch to _read_discord_prompt_timeout in the shared hermes install
+  # (see CLAUDE.md and C:\AgentTeam\Sync\patches\).
+  # THE WORD, NOT 0, IS DELIBERATE: a gateway still running the pre-patch
+  # code reads `0` as 30 SECONDS but cannot parse `never`, so it keeps the
+  # unchanged 300s default until it is restarted. No regression window.
+  discord_prompt_timeout: never
+  # Agent-side wait for exec approvals. NOT 0 here: approval.py uses
+  # `max(timeout, 0)` as an absolute deadline, so 0 means an INSTANT
+  # fail-closed deny, not unlimited. 24h is the practical "never".
+  # Released early by /stop and by dado's 4am session_reset.
+  timeout: 86400
 telegram:
   reactions: true
 onboarding:

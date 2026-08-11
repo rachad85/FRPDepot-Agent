@@ -66,8 +66,17 @@ SESSION_COMMAND = [
     "--no-first-run",
     "--disable-sync",
     "--disable-save-password-bubble",
-    "https://inventory.zoho.com/app",
-    "https://books.zoho.com/app",
+    # The CANADIAN data centre. These must match zoho_ui_session.SESSIONS and
+    # zoho_banking_reconciliation_tool.BOOKS_UI_ORIGIN, which keep only pages
+    # under https://books.zohocloud.ca/app. Until 2026-08-11 these two lines
+    # named the US hosts, so every automatic restart handed back a session on
+    # the wrong data centre: the keepalive then saw a sign-in page, logged
+    # "signed out; not restarting" and waited for a human. That is what took
+    # the Zoho UI down 2026-08-10 23:30 -> 08-11 09:40 and killed the 08:15
+    # daily banking review with "Exactly one authenticated Canadian Zoho Books
+    # app page must be open".
+    "https://inventory.zohocloud.ca/app",
+    "https://books.zohocloud.ca/app",
 ]
 
 # A page sitting on any of these means the browser is up but Zoho has signed us
