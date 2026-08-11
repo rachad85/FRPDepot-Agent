@@ -27,6 +27,7 @@ $Hermes      = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\her
 $VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
 $Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
 $LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
+$SoulSync    = Join-Path $Root 'Dado\Tools\watch\dado_soul_sync.py'
 # Rachad asked (2026-08-11) for this cross-check. It is the ONLY thing in this
 # tree that reaches into TDI's, and it reaches for exactly one file.
 $NeighbourHeartbeat = 'C:\AgentTeam\Sync\aze_heartbeat_check.py'
@@ -143,6 +144,28 @@ if (Test-GatewayUp) {
         } catch {
             # A broken lane checker must never take down the keep-alive itself.
             Write-Log "LANE HEALTH CHECK FAILED: $($_.Exception.Message)"
+        }
+    }
+
+    #    A running Dado can still be running the WRONG RULES. Commissioned rules
+    #    are written to the committed mirror DadoProfile\SOUL.md, but the file she
+    #    reads is the one in her hermes profile - and on 2026-08-11 a rule landed
+    #    in the mirror and never reached her TWICE, hours apart, with every health
+    #    signal reporting fine. No existing check can see it.
+    #
+    #    Only ever mirror -> live, and only when purely additive: if the live file
+    #    holds something the mirror does not, the sync REFUSES and reports rather
+    #    than destroying it. Silent when already equal.
+    if ((Test-Path $SoulSync) -and (Test-Path $VenvPython)) {
+        $soulArgs = @($SoulSync)
+        if ($WhatIfOnly) { $soulArgs += '--dry-run' }
+        try {
+            & $VenvPython @soulArgs 2>&1 | Where-Object { $_ } | ForEach-Object {
+                Write-Log "soul-sync: $_"
+            }
+        } catch {
+            # Same rule as the lane checker: never take down the keep-alive.
+            Write-Log "SOUL SYNC CHECK FAILED: $($_.Exception.Message)"
         }
     }
     exit 0
