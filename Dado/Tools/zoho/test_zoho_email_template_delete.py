@@ -170,6 +170,97 @@ class DeleteContractGateTests(unittest.TestCase):
         self.assertIn(tool.DELETE_TARGET_TEMPLATE_ID, tool.DELETE_PATH)
 
 
+class RowLocator:
+    def __init__(self, text: str) -> None:
+        self.text = text
+        self.controls: list[str] = []
+
+    def is_visible(self) -> bool:
+        return True
+
+    def inner_text(self) -> str:
+        return self.text
+
+    def get_by_role(self, role, name=None, exact=None):
+        self.controls.append(f"{role}:{name}")
+        return self
+
+
+class RowsLocator:
+    def __init__(self, rows: list[RowLocator]) -> None:
+        self.rows = rows
+
+    def filter(self, has_text=None, has=None):
+        return RowsLocator([r for r in self.rows if has_text.search(r.text)])
+
+    def count(self) -> int:
+        return len(self.rows)
+
+    def nth(self, index: int) -> RowLocator:
+        return self.rows[index]
+
+
+class RowPage:
+    """A page whose rows each carry their own disclosure button, as Zoho's does."""
+
+    def __init__(self, *texts: str) -> None:
+        self.rows = [RowLocator(t) for t in texts]
+
+    def locator(self, selector: str) -> RowsLocator:
+        assert selector == "tr"
+        return RowsLocator(list(self.rows))
+
+
+class TemplateRowScopingTests(unittest.TestCase):
+    """The defect that broke cloning outright once a second template existed."""
+
+    def test_the_right_row_is_found_among_several(self) -> None:
+        page = RowPage("Default  Invoice - ...", "CC - Accounting  Invoice - ...")
+        self.assertIn("CC - Accounting", tool.template_row(page, "CC - Accounting").text)
+        self.assertIn("Default", tool.template_row(page, "Default").text)
+
+    def test_a_page_with_two_templates_no_longer_defeats_the_lookup(self) -> None:
+        # Before the fix the disclosure was resolved page-wide, so two rows meant
+        # "found 2" and nothing could be cloned at all.
+        page = RowPage("Default  x", "CC - Accounting  x", "CC - All  x")
+        row = tool.template_row(page, "Default")
+        row.get_by_role("button", name=tool.ROW_DISCLOSURE_LABEL, exact=True)
+        self.assertEqual(row.controls, [f"button:{tool.ROW_DISCLOSURE_LABEL}"])
+
+    def test_a_missing_or_duplicated_row_is_refused(self) -> None:
+        for label, page in (
+            ("absent", RowPage("Default  x")),
+            ("duplicated", RowPage("CC - Accounting  x", "CC - Accounting  y")),
+        ):
+            with self.subTest(case=label):
+                with self.assertRaisesRegex(tool.EmailTemplateError, "Expected exactly one"):
+                    tool.template_row(page, "CC - Accounting")
+
+    def test_a_similar_name_makes_it_refuse_rather_than_pick_one(self) -> None:
+        """What this lookup does and does NOT guarantee, stated honestly.
+
+        Matching row TEXT cannot tell `Default` from a row named `Default Copy`
+        - the word appears in both. What it does do is refuse when more than one
+        row matches, so an ambiguous page stops the run instead of cloning from
+        a guess. The actual identity guarantee is downstream: the clone form's
+        `clone_email_template_id` must equal the source ID read from Zoho.
+        """
+        both = RowPage("Default  x", "Default Copy  x", "CC - Accounting  x")
+        with self.assertRaisesRegex(tool.EmailTemplateError, "Expected exactly one"):
+            tool.template_row(both, "Default")
+
+    def test_punctuated_names_still_match_as_whole_values(self) -> None:
+        # \\b would treat the hyphen and spaces as boundaries; the alphanumeric
+        # lookaround is what keeps these names matchable at all.
+        page = RowPage("CC - Accounting  x", "CC - All  x")
+        self.assertIn("CC - All", tool.template_row(page, "CC - All").text)
+
+    def test_the_delete_row_refuses_to_be_the_default_row(self) -> None:
+        page = RowPage("CC - Accounting  Default  x")
+        with self.assertRaisesRegex(tool.EmailTemplateError, "wrong template"):
+            tool.template_row(page, "CC - Accounting", must_not_match="Default")
+
+
 class FakeRoute:
     def __init__(self) -> None:
         self.continued = False
@@ -194,6 +285,163 @@ GOOD_URL = (
     f"https://books.zohocloud.ca/api/v3/settings/emailtemplates/{TARGET_ID}"
     f"?organization_id={ORG}"
 )
+
+
+class DriverPage:
+    """Enough of a page to record WHERE each control was resolved from.
+
+    The delete driver was the one browser path with no test at all, which is the
+    same shape of gap that let an unapproved live write reach production on
+    2026-08-11: patching a read transport proved nothing about a path that opens
+    its own session.
+    """
+
+    def __init__(self) -> None:
+        self.url = "https://books.zohocloud.ca/app"
+        self.clicks: list[str] = []
+        self.reloaded = False
+        self.rows = RowPage("Default  x", "CC - Accounting  x")
+
+    # -- navigation -------------------------------------------------
+    def route(self, _pattern, _handler) -> None: ...
+    def unroute(self, _pattern, _handler=None) -> None: ...
+    def wait_for_timeout(self, _ms) -> None: ...
+
+    def goto(self, url, **_kw) -> None:
+        self.url = "https://books.zohocloud.ca/app#/settings/emails/templates"
+
+    def reload(self, **_kw) -> None:
+        self.reloaded = True
+
+    # -- locators ---------------------------------------------------
+    def locator(self, selector: str):
+        if selector == "tr":
+            return RecordingRows(self, self.rows.rows)
+        if selector == ".modal.show":
+            return ModalLocator(self)
+        return RecordingLocator(self, f"page:{selector}")
+
+    def get_by_role(self, role, name=None, exact=None):
+        return RecordingLocator(self, f"PAGE-WIDE:{role}:{name}")
+
+
+class RecordingLocator:
+    def __init__(self, page: DriverPage, label: str) -> None:
+        self.page = page
+        self.label = label
+
+    def count(self) -> int:
+        return 1
+
+    def nth(self, _index):
+        return self
+
+    def is_visible(self) -> bool:
+        return True
+
+    def inner_text(self) -> str:
+        # Only the target row's own text; deliberately never mentions Default,
+        # so the must_not_match guard is exercised rather than bypassed.
+        return self.label.replace("ROW[", "").replace("]", "")
+
+    def filter(self, has_text=None, has=None):
+        return self
+
+    def get_by_role(self, role, name=None, exact=None):
+        return RecordingLocator(self.page, f"{self.label}>{role}:{name}")
+
+    def click(self, timeout=None) -> None:
+        self.page.clicks.append(self.label)
+
+
+class RecordingRows:
+    def __init__(self, page: DriverPage, rows) -> None:
+        self.page = page
+        self.rows = rows
+
+    def filter(self, has_text=None, has=None):
+        return RecordingRows(self.page, [r for r in self.rows if has_text.search(r.text)])
+
+    def count(self) -> int:
+        return len(self.rows)
+
+    def nth(self, index):
+        row = self.rows[index]
+        return RecordingLocator(self.page, f"ROW[{row.text.split('  ')[0]}]")
+
+
+class ModalLocator(RecordingLocator):
+    def __init__(self, page: DriverPage) -> None:
+        super().__init__(page, "MODAL")
+
+    def count(self) -> int:
+        return 1
+
+
+class FakeChromium:
+    def __init__(self, page) -> None:
+        self._page = page
+
+    def connect_over_cdp(self, _endpoint, timeout=None):
+        page = self._page
+
+        class Context:
+            pages = [page]
+
+        class Browser:
+            contexts = [Context()]
+
+        return Browser()
+
+
+class FakePlaywright:
+    def __init__(self, page) -> None:
+        self.chromium = FakeChromium(page)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        return None
+
+
+class DeleteDriverScopingTests(unittest.TestCase):
+    def run_driver(self, page):
+        import playwright.sync_api as pwapi
+        with mock.patch.object(pwapi, "sync_playwright", lambda: FakePlaywright(page)):
+            return tool.delete_template_via_ui("110002157575")
+
+    def test_the_disclosure_is_resolved_inside_the_target_row(self) -> None:
+        page = DriverPage()
+        with self.assertRaises(tool.EmailTemplateError):
+            # No request is emitted by the fake, so the driver reports that
+            # nothing was sent - after doing its clicking.
+            self.run_driver(page)
+        self.assertTrue(
+            page.clicks[0].startswith("ROW[CC - Accounting]>"),
+            f"disclosure came from {page.clicks[0]!r}, not from inside the row",
+        )
+        self.assertNotIn("PAGE-WIDE", " ".join(page.clicks))
+
+    def test_the_confirm_is_resolved_inside_the_modal(self) -> None:
+        page = DriverPage()
+        with self.assertRaises(tool.EmailTemplateError):
+            self.run_driver(page)
+        self.assertTrue(
+            any(c.startswith("MODAL>") for c in page.clicks),
+            f"confirm was not taken from the modal: {page.clicks}",
+        )
+
+    def test_the_modal_is_always_torn_down_afterwards(self) -> None:
+        page = DriverPage()
+        with self.assertRaises(tool.EmailTemplateError):
+            self.run_driver(page)
+        self.assertTrue(page.reloaded, "a confirmation modal was left standing")
+
+    def test_nothing_sent_means_a_refusal_not_a_silent_success(self) -> None:
+        page = DriverPage()
+        with self.assertRaisesRegex(tool.EmailTemplateError, "never emitted"):
+            self.run_driver(page)
 
 
 class DeleteInterceptorTests(unittest.TestCase):

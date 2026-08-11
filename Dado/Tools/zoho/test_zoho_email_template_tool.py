@@ -183,6 +183,17 @@ class FakeLocator:
     def locator(self, selector: str):
         return FakeLocator(self.page, f"{self.label}>{selector}", self.present)
 
+    def get_by_role(self, role, name=None, exact=None):
+        # Row-scoped lookups: the real page carries one disclosure button PER
+        # TEMPLATE, so every row control is resolved inside its own row.
+        return FakeLocator(self.page, f"{self.label}>role:{role}:{name}", self.present)
+
+    def inner_text(self):
+        marker = "|text:"
+        if marker in self.label:
+            return self.label.split(marker, 1)[1].replace("\\", "")
+        return self.label
+
     def count(self):
         return 1 if self.page.exists(self.label) else 0
 
@@ -279,7 +290,7 @@ class FakePage:
 
     def record_click(self, label: str) -> None:
         self.clicks.append(label)
-        if label == f"role:button:{emailtool.ROW_DISCLOSURE_LABEL}":
+        if label.endswith(f"role:button:{emailtool.ROW_DISCLOSURE_LABEL}"):
             return
         if label.endswith(f"|text:^{emailtool.CLONE_MENU_ITEM}$"):
             self.url = CLONE_FORM_URL
@@ -2268,8 +2279,15 @@ class EmailTemplateToolTests(unittest.TestCase):
     def test_clone_path_clicks_disclosure_then_clone_and_never_new_or_edit(self) -> None:
         page = self.fake_page()
         self.assertEqual(self.run_clone(page), "600")
+        # The disclosure is taken from INSIDE the Default row. A page-wide
+        # lookup resolved to several buttons the moment a second template
+        # existed, which broke cloning outright on 2026-08-11.
+        source_row = (
+            f"sel:tr|text:"
+            f"{emailtool.name_boundary(emailtool.SOURCE_TEMPLATE_NAME).pattern}"
+        )
         self.assertEqual(page.clicks, [
-            f"role:button:{emailtool.ROW_DISCLOSURE_LABEL}",
+            f"{source_row}>role:button:{emailtool.ROW_DISCLOSURE_LABEL}",
             f"sel:{emailtool.MENU_ITEM_SELECTOR}|text:^{emailtool.CLONE_MENU_ITEM}$",
             f"sel:div.form-group.row|has:sel:label|text:^{emailtool.CC_ROW_LABEL}$"
             f">{emailtool.CC_DROPDOWN_TOGGLER}",

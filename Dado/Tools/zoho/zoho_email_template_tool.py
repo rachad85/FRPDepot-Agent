@@ -1362,36 +1362,37 @@ def delete_interceptor(organization_id: str, state: dict[str, Any]):
     return intercept
 
 
-def delete_target_row(page: Any) -> Any:
-    """The one row for the fixed template, proven not to be the Default row.
+def name_boundary(name: str) -> "re.Pattern[str]":
+    """`name` as a whole value, so `Default` cannot match `Default Copy`.
 
-    The disclosure button is taken from INSIDE this row: the page now carries one
-    per template, so a page-wide lookup could open the wrong row's menu - and the
-    wrong row is the organization default.
+    An alphanumeric lookaround rather than \\b, because \\b treats punctuation
+    as a boundary and these names carry spaces and hyphens.
     """
-    rows = [
-        row for row in (
-            page.locator("tr").filter(
-                has_text=re.compile(re.escape(DELETE_TARGET_NAME))
-            ).nth(index)
-            for index in range(
-                page.locator("tr").filter(
-                    has_text=re.compile(re.escape(DELETE_TARGET_NAME))
-                ).count()
-            )
-        )
-        if row.is_visible()
-    ]
+    return re.compile(rf"(?<![A-Za-z0-9]){re.escape(name)}(?![A-Za-z0-9])")
+
+
+def template_row(page: Any, name: str, *, must_not_match: str = "") -> Any:
+    """The one visible table row for a template, by its displayed name.
+
+    *** EVERY row-level control must come from INSIDE the row this returns. ***
+    The page carries one `Show dropdown menu` button PER TEMPLATE, so a
+    page-wide lookup for it stops resolving the moment a second template exists
+    - which is exactly what happened once CC - Accounting was created on
+    2026-08-11. Scoping to the row is what makes the lookup correct; the
+    caller's own downstream identity check is what makes it safe.
+    """
+    locator = page.locator("tr").filter(has_text=name_boundary(name))
+    rows = [locator.nth(index) for index in range(locator.count())
+            if locator.nth(index).is_visible()]
     if len(rows) != 1:
         raise EmailTemplateError(
-            f"Expected exactly one visible row containing {DELETE_TARGET_NAME!r}; "
-            f"found {len(rows)}. Nothing was clicked."
+            f"Expected exactly one visible row for template {name!r}; found "
+            f"{len(rows)}. Refusing to guess which row Zoho means."
         )
-    text = rows[0].inner_text()
-    if re.search(rf"\b{re.escape(SOURCE_TEMPLATE_NAME)}\b", text):
+    if must_not_match and name_boundary(must_not_match).search(rows[0].inner_text()):
         raise EmailTemplateError(
-            f"The located row also mentions {SOURCE_TEMPLATE_NAME!r}. Refusing to "
-            "open a menu that might belong to the default template."
+            f"The row located for {name!r} also mentions {must_not_match!r}. "
+            "Refusing to open a menu that might belong to the wrong template."
         )
     return rows[0]
 
@@ -1428,7 +1429,9 @@ def delete_template_via_ui(organization_id: str) -> dict[str, Any]:
                     "Zoho Books navigation left the approved host (sign-in, consent "
                     "or CAPTCHA). Nothing was deleted."
                 )
-            row = delete_target_row(page)
+            row = template_row(
+                page, DELETE_TARGET_NAME, must_not_match=SOURCE_TEMPLATE_NAME
+            )
             _one_visible(
                 row.get_by_role("button", name=ROW_DISCLOSURE_LABEL, exact=True),
                 f"{DELETE_TARGET_NAME}-row {ROW_DISCLOSURE_LABEL!r} control",
@@ -2053,8 +2056,14 @@ def create_template_via_ui(
                     "or CAPTCHA). Nothing was saved."
                 )
 
+            # Scoped to the Default ROW. A page-wide lookup worked only while
+            # Default was the sole template; from the moment a second one exists
+            # it resolves to several buttons and this refuses instead of cloning.
+            # The clone_email_template_id check below is what proves the right
+            # template was opened - this only makes the control findable.
+            source_row = template_row(page, SOURCE_TEMPLATE_NAME)
             _one_visible(
-                page.get_by_role("button", name=ROW_DISCLOSURE_LABEL, exact=True),
+                source_row.get_by_role("button", name=ROW_DISCLOSURE_LABEL, exact=True),
                 f"{SOURCE_TEMPLATE_NAME}-row {ROW_DISCLOSURE_LABEL!r} control",
             ).click(timeout=10_000)
             page.wait_for_timeout(700)
