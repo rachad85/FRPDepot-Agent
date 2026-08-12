@@ -3,7 +3,27 @@ model:
   provider: openai-codex
   base_url: ''
   api_mode: chat_completions
+# *** NO `fallback_providers` HERE, AND THAT IS DELIBERATE. ***
+# CLAUDE.md: "NO fallback provider on purpose: primary down = honest failure,
+# never silent model drift (TDI learned this the hard way 2026-07-16)."
+#
+# The LIVE profile currently carries
+#   fallback_providers: [{provider: nous, model: deepseek/deepseek-v4-pro}]
+# which contradicts that decision, points at a provider recorded as UNFUNDED
+# ("marking nous unhealthy for 600s (payment / credit error)", plus a hard 404
+# on the model), and matches a KNOWN bug shape: TDI's CLAUDE.md records Hermes
+# falling back to deepseek-v4-pro and PERSISTING that fallback into config.yaml
+# as the new default, with a standing "re-check after any Codex outage" warning.
+#
+# It is therefore NOT mirrored. This file is the intended configuration, so
+# leaving the key out means a runtime import would REMOVE the unintended
+# fallback rather than cement it. Do not "fix" this by copying live.
+# Flagged for Rachad 2026-08-12; removing it from the live profile is his call,
+# and needs a gateway restart to take effect.
 agent:
+  # How often the gateway reports a long-running turn. Live since the
+  # Discord lane landed; absent from this mirror until 2026-08-12.
+  gateway_notify_interval: 300
   # PROMPTS THAT NEVER EXPIRE (Rachad, 2026-08-11). 0 = unlimited here;
   # `clarify_timeout` uses the "<= 0 means unlimited" convention. Default is
   # 3600s. Pairs with approvals.discord_prompt_timeout below - one question is
@@ -73,10 +93,18 @@ display:
   interim_assistant_messages: true
   platforms:
     telegram:
-      tool_progress: 'off'
+      # live carries the YAML boolean, not the string 'off'; both are falsy to
+      # hermes, but the mirror should say what actually runs.
+      tool_progress: false
       busy_ack_detail: false
       long_running_notifications: generic
       interim_assistant_messages: false
+      cleanup_progress: true
+    discord:
+      tool_progress: false
+      interim_assistant_messages: false
+      busy_ack_detail: false
+      long_running_notifications: generic
       cleanup_progress: true
   tool_progress: all
   cleanup_progress: false
@@ -113,6 +141,18 @@ group_sessions_per_user: true
 platforms:
   api_server:
     enabled: true
+  # The Discord lane, live since 2026-08-10 and absent from this mirror until
+  # 2026-08-12. The mirror did not know Dado had a second chat surface at all,
+  # so a runtime import would have taken it away - and a TEXT diff could never
+  # have shown that, because this file and the live one differ in key order and
+  # hand-written comments. That is why the drift check parses instead.
+  discord:
+    enabled: true
+    home_channel:
+      platform: discord
+      chat_id: '1536573814560002089'
+      name: '1536573814560002089'
+      user_id: '804875531220418623'
 _config_version: 33
 approvals:
   destructive_slash_confirm: false

@@ -262,6 +262,33 @@ TWO THINGS IT FOUND IMMEDIATELY:
     ignored. Launchers are now classified and exempt; 12 real copies are
     compared by hash.
 
+### OPEN — live `fallback_providers` contradicts the recorded decision (found 2026-08-12)
+
+CLAUDE.md: "NO fallback provider on purpose: primary down = honest failure,
+never silent model drift (TDI learned this the hard way 2026-07-16)."
+
+The LIVE dado profile carries:
+    fallback_providers: [{provider: nous, model: deepseek/deepseek-v4-pro}]
+
+Three reasons this matters rather than being cosmetic drift:
+ 1. It contradicts an explicit, dated decision of Rachad's.
+ 2. `nous` is recorded as UNFUNDED — "marking nous unhealthy for 600s
+    (payment / credit error)" plus a hard 404 on that model. A Codex hiccup
+    would route Dado at a provider that cannot answer.
+ 3. It matches a KNOWN BUG SHAPE. TDI's CLAUDE.md records Hermes falling back
+    to deepseek-v4-pro and PERSISTING that fallback into config.yaml as the new
+    default, with a standing "re-check after any Codex outage" warning. Nobody
+    is recorded as having chosen this for Dado.
+
+NOT mirrored into DadoProfile\config.yaml, deliberately: that file is the
+INTENDED configuration, so leaving the key out means a runtime import removes
+the unintended fallback rather than cementing it. The profile-mirror drift check
+treats it as EXPECTED divergence pinned to this exact value — silent while it
+stays, loud if live changes to anything else, silent again once it is gone.
+
+RACHAD'S CALL: removing it from the live profile is a model-routing change and
+needs a gateway restart. Not done unilaterally.
+
 ### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
 
 Fixed 2026-07-25. `NOISE_LINE` is anchored to line start, and `job id` / `cleaned up` were removed from it entirely — both are ordinary operations English. The ticker branch now only peels allowlisted frame words, so "Pending... payment from SCT" keeps its first word.

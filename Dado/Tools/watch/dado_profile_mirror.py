@@ -159,6 +159,20 @@ def deployed_scripts() -> dict[str, dict[str, Any]]:
     return out
 
 
+# Keys where mirror and live are KNOWN to differ on purpose, mapped to the live
+# value that divergence is recorded against. Reported only if live moves to
+# something else - a standing difference must not cry wolf every five minutes,
+# but it must not hide a CHANGE either.
+EXPECTED_CONFIG_DIVERGENCE = {
+    # CLAUDE.md: "NO fallback provider on purpose: primary down = honest
+    # failure, never silent model drift." Live carries one anyway, pointing at a
+    # provider recorded as unfunded, and matching the known fallback-persistence
+    # bug. The mirror deliberately omits it so an import REMOVES it rather than
+    # cementing it. See the comment at the top of DadoProfile\config.yaml.
+    "fallback_providers": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}],
+}
+
+
 def config_drift() -> list[str]:
     """Parsed live-vs-mirror comparison. Text comparison cannot do this job.
 
@@ -181,6 +195,13 @@ def config_drift() -> list[str]:
     diffs: list[str] = []
 
     def walk(a, b, prefix=""):
+        if prefix in EXPECTED_CONFIG_DIVERGENCE:
+            # Silent while live still holds exactly the value this divergence
+            # was recorded against; loud the moment it becomes something else.
+            if a == EXPECTED_CONFIG_DIVERGENCE[prefix]:
+                return
+            diffs.append(f"{prefix} (EXPECTED to diverge, but live has CHANGED to {a!r})")
+            return
         if isinstance(a, dict) and isinstance(b, dict):
             for key in sorted(set(a) | set(b)):
                 walk(a.get(key), b.get(key), f"{prefix}.{key}" if prefix else str(key))
