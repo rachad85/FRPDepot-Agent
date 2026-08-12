@@ -216,21 +216,96 @@ def main() -> int:
     for key in [k for k in state if k not in seen]:
         del state[key]
 
-    shown = problems[:MAX_PROBLEMS_PER_TICK]
-    held = len(problems) - len(shown)
-    for _, key, record in shown:
-        record["alerts"] += 1
-        record["last_alert"] = now.isoformat(timespec="seconds")
-        state[key] = record
+    # The forget-finished-turns cleanup above is HOUSEKEEPING, not an alert, so
+    # it persists either way - otherwise the state file grows forever whenever a
+    # send fails.
     save_state(state)
 
+    shown = problems[:MAX_PROBLEMS_PER_TICK]
+    held = len(problems) - len(shown)
     if shown:
         lines = [text for text, _, _ in shown]
         if held > 0:
             lines.append(f"({held} more stalled turn(s) not listed; still being tracked.)")
-        print("\n".join(lines))
+        message = "\n".join(lines)
+        # The print stays: it is the durable record in the cron output file.
+        print(message)
+
+        # BACKLOG B-08. The alert budget (MAX_ALERTS_PER_TURN) and the re-alert
+        # clock (REALERT_MINUTES) used to be spent HERE, before the print and
+        # long before hermes attempted delivery - so a dropped message consumed
+        # an alert Rachad never saw, and the 60-minute clock then suppressed the
+        # retry. Both are now spent only on a CONFIRMED send.
+        #
+        # queue_on_failure=False: this alert is re-derived from the live turn
+        # state every 15 minutes, so an unspent budget IS the queue.
+        if _deliver(message):
+            for _, key, record in shown:
+                record["alerts"] += 1
+                record["last_alert"] = now.isoformat(timespec="seconds")
+                state[key] = record
+            save_state(state)
+        else:
+            print("(delivery not confirmed - no alert budget was spent, so the "
+                  "next tick will report this again.)")
     return 0
 
 
+def _deliver(message: str) -> bool:
+    """Send an alert and report whether Telegram actually took it."""
+    # *** NEVER SEND FROM A TEST RUN. *** Added 2026-08-12 after wiring delivery
+    # into this path caused a plain `pytest` run of the existing suite to put 14
+    # real messages on Rachad's phone. The suite exercises the announce path, so
+    # any future test that touches it would do the same. Reported as delivered
+    # so the caller's persist-on-confirmed-send logic is still exercised; a test
+    # that wants to cover a FAILED send patches send_clean directly.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("(test run - delivery simulated, nothing sent.)")
+        return True
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from dado_inbox_reasoner import send_clean
+    except Exception as exc:  # noqa: BLE001
+        print(f"(could not load the sender - {type(exc).__name__}: {exc}; "
+              "no alert budget spent.)")
+        return False
+    try:
+        return bool(send_clean(message, queue_on_failure=False))
+    except Exception as exc:  # noqa: BLE001
+        print(f"(send raised - {type(exc).__name__}: {exc}; no budget spent.)")
+        return False
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # B-08 consequence: this job now runs with cron `deliver: local`, so hermes
+    # delivers nothing for it - including the "Script exited with code 1"
+    # summary that used to reach Rachad on a crash. The tripwire exists to
+    # notice silence; it must not become silent itself. Reports its own crash
+    # out of band, through the alerter rather than through cron.
+    try:
+        sys.exit(main())
+    except SystemExit:
+        raise
+    except Exception as _exc:  # noqa: BLE001
+        import subprocess
+        import traceback
+
+        _detail = traceback.format_exc(limit=4)
+        print(f"STALL TRIPWIRE FAILED: {type(_exc).__name__}: {_exc}")
+        try:
+            if os.environ.get("PYTEST_CURRENT_TEST"):
+                raise RuntimeError("test run - alerter suppressed")
+            subprocess.run(
+                [sys.executable,
+                 str(Path(__file__).resolve().parent / "dado_urgent_alert.py"),
+                 "--reason", "stall_tripwire_crashed",
+                 "--message",
+                 "Dado's stall tripwire crashed. Nothing is watching for a turn "
+                 "that goes quiet.\n\n"
+                 f"{type(_exc).__name__}: {_exc}\n\n{_detail[-600:]}"],
+                capture_output=True, text=True, timeout=120,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception:
+            pass  # the print above still lands in the cron output file
+        sys.exit(1)

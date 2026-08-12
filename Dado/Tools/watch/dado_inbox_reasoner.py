@@ -420,9 +420,24 @@ def _try_send(message):
     return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
 
-def send_clean(message):
+def send_clean(message, queue_on_failure=True):
     """Send, retrying transient failures; queue for the next run if it never
-    lands so an alert is never silently lost (Aze's dropped-RFQ lesson)."""
+    lands so an alert is never silently lost (the dropped-RFQ lesson).
+
+    Returns True ONLY when Telegram accepted the message.
+
+    queue_on_failure=False is for callers whose alert is RE-DERIVED from durable
+    state on a short cadence - job_runner's 10-minute watch tick and
+    stall_tripwire's 15-minute tick (backlog B-08). They keep the alert owed in
+    their OWN state file and re-emit it themselves, so queueing here as well
+    would deliver the same warning twice: once when the next inbox sweep flushes
+    this queue, and once from the caller's own re-derivation.
+
+    It also keeps them off the shared undelivered_alerts.txt, which is a
+    read-all/rewrite-all over one file with no lock. With inbox-watch (2h),
+    job-watch (10m) and the tripwire (15m) all touching it, job-watch and the
+    tripwire would collide on the same minute every 30 minutes.
+    """
     last = ""
     try:
         for attempt in range(1, 4):
@@ -439,8 +454,12 @@ def send_clean(message):
         # or the alert dies with the traceback instead of waiting for next sweep.
         last = f"{type(exc).__name__}: {exc}"
         log(f"send loop raised, falling through to the queue: {last}")
-    queue_undelivered(message)
-    log(f"send failed after 3 attempts; queued for next sweep. last_err={last[:200]!r}")
+    if queue_on_failure:
+        queue_undelivered(message)
+        log(f"send failed after 3 attempts; queued for next sweep. last_err={last[:200]!r}")
+    else:
+        log(f"send failed after 3 attempts; caller re-derives, not queued. "
+            f"last_err={last[:200]!r}")
     return False
 
 

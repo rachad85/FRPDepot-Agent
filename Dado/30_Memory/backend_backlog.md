@@ -157,12 +157,27 @@ but only `problems[:3]` print. The 4th session climbs to `MAX_ALERTS_PER_TURN`
 and goes permanently quiet **having never once reached Rachad**.
 FIX — build the printed slice first, then increment only for included entries.
 
-### B-08 OPEN — Job-watch and tripwire persist "announced" before delivery succeeds
-`job_runner.py:286`, `stall_tripwire.py:176`. Both use cron `deliver: telegram`,
-which has no retry and no undelivered queue. State says announced even when the
-message was dropped; never re-emitted.
-FIX — route through `send_clean`/`queue_undelivered`; persist only after a
-confirmed send.
+### B-08 FIXED 2026-08-12 — Job-watch and tripwire persisted "announced" before delivery succeeded
+`job_runner.py`, `stall_tripwire.py`. Both used cron `deliver: telegram`, which
+has no retry and no undelivered queue, and nothing reads `last_delivery_error`.
+State said announced even when the message was dropped; never re-emitted.
+FIXED on Rachad's own approval (he was asked first — see D-08 below; he chose
+the bare-text option knowingly). Both scripts now OWN their delivery through
+`send_clean(..., queue_on_failure=False)` and persist only after Telegram
+confirms: job-watch leaves `reported` unset, and the tripwire spends NO alert
+budget and does NOT start the 60-minute re-alert clock. Both alerts are
+re-derived from durable state every 10/15 min, so the unspent state IS the
+queue — deliberately NOT the shared `undelivered_alerts.txt`, which is an
+unlocked read-all/rewrite-all that these two would collide on every 30 minutes,
+and which would deliver a re-derived alert twice.
+Both cron jobs moved to `deliver: local` so hermes does not send a second copy.
+CONSEQUENCE, accepted: hermes no longer wraps these in "Cronjob Response: ..."
+and no longer delivers their crash summary either — so each script now reports
+its OWN crash through `dado_urgent_alert.py`, out of band.
+TESTS: 11 in `test_watch_delivery.py`, plus a hard guard — both scripts refuse
+to send when `PYTEST_CURRENT_TEST` is set. Wiring delivery into these paths made
+a plain pytest run put 14 real messages on Rachad's phone before that guard
+existed.
 
 ### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
 
@@ -646,6 +661,9 @@ lane. Note this brushes Hard Rule 4 in both directions — raise it, do not act.
 tripwire deliver via cron with no retry or queue) and **B-17** (a 15-item digest
 can exceed `max_turns: 60` and truncate with no indication) are open. Both are
 the two items Rachad reserved for himself.
+UPDATE 2026-08-12: **B-08 is FIXED**, and it was put to him first rather than
+applied silently, precisely because of this line. He chose the option that drops
+hermes' "Cronjob Response:" wrapper. **B-17 remains open and still reserved.**
 
 
 ---

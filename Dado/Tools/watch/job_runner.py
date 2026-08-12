@@ -442,11 +442,61 @@ def cmd_watch(_: argparse.Namespace) -> int:
         lines = [text for text, _, _ in shown]
         if held > 0:
             lines.append(f"({held} more job update(s) held for the next tick.)")
-        print("\n".join(lines))
-        for _, job_id, flags in shown:
-            if job_id and flags:
-                save_flags(job_id, **flags)
+        message = "\n".join(lines)
+        # The print STAYS. It is the durable record under cron\output\<job_id>\
+        # and the audit trail for what this tick decided; it is no longer the
+        # delivery. Removing it because "the script sends now" would delete that.
+        print(message)
+
+        # BACKLOG B-08. This used to persist reported/stall_reported here,
+        # unconditionally, on the strength of the print(). Delivery happened
+        # later, out of process, with no callback - so a dropped message left
+        # state saying "announced" and it was never re-emitted. cron
+        # deliver:telegram has no retry and no undelivered queue, and nothing
+        # reads last_delivery_error.
+        #
+        # Now the script owns delivery and the flag follows the CONFIRMED send.
+        # queue_on_failure=False on purpose: this alert is re-derived from the
+        # job records every 10 minutes, so leaving the flag unset IS the queue.
+        if _deliver(message):
+            for _, job_id, flags in shown:
+                if job_id and flags:
+                    save_flags(job_id, **flags)
+        else:
+            # Nothing persisted: the next tick re-derives and tries again.
+            print("(delivery not confirmed - these updates stay owed and will "
+                  "be re-sent on the next tick.)")
     return 0
+
+
+def _deliver(message: str) -> bool:
+    """Send an announcement and report whether Telegram actually took it.
+
+    The reasoner import is LAZY and local on purpose: `job_runner start` is how
+    Dado launches every long job, and a broken import in a sibling module must
+    never be able to take that path down.
+    """
+    # *** NEVER SEND FROM A TEST RUN. *** Added 2026-08-12 after wiring delivery
+    # into this path caused a plain `pytest` run of the existing suite to put 14
+    # real messages on Rachad's phone. The suite exercises the announce path, so
+    # any future test that touches it would do the same. Reported as delivered
+    # so the caller's persist-on-confirmed-send logic is still exercised; a test
+    # that wants to cover a FAILED send patches send_clean directly.
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        print("(test run - delivery simulated, nothing sent.)")
+        return True
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from dado_inbox_reasoner import send_clean
+    except Exception as exc:  # noqa: BLE001
+        print(f"(could not load the sender - {type(exc).__name__}: {exc}; "
+              "this tick's updates stay owed.)")
+        return False
+    try:
+        return bool(send_clean(message, queue_on_failure=False))
+    except Exception as exc:  # noqa: BLE001
+        print(f"(send raised - {type(exc).__name__}: {exc}; updates stay owed.)")
+        return False
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -489,6 +539,37 @@ def main() -> int:
     command = getattr(args, "command", None)
     if command and command[0] == "--":
         args.command = command[1:]
+
+    # B-08 consequence, and the trap in that change: this job now runs with cron
+    # `deliver: local`, so hermes delivers NOTHING for it - including the
+    # "Script exited with code 1" summary that used to reach Rachad when this
+    # script crashed. A watcher that dies silently is worse than no watcher, so
+    # the watch tick reports its own crash through the out-of-band alerter (not
+    # through cron, which is exactly what is no longer listening).
+    if getattr(args, "mode", None) == "watch" or argv[0] == "watch":
+        try:
+            return args.func(args)
+        except Exception as exc:  # noqa: BLE001
+            import traceback
+            detail = traceback.format_exc(limit=4)
+            print(f"JOB WATCH FAILED: {type(exc).__name__}: {exc}")
+            try:
+                if os.environ.get("PYTEST_CURRENT_TEST"):
+                    raise RuntimeError("test run - alerter suppressed")
+                subprocess.run(
+                    [sys.executable,
+                     str(Path(__file__).resolve().parent / "dado_urgent_alert.py"),
+                     "--reason", "job_watch_crashed",
+                     "--message",
+                     "Dado's background-job watch crashed and is not reporting "
+                     "finished or failed jobs.\n\n"
+                     f"{type(exc).__name__}: {exc}\n\n{detail[-600:]}"],
+                    capture_output=True, text=True, timeout=120,
+                    creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                )
+            except Exception:
+                pass  # the print above is still in the cron output file
+            return 1
     return args.func(args)
 
 
