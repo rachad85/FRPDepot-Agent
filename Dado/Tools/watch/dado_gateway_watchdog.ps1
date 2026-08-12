@@ -30,9 +30,11 @@ $LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
 $DeliveryWatch = Join-Path $Root 'Dado\Tools\watch\dado_delivery_watch.py'
 $ProfileMirror = Join-Path $Root 'Dado\Tools\watch\dado_profile_mirror.py'
 $SoulSync    = Join-Path $Root 'Dado\Tools\watch\dado_soul_sync.py'
-# Rachad asked (2026-08-11) for this cross-check. It is the ONLY thing in this
-# tree that reaches into TDI's, and it reaches for exactly one file.
-$NeighbourHeartbeat = 'C:\AgentTeam\Sync\aze_heartbeat_check.py'
+# Rachad asked (2026-08-11) for this cross-check, and on 2026-08-12 asked for Sary
+# to be added to the ring - which RETARGETED this line from Aze to Sary. It is the
+# ONLY thing in this tree that reaches outside it, and it reaches for exactly one
+# file. Aze is still watched: Sary's keep-alive now reads her heartbeat.
+$NeighbourHeartbeat = 'C:\Marketing\Sary\Tools\watch\sary_heartbeat_check.py'
 
 function Write-Log([string]$Message) {
     try {
@@ -73,24 +75,38 @@ try {
 
 # 0b. Neighbour check, BEFORE anything else in this file.
 #
-#    Aze's watchdog can report a run that refused to act, but it cannot report
-#    its own absence: if her scheduled task is disabled or deleted, nothing runs
-#    and the silence looks exactly like health. Hers stamps a heartbeat file on
-#    every run; this task is a SEPARATE scheduler on a separate 5-minute cycle,
-#    which is the only reason it can notice hers has stopped. (2026-08-10 to
-#    -08-11 she had no auto-recovery for 24 hours and every signal read green.)
+#    *** AS OF 2026-08-12 THIS WATCHES SARY, NOT AZE. *** The mutual pair became a
+#    three-node RING when Rachad added the marketing agent:
+#        Aze  ->  Dado  ->  Sary  ->  Aze
+#    Aze's launcher still reads Dado's heartbeat; this now reads Sary's; and Sary's
+#    keep-alive reads Aze's. Nothing lost coverage - every node is still watched by
+#    exactly one other.
+#
+#    ONE WATCHER PER NODE, DELIBERATELY. Simply ADDING Sary here (so this watched
+#    both) looks like harmless redundancy and is a defect: each checker keeps ONE
+#    state file, so two schedulers both increment the same consecutive-samples
+#    counter - halving the intended delay before paging - and can lose each other's
+#    writes. Hence a ring rather than a mesh.
+#
+#    A watchdog can report a run that refused to act, but it cannot report its own
+#    absence: if its scheduled task is disabled or deleted, nothing runs and the
+#    silence looks exactly like health. Each one stamps a heartbeat file on every
+#    run; this task is a SEPARATE scheduler on a separate 5-minute cycle, which is
+#    the only reason it can notice another has stopped. (2026-08-10 to -08-11 Aze
+#    had no auto-recovery for 24 hours and every signal read green.)
 #
 #    THREE DELIBERATE CHOICES:
 #    a) It runs BEFORE the disable-flag check below. That flag means "Rachad
-#       stopped DADO on purpose" - it is not a reason to stop watching Aze, and
-#       this task keeps firing either way.
+#       stopped DADO on purpose" - it is not a reason to stop watching the
+#       neighbour, and this task keeps firing either way.
 #    b) It is DETACHED, fire-and-forget. Dado's own recovery must never wait on
 #       a neighbour's monitor; if that script ever hangs, this line has already
 #       returned.
 #    c) Its output is discarded, and all of its own state, logging and alerting
-#       live inside TDI's tree. No TDI detail reaches an FRP log, git history or
-#       the nightly conduct bundle. This side knows one fact: the path.
-#    Absent file = TDI is not installed here = silently skipped.
+#       live inside the MARKETING tree and use Sary's own bot - a Sary problem
+#       should arrive from Sary. No marketing detail reaches an FRP log, git
+#       history or the nightly conduct bundle. This side knows one fact: the path.
+#    Absent file = the marketing tree is not installed here = silently skipped.
 if ((Test-Path $NeighbourHeartbeat) -and (Test-Path $VenvPython)) {
     try {
         if ($WhatIfOnly) {
