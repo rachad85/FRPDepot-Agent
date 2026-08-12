@@ -469,6 +469,26 @@ def cmd_watch(_: argparse.Namespace) -> int:
     return 0
 
 
+def _test_run_suppressed() -> bool:
+    """Is this process a test run? Delegates to the canonical fuse.
+
+    The canonical implementation is `dado_inbox_reasoner.is_test_run` - ONE
+    copy, because four hand-copied guards is exactly how the unittest half of
+    this protection went missing in the first place.
+
+    FALLS BACK to the old env probe if that import fails, and the direction is
+    deliberate: a broken sibling import must never SILENCE a real crash alert.
+    Failing this way can only lose the unittest half of the guard, never the
+    watcher's ability to tell Rachad it died.
+    """
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from dado_inbox_reasoner import is_test_run
+        return bool(is_test_run())
+    except Exception:  # noqa: BLE001
+        return bool(os.environ.get("PYTEST_CURRENT_TEST"))
+
+
 def _deliver(message: str) -> bool:
     """Send an announcement and report whether Telegram actually took it.
 
@@ -482,7 +502,7 @@ def _deliver(message: str) -> bool:
     # any future test that touches it would do the same. Reported as delivered
     # so the caller's persist-on-confirmed-send logic is still exercised; a test
     # that wants to cover a FAILED send patches send_clean directly.
-    if os.environ.get("PYTEST_CURRENT_TEST"):
+    if _test_run_suppressed():
         print("(test run - delivery simulated, nothing sent.)")
         return True
     try:
@@ -554,7 +574,7 @@ def main() -> int:
             detail = traceback.format_exc(limit=4)
             print(f"JOB WATCH FAILED: {type(exc).__name__}: {exc}")
             try:
-                if os.environ.get("PYTEST_CURRENT_TEST"):
+                if _test_run_suppressed():
                     raise RuntimeError("test run - alerter suppressed")
                 subprocess.run(
                     [sys.executable,

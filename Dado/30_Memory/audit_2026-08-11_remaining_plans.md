@@ -1,4 +1,23 @@
-# Remaining cron-audit plans - designed 2026-08-11, NOT yet implemented
+# Cron-audit plans - designed 2026-08-11. STATUS CORRECTED 2026-08-12.
+
+*** THE TITLE OF THIS FILE USED TO SAY "NOT yet implemented". ALL FIVE PLANS
+BELOW HAVE SINCE SHIPPED. *** It was written before any of them landed and never
+updated, so the one durable record of this work claimed the opposite of the truth
+for a day. Verified per-plan on 2026-08-12:
+
+| plan                         | status            | evidence |
+|------------------------------|-------------------|----------|
+| dado-b08                     | **SHIPPED** 08-12 | confirm-then-persist + `queue_on_failure` in `stall_tripwire.py` / `job_runner.py` |
+| dado-cron-mirror             | **SHIPPED** 08-12 | `Dado\Tools\watch\dado_profile_mirror.py` (detector, not importer) |
+| gla-monitors                 | **SHIPPED** 08-12 | 4 `gla_sync_*` monitor scripts in `Dado\Tools\watch\` |
+| stall-tripwire-gateway-death | **SHIPPED** 08-12 | orphan detection in `stall_tripwire.py` |
+| zoho-account-filter          | **SHIPPED** 08-12 | `dado_daily_banking_review.py` rewritten + `test_dado_daily_banking_review_feed.py` |
+
+CAVEAT ON THE ZOHO ONE, because "shipped" is not "proven in production": the
+finding was that the daily banking review had NEVER produced a single review.
+The code is fixed and its tests pass, but it has not yet produced a review on a
+real scheduled run. Treat the next scheduled run as the acceptance test - if it
+is silent again, the fix is not confirmed, only the tests are.
 
 > DATA WALL: designed by agents that could see the whole machine, including the
 > neighbouring TDI profile on the shared hermes install. Cross-company specifics

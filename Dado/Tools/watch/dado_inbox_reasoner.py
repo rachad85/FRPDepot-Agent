@@ -395,7 +395,73 @@ def run_dado():
     return (proc.stdout or "").strip()
 
 
+# *** THE SEND FUSE - NEVER SEND FROM A TEST RUN. ***
+# Every send in this tree funnels through _try_send, so the fuse lives HERE and
+# in send_clean rather than at each caller. The first cut (2026-08-12) put
+# `if os.environ.get("PYTEST_CURRENT_TEST")` at four call sites in job_runner.py
+# and stall_tripwire.py. That variable is set by PYTEST ONLY, while 12 of the 14
+# test files in this directory are unittest entrypoints - so `python -m unittest
+# discover`, the obvious way to run them, still drove the live sender. The
+# incident that prompted the original guard put 14 real messages on Rachad's
+# phone. This closes the class instead of the two instances.
+_TEST_RUNNER_BASENAMES = {"pytest", "pytest.exe", "py.test", "unittest", "nosetests"}
+_TEST_RUNNER_PACKAGES = {"unittest", "pytest", "_pytest", "nose", "nose2"}
+
+
+def is_test_run():
+    """True when this PROCESS was started by a test runner.
+
+    Keyed on how the process was LAUNCHED (argv[0] / __main__), deliberately NOT
+    on `"unittest" in sys.modules`: unittest.mock is imported transitively by
+    ordinary libraries, so a sys.modules probe could mute the live alerter for
+    good - a far worse failure than the one being guarded against. Every branch
+    here requires a test runner to be the entry point, which no cron invocation
+    (`python stall_tripwire.py`) can ever satisfy.
+    """
+    if os.environ.get("PYTEST_CURRENT_TEST"):
+        return True
+    # THE LOAD-BEARING CHECK: is a test runner ON THE STACK RIGHT NOW?
+    # Launch-style detection alone is not enough, and that is not a theory - the
+    # first version of this function keyed only on argv[0]/__main__ and a
+    # verification harness piped to `python` via stdin (argv[0] == "-",
+    # __main__.__file__ == "<stdin>") ran the whole suite with the fuse OPEN and
+    # put another 14 real messages on Rachad's phone. Any launch-style list is a
+    # guess about entry points; this observes the property we actually mean -
+    # "a test is executing" - and no cron invocation can ever have unittest or
+    # pytest frames above it.
+    frame = sys._getframe()
+    while frame is not None:
+        module = frame.f_globals.get("__name__", "") or ""
+        root = module.split(".", 1)[0]
+        if root in _TEST_RUNNER_PACKAGES:
+            return True
+        frame = frame.f_back
+    main = sys.modules.get("__main__")
+    for raw in (sys.argv[0] if sys.argv else "", getattr(main, "__file__", "") or ""):
+        path = str(raw)
+        name = os.path.basename(path).lower()
+        if name.startswith("test_") or name in _TEST_RUNNER_BASENAMES:
+            return True
+        # `python -m unittest` / `-m pytest` resolve argv[0] to the package's own
+        # __main__.py, e.g. ...\Lib\unittest\__main__.py
+        if name == "__main__.py" and \
+                os.path.basename(os.path.dirname(path)).lower() in _TEST_RUNNER_PACKAGES:
+            return True
+    return False
+
+
 def _try_send(message):
+    if is_test_run():
+        # THE ONLY FUSE. Every send in this tree reaches the wire here, so one
+        # guard covers every current and future caller. Reported as ACCEPTED so
+        # persist-on-confirmed-send logic stays exercised; a test that needs a
+        # FAILED send patches this function, which replaces the fuse with it.
+        # The log line matters: send_clean will record "sent business message"
+        # immediately after, and this is what tells a later reader that the
+        # "sent" line was a suppressed test send and nothing left the machine.
+        print("(test run detected - send suppressed, nothing was sent.)")
+        log("test run detected - send SUPPRESSED, nothing left this process")
+        return 0, ""
     env = os.environ.copy()
     env["PYTHONIOENCODING"] = "utf-8"
     try:
@@ -438,6 +504,13 @@ def send_clean(message, queue_on_failure=True):
     job-watch (10m) and the tripwire (15m) all touching it, job-watch and the
     tripwire would collide on the same minute every 30 minutes.
     """
+    # NO FUSE HERE, DELIBERATELY - it belongs at the wire (_try_send) alone.
+    # A first cut put one at the top of this function and broke two legitimate
+    # tests (SenderContractTests): they patch _try_send, which is the correct
+    # and safe way to exercise the retry/queue contract, and an early return
+    # here bypassed the very logic they assert on. Fusing only the wire means a
+    # patched _try_send replaces the fuse along with the send, so those tests
+    # behave exactly as before while an UNPATCHED call still cannot escape.
     last = ""
     try:
         for attempt in range(1, 4):
