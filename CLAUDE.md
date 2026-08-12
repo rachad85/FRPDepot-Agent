@@ -175,6 +175,53 @@ engineer.
   history still carries one copy). On a fresh clone, rebuild with
   pip install --target Dado\Tools\vendor <packages>.
 
+## Dado's job skills (added 2026-08-12)
+
+Five skills in `DadoProfile\skills\operations\` (mirrored to the live profile),
+one per recurring job that needs judgement rather than arithmetic:
+`daily-banking-review`, `monthly-reorder-review`, `followup-digest`,
+`packing-observations`, `inbox-sweep`.
+
+**Read this before adding more, because the obvious plan is wrong.** Nine of
+Dado's ten cron jobs are `no_agent: true` — the script IS the job, no model turn
+happens, and **a skill attached to one of those does nothing at all.** Only
+`dado-monthly-reorder-review` is `no_agent: false`, and it is the only job with a
+skill attached (`monthly-reorder-review`, job `96e29b6507b1`).
+
+The other four still earn their place, because the jobs are not the only way she
+meets the work:
+- `dado-inbox-watch` is `no_agent: true` but `dado_inbox_reasoner.py` shells out
+  to `hermes -p dado -z`, which loads the profile's skills — so `inbox-sweep`
+  reaches her there by description, not by attachment.
+- banking, follow-up and packing run as silent scripts; Dado reasons about their
+  output when Rachad raises it on Telegram or Discord, and the skill is selected
+  by its description then.
+
+So: attach a skill ONLY to an agent-mode job. Everything else is discovered by
+its description, which is why those descriptions name concrete triggers rather
+than topics.
+
+The skills deliberately encode the JUDGEMENT the scripts cannot make — the
+attribution guard's "disclosed" meaning, the follow-up tiers, researched-versus-
+measured packing, the `[SILENT]` contract — and never restate script mechanics.
+
+**MIRROR DRIFT REPAIRED 2026-08-12.** `DadoProfile\skills\` was missing two
+skills the live profile had been running: `operations\zoho-client-po-reference`
+(authored 2026-08-12) and `autonomous-ai-agents\hermes-agent`. A restore from the
+mirror would have silently dropped both. Mirror and live are now byte-identical —
+29 files, 8 SKILL.md, zero mismatches — apart from live-only runtime state
+(`.usage.json`, `.hub`, `.curator_*`), which must NOT be mirrored.
+
+Worth knowing about `hermes-agent`: it appeared **2026-08-04**, the hermes
+v0.20.0 upgrade date, on a profile that carries `.no-bundled-skills` (dated
+2026-07-22) — so bundled-skill seeding reached it despite the opt-out marker.
+It was KEPT rather than removed because `hermes skills list` classifies it
+`local` (not hub or builtin, so `hermes update` will neither re-sync nor remove
+it) and `.usage.json` shows **16 uses**. It is retained on evidence, not on
+original intent — and the marker not holding means a future upgrade can seed
+more. Check `hermes -p dado skills list` after any hermes upgrade.
+Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
+
 ## Golden rules (mirror of Dado's SOUL — enforced in tools)
 1. DRAFTS ONLY — no send capability anywhere, ever.
 2. No keys/tokens/passwords in chat. Vaults + profile .env only.
@@ -496,6 +543,64 @@ engineer.
  plan was abandoned before any write after live evidence proved its `1/2 inch`
  selector label was wrong. The corrected `1/2"` plan was staged only after a
  fresh 248-test pass; activation still awaits its own exact `APPROVED`.
+- [x] PACKING RING MEDIA UPLOAD (2026-08-12, Rachad answered "Yes" on Discord) —
+      `Dado\Tools\woocommerce\wordpress_packing_ring_media_tool.py`.
+      **BUILT AND TESTED ONLY: no plan staged, zero uploads, zero website writes,
+      zero products changed, browser never contacted.** Two commands only, `stage`
+      and `commit --plan --approval`. The six approved Packing Ring PNGs in
+      `Dado\20_Working\packing_rings\generated_gallery_20260812\` are hard-coded by
+      path, name, byte size, SHA-256 and PNG/RGB/1024x1024 identity, so a seventh
+      file, the review sheet, the ZIP, a source photo and any arbitrary path are
+      unreachable rather than merely unused; a caller supplies only a plan path and
+      the byte-exact unpadded `APPROVED`. Uploads are UNATTACHED media: no product,
+      variation, price, stock, order, setting, REST call, credential read or email
+      anywhere in the module. Attaches only to the existing authenticated CDP 9229
+      browser, holds `ui_browser_lock("wordpress")` for the whole run and takes it
+      BEFORE the plan's permanent attempt lock, and navigates only
+      `media-new.php?browser-uploader`, `upload.php` (bare / `posted` / bounded
+      `mode=list&paged`) and `post.php?post=<id>&action=edit`.
+      *** DELIBERATELY NOT ATOMIC AND WITH NO ROLLBACK — every plan says so. ***
+      Six files are six independent submissions; a failure at upload N leaves
+      1..N-1 live, never attempts N+1..6, and locks the plan `indeterminate` /
+      `no_retry: true`. There is no delete, detach, replace, rename, rollback or
+      retry route by design: a delete capability is far more dangerous than a
+      leftover unattached image.
+      *** DUPLICATE PREFLIGHT — BOTH GATES COMPLETE, NO SAMPLING PATH ANYWHERE
+      (repaired 2026-08-12 after an independent review; tool/schema bumped to
+      2.0.0 / 2 together so no plan cut under the old gate can ever validate). ***
+      The NAME gate is complete and proves it against the list table's own item
+      count (fails closed on an unreadable count, an unidentifiable row, a
+      NAMELESS row or a short walk) and strips WordPress's `-N` suffix before
+      comparing stems. The HASH gate is COMPLETE over EVERY enumerated image
+      attachment (.png .jpg .jpeg .gif .webp): each is opened on its own fixed
+      attachment screen, its one public original URL is downloaded anonymously
+      with redirects refused, and its full SHA-256 is compared to all six fixed
+      digests — so an identical image under an unrelated OLDER filename IS proven
+      absent. THE FIRST BUILD hashed only name conflicts plus the newest ~12 rows
+      and admitted that hole in its own plan evidence; that is exactly what was
+      fixed. Any row that cannot be identified, proven safe, downloaded within
+      bounds or hashed makes the WHOLE check INCOMPLETE and refuses BEFORE any
+      attempt lock exists. The bounds (4,000 rows, 200 pages, 2,000 images,
+      8 MB/file, 1.5 GB cumulative) are refusals when exceeded, never a partial
+      scan reported clean. Every plan carries the totals that prove it
+      (`library_total`, `enumerated`, `image_rows`, `image_hashes_completed`,
+      `hash_failures: 0`, `enumeration_complete`, `hash_complete`, `complete`) and
+      `load_plan` re-checks that arithmetic AND the exact COMPLETE-gate scope
+      wording, so `complete: true` can never outvote its own counts. THE COST IS
+      REAL AND IS NOT A LIMIT ON COMPLETENESS: this downloads every image in the
+      Media Library once per stage and once per commit. That is the price of a
+      gate that can actually see an older duplicate.
+      Tests: 134 run / 133 passed / 1 skip (this account cannot create symlinks;
+      that branch is covered deterministically instead) / 0 failed; complete
+      WooCommerce suite 824 run / 822 passed / 2 expected skips / 0 failed. The
+      completeness tests put the interesting file at the OLDEST row of a
+      multi-page library, so a regression to sampling fails them. An upload still
+      needs its own staged plan and Rachad's own fresh `APPROVED`.
+      UNRESOLVED SIDE EFFECT OF THE ORIGINAL BUILD, not fixed by the repair: it
+      also wrote `%LOCALAPPDATA%\hermes\profiles\dado\SOUL.md` — a cross-profile
+      write nobody asked for. The repair pass deliberately did not read, write or
+      restore that path; a `SOUL.md.bak_20260812_pre_packing_ring_media` sits
+      beside it, and restoring from it is Rachad's call, not an agent's.
 - [x] DISCORD LANE — SECOND CHAT SURFACE, SAME DADO (2026-08-10, Rachad asked for
       "a new lane for Dado on Discord, completely independent so I can run 2 tasks
       in parallel without interference"; he chose same-profile over a second agent).
@@ -625,9 +730,31 @@ engineer.
       by another gateway) is told NOT to just restart, because a restart cannot fix
       it and would end whatever is running on the surviving lane.
       Tests: 33, all passing.
-- [x] NEIGHBOUR HEARTBEAT — DADO WATCHES AZE'S WATCHDOG (2026-08-11, Rachad
-      asked for it after the incident below). THE ONLY PLACE THIS TREE REACHES
-      INTO C:\AgentTeam, and it reaches for exactly one path.
+- [x] NEIGHBOUR HEARTBEAT — DADO WATCHES ~~AZE'S~~ **SARY'S** WATCHDOG
+      (2026-08-11, Rachad asked for it after the incident below).
+      *** AMENDED 2026-08-12: THE PAIR IS NOW A THREE-NODE RING. *** Rachad added
+      the marketing agent (C:\Marketing, profile `sary`, port 8648), so
+      `$NeighbourHeartbeat` in `dado_gateway_watchdog.ps1` was RETARGETED from
+      `C:\AgentTeam\Sync\aze_heartbeat_check.py` to
+      `C:\Marketing\Sary\Tools\watch\sary_heartbeat_check.py`:
+          Aze  ->  Dado  ->  Sary  ->  Aze
+      Aze's launcher still reads Dado's heartbeat (that edge is untouched) and
+      Sary's keep-alive now reads Aze's. Nothing lost coverage — every node is
+      still watched by exactly one other, and the containment rules below are
+      unchanged, just pointed at a different tree.
+      WHY A RING AND NOT SIMPLY ADDING SARY AS A SECOND TARGET HERE: each checker
+      keeps ONE state file, so two schedulers invoking the same one both increment
+      the same `consecutive` counter — halving the intended delay before paging —
+      and can lose each other's writes. One watcher per node, always.
+      SO THIS TREE NOW REACHES INTO C:\Marketing INSTEAD OF C:\AgentTeam — still
+      exactly one path, still guarded/detached/output-discarded, and Sary's own
+      alerter and state stay on his side (a Sary problem arrives from Sary's bot).
+      Verified live 2026-08-12: this keep-alive's detached call wrote
+      `C:\Marketing\Sary\40_Logs\sary_heartbeat_state.json`, and Aze's launcher
+      wrote `dado_heartbeat_state.json` on its own cycle minutes later.
+      Original entry follows, unchanged, because the reasoning still applies:
+      THE ONLY PLACE THIS TREE REACHES OUTSIDE ITSELF, and it reaches for exactly
+      one path.
       WHY: Aze's 5-minute watchdog was found REFUSING TO START ANYTHING for ~24h
       (Aug 10 13:38 -> Aug 11 13:33). `hermes gateway install` recreated
       `Hermes_Gateway_aze.vbs` in the Startup folder; TDI's

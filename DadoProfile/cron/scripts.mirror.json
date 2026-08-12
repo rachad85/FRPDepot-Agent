@@ -15,9 +15,9 @@
  },
  "dado_daily_banking_review.py": {
   "kind": "copy",
-  "deployed_sha256": "cd5208ac78462689eaef550a12168807dd199c0fdf8d29d640bb45f5c969a217",
+  "deployed_sha256": "3894d053bee0c9462f2d131243c00ed801036b938f8f2c9539656c4ec2949b20",
   "repo_path": "Dado\\Tools\\watch\\dado_daily_banking_review.py",
-  "repo_sha256": "cd5208ac78462689eaef550a12168807dd199c0fdf8d29d640bb45f5c969a217",
+  "repo_sha256": "3894d053bee0c9462f2d131243c00ed801036b938f8f2c9539656c4ec2949b20",
   "in_sync": true
  },
  "dado_followup_digest.py": {
@@ -29,16 +29,16 @@
  },
  "dado_inbox_reasoner.py": {
   "kind": "copy",
-  "deployed_sha256": "3f0a0aa5a47d093cee0a661dea9f83cd64152e237ab0be1a9abd030b739a72ef",
+  "deployed_sha256": "bd02683e4fba3e99cf4d009dfe6c8ae2f21636cf5ff0b75bbdcde011e317430b",
   "repo_path": "Dado\\Tools\\watch\\dado_inbox_reasoner.py",
-  "repo_sha256": "3f0a0aa5a47d093cee0a661dea9f83cd64152e237ab0be1a9abd030b739a72ef",
+  "repo_sha256": "bd02683e4fba3e99cf4d009dfe6c8ae2f21636cf5ff0b75bbdcde011e317430b",
   "in_sync": true
  },
  "job_runner.py": {
   "kind": "copy",
-  "deployed_sha256": "29ff70486e5261a4e0619067cbc6ac0811bfb362ba1ca0d966f8cd3ef2562501",
+  "deployed_sha256": "78d89f1725f73f9d4d62da901d8bea0df2c7a77690f709b4702bcb58111d7210",
   "repo_path": "Dado\\Tools\\watch\\job_runner.py",
-  "repo_sha256": "29ff70486e5261a4e0619067cbc6ac0811bfb362ba1ca0d966f8cd3ef2562501",
+  "repo_sha256": "78d89f1725f73f9d4d62da901d8bea0df2c7a77690f709b4702bcb58111d7210",
   "in_sync": true
  },
  "packing_observation_weekly_reminder.py": {
@@ -57,9 +57,9 @@
  },
  "stall_tripwire.py": {
   "kind": "copy",
-  "deployed_sha256": "c9ae8f88fd1ff059ad462456d23c78679e11fbf014c8396f37ba0342800539e9",
+  "deployed_sha256": "10e97f28b18bac5a41e25466ee3c7590366133cda96e406ad2f4c0e9f3394052",
   "repo_path": "Dado\\Tools\\watch\\stall_tripwire.py",
-  "repo_sha256": "c9ae8f88fd1ff059ad462456d23c78679e11fbf014c8396f37ba0342800539e9",
+  "repo_sha256": "10e97f28b18bac5a41e25466ee3c7590366133cda96e406ad2f4c0e9f3394052",
   "in_sync": true
  },
  "zoho_reorder_analysis.py": {

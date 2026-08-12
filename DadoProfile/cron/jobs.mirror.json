@@ -165,8 +165,10 @@
    },
    "schedule_display": "0 8 1 * *",
    "script": "zoho_reorder_analysis.py",
-   "skill": null,
-   "skills": [],
+   "skill": "monthly-reorder-review",
+   "skills": [
+    "monthly-reorder-review"
+   ],
    "state": "scheduled",
    "workdir": "C:\\FRPDepot"
   },
