@@ -9,6 +9,8 @@ Run:
 
 from __future__ import annotations
 
+import json
+
 import os
 import sys
 import tempfile
@@ -148,6 +150,110 @@ class MarkerIsolation(unittest.TestCase):
         self.assertIn("DADO_NEEDS_ATTENTION", str(ua.DESKTOP_MARKER))
         self.assertNotIn("AZE_NEEDS", str(ua.DESKTOP_MARKER).upper())
 
+
+
+class CronStalledRuns(unittest.TestCase):
+    """The transport half of stale-running-rows.
+
+    The runtime writes stalled_runs.json ONLY while a run is wedged, so
+    file-present is the whole signal. These pin the three behaviours that
+    matter: silence when clean, exactly one alert per episode, and a second
+    look at the SAME episode staying quiet.
+
+    run_alerter is stubbed throughout. Nothing here may put a real message on
+    Rachad's phone - a test run in this tree has done that twice.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        root = Path(self.tmp.name)
+        self._orig = (hb.STALLED_RUNS_FILE, hb.STALLED_STATE_FILE,
+                      hb.run_alerter)
+        hb.STALLED_RUNS_FILE = root / "stalled_runs.json"
+        hb.STALLED_STATE_FILE = root / "stalled_state.json"
+        self.sent = []
+
+        def fake_alerter(args):
+            self.sent.append(args)
+            return '{"status": "SENT"}'
+
+        hb.run_alerter = fake_alerter
+
+    def tearDown(self):
+        (hb.STALLED_RUNS_FILE, hb.STALLED_STATE_FILE,
+         hb.run_alerter) = self._orig
+        self.tmp.cleanup()
+
+    def _write_marker(self, execution_id="exec-1", job_name="wedged-job"):
+        hb.STALLED_RUNS_FILE.write_text(json.dumps({
+            "recorded_at": 1.0,
+            "stalled": [{
+                "job_id": "j1", "job_name": job_name,
+                "execution_id": execution_id, "status": "running",
+                "age_seconds": 1800, "skipped_occurrences": 3,
+                "still_in_flight": True,
+            }],
+        }), encoding="utf-8")
+
+    def test_absent_marker_sends_nothing(self):
+        result = hb.check_cron_stalled_runs()
+        self.assertEqual(result["status"], "clean")
+        self.assertEqual(self.sent, [])
+
+    def test_a_wedged_run_alerts_once(self):
+        self._write_marker()
+        result = hb.check_cron_stalled_runs()
+        self.assertEqual(result["alerted"], 1)
+        self.assertEqual(len(self.sent), 1)
+        body = " ".join(self.sent[0])
+        self.assertIn("wedged-job", body)
+        self.assertIn("30 min", body)
+        self.assertIn("3 scheduled run(s) skipped", body)
+
+    def test_the_same_episode_is_not_re_alerted(self):
+        self._write_marker()
+        hb.check_cron_stalled_runs()
+        hb.check_cron_stalled_runs()
+        self.assertEqual(len(self.sent), 1, "a wedge lasting hours must alert once")
+
+    def test_a_new_episode_alerts_again(self):
+        self._write_marker(execution_id="exec-1")
+        hb.check_cron_stalled_runs()
+        self._write_marker(execution_id="exec-2", job_name="other-job")
+        hb.check_cron_stalled_runs()
+        self.assertEqual(len(self.sent), 2)
+
+    def test_an_unconfirmed_send_is_retried_not_marked_reported(self):
+        """B-08: a dropped alert must not consume the budget that would retry it."""
+        self._write_marker()
+        hb.run_alerter = lambda args: '{"status": "SEND_FAILED"}'
+        first = hb.check_cron_stalled_runs()
+        self.assertEqual(first["alerted"], 0)
+
+        sent = []
+        hb.run_alerter = lambda args: sent.append(args) or '{"status": "SENT"}'
+        second = hb.check_cron_stalled_runs()
+        self.assertEqual(second["alerted"], 1, "the retry must still happen")
+        self.assertEqual(len(sent), 1)
+
+    def test_the_alerter_is_never_asked_to_clear(self):
+        """--clear also deletes the SHARED desktop marker for other reasons."""
+        self._write_marker()
+        hb.check_cron_stalled_runs()
+        for args in self.sent:
+            self.assertNotIn("--clear", args)
+
+    def test_an_unreadable_marker_is_reported_not_alerted(self):
+        hb.STALLED_RUNS_FILE.write_text("{ not json", encoding="utf-8")
+        result = hb.check_cron_stalled_runs()
+        self.assertEqual(result["status"], "unreadable")
+        self.assertEqual(self.sent, [])
+
+    def test_dry_run_sends_nothing(self):
+        self._write_marker()
+        result = hb.check_cron_stalled_runs(dry_run=True)
+        self.assertEqual(result["status"], "wedged")
+        self.assertEqual(self.sent, [])
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

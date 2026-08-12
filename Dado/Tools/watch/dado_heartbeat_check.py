@@ -160,6 +160,83 @@ def run_alerter(args: list[str]) -> str:
         return json.dumps({"status": "ALERTER_FAILED", "error": str(exc)[:500]})
 
 
+STALLED_RUNS_FILE = VENV_PYTHON.parents[3] / "profiles" / "dado" / "cron" / "stalled_runs.json"
+# A SEPARATE state file, deliberately: save_state() rewrites its whole dict, so
+# a key added there would be dropped by the next verdict write.
+STALLED_STATE_FILE = LOGS / "dado_cron_stalled_state.json"
+MAX_REMEMBERED_STALL_EPISODES = 200
+STALLED_REASON = "cron_stalled_runs"
+
+
+def check_cron_stalled_runs(dry_run: bool = False) -> dict[str, Any]:
+    """Alert once per wedged-run episode. Silent when the marker is absent.
+
+    The cron runtime writes stalled_runs.json ONLY while at least one run is
+    wedged and removes it the moment things are clean, so file-present IS the
+    signal and no threshold logic belongs here.
+
+    Alerts go through the raw-Telegram alerter, not cron delivery, ON PURPOSE:
+    the condition is that a cron job is stuck, and a watcher must never share a
+    failure mode with the thing it watches.
+
+    DATA WALL: reads only Dado's OWN profile directory under %LOCALAPPDATA%.
+    Nothing here touches C:\\AgentTeam.
+
+    NEVER calls the alerter with --clear - that also deletes the shared Desktop
+    marker and would erase an unread alert raised for another reason.
+    """
+    if not STALLED_RUNS_FILE.exists():
+        return {"status": "clean", "alerted": 0}
+    try:
+        report = json.loads(STALLED_RUNS_FILE.read_text(encoding="utf-8"))
+        entries = report.get("stalled") or []
+    except (OSError, ValueError) as exc:
+        return {"status": "unreadable", "error": str(exc)[:200], "alerted": 0}
+    if not entries:
+        return {"status": "clean", "alerted": 0}
+
+    try:
+        seen = json.loads(STALLED_STATE_FILE.read_text(encoding="utf-8"))
+        already = seen.get("episodes") if isinstance(seen, dict) else []
+    except (OSError, ValueError):
+        already = []
+    already = [str(x) for x in (already or [])]
+
+    fresh = [e for e in entries if str(e.get("execution_id")) not in already]
+    if dry_run:
+        return {"status": "wedged", "total": len(entries), "new": len(fresh),
+                "would_alert": [e.get("job_name") for e in fresh]}
+    if not fresh:
+        return {"status": "wedged", "total": len(entries), "alerted": 0}
+
+    lines = ["Cron jobs wedged on Dado - they are still running, nothing was killed."]
+    for e in fresh:
+        mins = int(e.get("age_seconds") or 0) // 60
+        lines.append(
+            f"- '{e.get('job_name')}' in flight {mins} min "
+            f"({e.get('skipped_occurrences') or 0} scheduled run(s) skipped meanwhile)."
+        )
+    lines.append("")
+    lines.append("Check with: hermes -p dado cron status")
+    sent = run_alerter(["--reason", STALLED_REASON, "--message", "\n".join(lines)])
+
+    # Persist ONLY on a confirmed send, so a failed alert is retried on the next
+    # run rather than being marked reported and lost (backlog B-08).
+    if '"status": "SENT"' in sent or '"status":"SENT"' in sent:
+        already.extend(str(e.get("execution_id")) for e in fresh)
+        try:
+            STALLED_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STALLED_STATE_FILE.write_text(
+                json.dumps({"episodes": already[-MAX_REMEMBERED_STALL_EPISODES:]}),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        return {"status": "wedged", "total": len(entries), "alerted": len(fresh)}
+    return {"status": "wedged", "total": len(entries), "alerted": 0,
+            "delivery": sent[:200]}
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Alert when Dado's watchdog stops running at all. "
@@ -169,10 +246,14 @@ def main(argv: list[str] | None = None) -> int:
                         help="Print the verdict and send nothing.")
     args = parser.parse_args(argv)
 
+    # Independent of watchdog health - the gateway can be perfectly alive while
+    # a cron job is wedged - so this never feeds the verdict state machine.
+    stalled = check_cron_stalled_runs(dry_run=args.dry_run)
+
     verdict = assess()
 
     if args.dry_run:
-        print(json.dumps(verdict, indent=2))
+        print(json.dumps({"verdict": verdict, "cron_stalled_runs": stalled}, indent=2))
         return 0
 
     state = load_state()
