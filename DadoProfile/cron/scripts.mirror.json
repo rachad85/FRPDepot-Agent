@@ -34,27 +34,6 @@
   "repo_sha256": "3f0a0aa5a47d093cee0a661dea9f83cd64152e237ab0be1a9abd030b739a72ef",
   "in_sync": true
  },
- "gla_sync_ready_manway_cover_monitor.py": {
-  "kind": "launcher",
-  "deployed_sha256": "d0adf7e990d54d8faced5b7931c69641032e093a593169611b9b2d2294ad208b",
-  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_manway_cover_monitor.py",
-  "repo_sha256": "3beafd2e6eaef42a524ec48ffc2b37023a671bc0fe1787e109023bf4d5611485",
-  "in_sync": true
- },
- "gla_sync_ready_manway_monitor.py": {
-  "kind": "launcher",
-  "deployed_sha256": "c713f16580277e7f22e80fa44901386590f698e50fb5b727e0a93ceb1da31d7f",
-  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_manway_monitor.py",
-  "repo_sha256": "a53c43ad58aa96bfeb0eb75f32f6dce8d744d7321ef176984e1c4a1864b880b9",
-  "in_sync": true
- },
- "gla_sync_ready_monitor.py": {
-  "kind": "copy",
-  "deployed_sha256": "de6231cfb3671f7e9f72e366fc5a22fb2780214590ac6519583dac25ffb8caf8",
-  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_monitor.py",
-  "repo_sha256": "de6231cfb3671f7e9f72e366fc5a22fb2780214590ac6519583dac25ffb8caf8",
-  "in_sync": true
- },
  "job_runner.py": {
   "kind": "copy",
   "deployed_sha256": "29ff70486e5261a4e0619067cbc6ac0811bfb362ba1ca0d966f8cd3ef2562501",
