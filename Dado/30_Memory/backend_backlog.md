@@ -262,7 +262,7 @@ TWO THINGS IT FOUND IMMEDIATELY:
     ignored. Launchers are now classified and exempt; 12 real copies are
     compared by hash.
 
-### OPEN — live `fallback_providers` contradicts the recorded decision (found 2026-08-12)
+### FIXED 2026-08-12 — live `fallback_providers` contradicted the recorded decision
 
 CLAUDE.md: "NO fallback provider on purpose: primary down = honest failure,
 never silent model drift (TDI learned this the hard way 2026-07-16)."
@@ -286,8 +286,19 @@ the unintended fallback rather than cementing it. The profile-mirror drift check
 treats it as EXPECTED divergence pinned to this exact value — silent while it
 stays, loud if live changes to anything else, silent again once it is gone.
 
-RACHAD'S CALL: removing it from the live profile is a model-routing change and
-needs a gateway restart. Not done unilaterally.
+RESOLVED the same day: Rachad said remove it. The key is gone from the live
+profile, the gateway was restarted so it actually took effect, and the running
+config now reads model gpt-5.6-sol / openai-codex with NO fallback - primary
+down is once again an honest failure. Verified after the restart: both chat
+lanes healthy, cron ticker beating, config drift clean.
+
+*** THE EXPECTED-DIVERGENCE ENTRY WAS REMOVED WITH IT, ON PURPOSE. *** While the
+key was live-only, the profile-mirror check treated it as expected divergence so
+it would not cry wolf every five minutes. Now that mirror and live agree there is
+nothing to expect - and leaving the entry would make the checker go SILENT if the
+key came back. Hermes is recorded as PERSISTING a fallback into config.yaml after
+a provider hiccup, so a reappearance is the bug recurring, not a new decision. It
+is now flagged loudly. Do not re-add that entry.
 
 ### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
 

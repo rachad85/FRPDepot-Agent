@@ -163,14 +163,18 @@ def deployed_scripts() -> dict[str, dict[str, Any]]:
 # value that divergence is recorded against. Reported only if live moves to
 # something else - a standing difference must not cry wolf every five minutes,
 # but it must not hide a CHANGE either.
-EXPECTED_CONFIG_DIVERGENCE = {
-    # CLAUDE.md: "NO fallback provider on purpose: primary down = honest
-    # failure, never silent model drift." Live carries one anyway, pointing at a
-    # provider recorded as unfunded, and matching the known fallback-persistence
-    # bug. The mirror deliberately omits it so an import REMOVES it rather than
-    # cementing it. See the comment at the top of DadoProfile\config.yaml.
-    "fallback_providers": [{"provider": "nous", "model": "deepseek/deepseek-v4-pro"}],
-}
+#
+# DELIBERATELY EMPTY as of 2026-08-12. It briefly held `fallback_providers`,
+# because live carried [{provider: nous, model: deepseek/deepseek-v4-pro}]
+# against CLAUDE.md's "NO fallback provider on purpose: primary down = honest
+# failure, never silent model drift". Rachad then had it removed from the live
+# profile, so mirror and live agree and there is nothing to expect.
+#
+# *** DO NOT RE-ADD THAT ENTRY IF THE KEY COMES BACK. *** Hermes is recorded as
+# PERSISTING a fallback into config.yaml as the new default after a provider
+# hiccup, so the key reappearing is the bug recurring, not a new decision - and
+# an entry here would make the checker go quiet about exactly that.
+EXPECTED_CONFIG_DIVERGENCE: dict[str, Any] = {}
 
 
 def config_drift() -> list[str]:
