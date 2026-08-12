@@ -472,7 +472,14 @@ class CreateScopeTests(unittest.TestCase):
             "ZohoInventory.invoices.ALL",
             "ZohoBooks.creditnotes.CREATE",
             "ZohoBooks.customerpayments.CREATE",
-            "ZohoBooks.salesorders.CREATE",
+            # ZohoBooks.salesorders.CREATE was commissioned on 2026-08-11 for
+            # zoho_sales_order_tool.py, so it is no longer uncommissioned. Every
+            # BROADER sales-order scope is still refused, which is what this
+            # test is for.
+            "ZohoBooks.salesorders.UPDATE",
+            "ZohoBooks.salesorders.DELETE",
+            "ZohoBooks.salesorders.ALL",
+            "ZohoInventory.salesorders.CREATE",
             "ZohoBooks.contacts.UPDATE",
         ):
             with self.subTest(scope=scope):

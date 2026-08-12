@@ -493,3 +493,185 @@ and NO guard changed — only the narration, pinned by a new test.
 BUILD AND TESTS ONLY, again: no live stage, ZERO Zoho writes, ZERO sales
 orders created, ZERO attachments uploaded, ZERO emails, vault and .env
 untouched, live profile files untouched.
+
+## 2026-08-11 — fixed 4-inch/10-inch backing-ring stock and rate merge
+
+Rachad commissioned `zoho_backing_ring_stock_tool.py` after confirming that the
+existing generic 4-inch and 10-inch Zoho items are the same products as the
+photographed incoming stock and that the current order must consume those
+existing item IDs. It exposes one action only. Inventory Adjustment
+`96274000001556196`, dated 2026-08-11 with reference
+`BACKING-RINGS-2026-08-11`, added +12 pcs to item `96274000001518002`
+(`BRDN100150PSI411`) and +101 pcs to item `96274000001518014`
+(`BRDN250150PSI411`). The adjustment is `adjusted` and totals CAD 18,421.50:
+CAD 696.00 and CAD 17,725.50, derived from the preserved live purchase rates
+CAD 58.00 and CAD 175.50. The tool then changed only those two future sales
+rates to CAD 108.00 and CAD 468.00.
+
+The three writes are deliberately non-atomic: the two-line adjustment POST
+lands first, followed by one name-preserving item-rate PUT per item. The plan
+locks before the first write, has one attempt, and has no retry, rollback,
+delete, adjustment update, item creation/deactivation, invoice/order write,
+status/approval, email, browser, WooCommerce or generic route. The only new
+prepared scope is `ZohoInventory.inventoryadjustments.CREATE`; UPDATE, DELETE,
+ALL and fullaccess remain absent.
+
+Rachad approved plan SHA-256
+`81d35927cbbb88318c9575bad8caa19ce495ad6a9c638e10d72a142f5275bfee`.
+All three writes landed and were independently re-read live. The 4-inch item is
+12 physical / -12 available for sale at CAD 108.00. The 10-inch item is 101
+physical / 65 available for sale at CAD 468.00. INV-000051 / SO-00050 retained
+the exact two line IDs and item IDs, quantities 24/36 and historical rates CAD
+97.00/CAD 297.00. The lock state is `verified`; replay is permanently refused.
+Zero duplicate items, zero order/invoice changes and zero emails.
+
+## 2026-08-12 — temporary backing-ring 1-1/2-inch correction, superseded before approval
+
+Rachad first corrected the photographed 1-1/2-inch black entries to ONE product,
+85 pcs total, and instructed that the outside diameter not be shown. That
+briefly staged `FRP BACKING RING-1-1/2\"/150PSI/D411/BLACK`, SKU
+`BRDN40150PSI411-BLK`, at CAD 52.20, plan SHA-256
+`30291ce09dbd505cc64f40417fed77a02ba23cc087a63b6e1342d74d6be7b884`.
+It was never approved and never committed, and the later all-size colour merge
+below permanently withdrew it too.
+
+The two earlier OD-specific plans are permanently withdrawn and now refused by
+full digest inside `zoho_inventory_item_tool.py`, together with the three
+previously withdrawn duplicate 4-inch/10-inch plans. This temporary correction
+performed ZERO Zoho writes and ZERO website writes.
+
+## 2026-08-12 — all backing rings merged by nominal size before approval
+
+Rachad then ruled that black and white do not matter for ANY backing-ring size.
+The catalog now has exactly one colour-neutral item per nominal size, with no
+colour or OD in the name, SKU or description. The corrected stock totals are:
+1-inch 218, 1-1/2-inch 85, 2-inch 32, 3-inch 39, 4-inch 12, 6-inch 22,
+8-inch 238, 10-inch 101, 12-inch 47 and 14-inch 32 — 826 units total.
+
+The 4-inch and 10-inch quantities remain on their already-existing generic item
+IDs. Eight fresh colour-neutral item-create plans are staged for the other
+sizes; they contain 713 units and preserve the already sourced Fei prices. All
+16 superseded duplicate/OD/colour plans are permanently refused by full digest
+inside `zoho_inventory_item_tool.py`. The 19-test item-tool safety suite passes.
+The correction itself made ZERO Zoho writes and ZERO website writes.
+
+Rachad then answered the complete eight-plan review with his own exact one-word
+`APPROVED`. The named tool created all eight independent items, and fresh live
+GETs verified every item ID, name, colour-neutral SKU, active inventory/goods
+status, unit, taxable/sell/purchase flags, accounts, CAD rate, unique live SKU,
+and zero starting stock. IDs:
+`BRDN25150PSI411` 96274000001556231;
+`BRDN40150PSI411` 96274000001556243;
+`BRDN50150PSI411` 96274000001556255;
+`BRDN80150PSI411` 96274000001556267;
+`BRDN150150PSI411` 96274000001556279;
+`BRDN200150PSI411` 96274000001556291;
+`BRDN300150PSI411` 96274000001555023; and
+`BRDN350150PSI411` 96274000001555035.
+No colour or OD appears on the live records. The 713 units of physical stock
+remain pending and require a separately commissioned, staged and approved fixed
+adjustment; this item-create approval did not authorize that stock write. ZERO
+website writes and ZERO emails.
+
+## 2026-08-11 — eight new backing-ring items, tentative landed valuation stock plan
+
+Rachad commissioned a second fixed stock tool for ONLY the eight newly created
+colour-neutral generic items. Their exact photographed quantities are 218, 85,
+32, 39, 22, 238, 47 and 32 pcs for 1, 1-1/2, 2, 3, 6, 8, 12 and 14-inch —
+713 pcs total. `zoho_backing_ring_eight_stock_tool.py` can create ONE eight-line
+positive Inventory Adjustment and has no item PUT/PATCH, price/rate write,
+order/invoice write, website route or mail transport.
+
+Valuation follows Rachad's direct instruction: preserve Fei's quoted USD unit
+cost, add a separate tentative 20% landing allowance, then convert using the
+Bank of Canada 2026-08-11 daily average, 1 USD = CAD 1.3927. Exact converted
+unit values are carried through quantity multiplication and each CAD line total
+is rounded once, half-up. Total tentative valuation: CAD 78,816.51. This does
+not alter the separate supplier USD cost x 3.6 CAD selling rates and does not
+write purchase rates.
+
+The first staged plan, SHA-256
+`fa5d1ab504f45993ea5d595f13575938ec1194a608b0ce61bcdd0171fbeb099b`,
+was withdrawn before approval because its descriptive text said "Fei Fei". It
+made zero writes and is permanently refused by full hash. Tool v1.0.1 passes its
+58-test targeted/regression set and the full 1,032-test Zoho suite (4 expected
+skips). The corrected current read-only plan is
+`20260812T013942Z_eight_backing_ring_tentative_landed_stock_fd77238cca9e.json`,
+SHA-256 `fd77238cca9e0552c216e9b79cac8569354cea1dfb310e5b53ff906aa01b696b`,
+expiring `2026-08-13T01:39:42.022760+00:00`. Live staging proved all eight items
+still had zero stock and zero purchase rate, the fixed reference was absent,
+and the saved CREATE scope was ready.
+
+Rachad then replied with his own exact `APPROVED`. The one POST created
+Inventory Adjustment `96274000001555048` in Adjusted status and added all 713
+units in the correct eight-item identity/order/quantities, but Zoho ignored each
+posted `item_total`: every live line and the adjustment total are CAD 0.00. The
+verifier therefore locked plan
+`fd77238cca9e0552c216e9b79cac8569354cea1dfb310e5b53ff906aa01b696b`
+`indeterminate`; no retry is allowed. Three fresh read-only adjustment/item
+rounds proved the result exact and stable: 713 physical units loaded, purchase
+rates still CAD 0.00, selling rates still CAD 50.40 / 52.20 / 57.60 / 72.00 /
+216.00 / 342.00 / 727.20 / 918.00, every protected item field unchanged, and
+zero inventory value instead of the planned tentative CAD 78,816.51. Root
+cause: the fixed generic merge succeeded because those pre-existing items
+already carried nonzero purchase rates (CAD 58.00 and 175.50); these new items
+carried purchase rate zero, and Zoho derived quantity-adjustment valuation from
+that zero rate rather than honoring the submitted `item_total`. Any accounting
+valuation correction requires a separate commission and approval. ZERO website
+writes and ZERO emails.
+
+## 2026-08-12 — fixed eight-item value-only correction commissioned and staged
+
+Rachad answered `Proceed` to the recommended separate valuation correction after
+the zero-valued quantity load. `zoho_backing_ring_eight_valuation_correction_tool.py`
+is fixed to ONE action: create ONE eight-line Inventory Adjustment with
+`adjustment_type: value` for the same eight item IDs. Its only line write field is
+`value_adjusted`, at CAD 5,100.62 / 2,059.80 / 855.67 / 1,303.57 / 2,206.04 /
+37,786.74 / 15,866.75 / 13,637.32, totaling exactly CAD 78,816.51. The values
+retain Fei's original USD costs, the separate 20% tentative landing allowance,
+and Bank of Canada FXUSDCAD 1.3927 for 2026-08-11. Full-precision CAD unit bases
+are multiplied by quantity and each line is rounded once, half-up. The independent
+Fei USD x 3.6 CAD selling-rate rule is preserved and is not used for valuation.
+
+The payload has no `quantity_adjusted` or `item_total`. It cannot update or retry
+source adjustment `96274000001555048`, change any quantity, item, purchase/sales
+rate, stock field, invoice, order or website record, or send email. Staging and
+commit both require the source adjustment to remain exactly Adjusted with the
+fixed eight line identities/order, 713 total pieces and CAD 0.00 value; every
+fixed item must retain its exact stock fields, zero purchase/valuation fields and
+approved selling rate; and the correction reference must remain absent. Staging
+performs three bounded read-only rehearsals and refuses moving state.
+
+Commit requires Rachad's own later exact unpadded uppercase `APPROVED`, then
+repeats the three-read rehearsal before its lock. The ONE POST is atomic at the
+request level and the plan is locked before it. Any failure, timeout or
+indeterminate result permanently locks the plan with no retry, rollback, delete
+or cleanup. There is one `urlopen` call site and no PUT/PATCH/DELETE, browser,
+mail, status or lifecycle route.
+
+Tests: 19 fixed-tool tests passed; 77 focused/regression tests passed; the complete
+Zoho discovery suite passed 1,051 tests with 4 expected skips. Read-only staging
+produced plan
+`20260812T030535Z_eight_backing_ring_zero_value_correction_2fa9a355a426.json`,
+logical SHA-256
+`2fa9a355a426540aaf72078c4002467a386ebf907c26b40d421a20c8dc04c594`,
+expiring `2026-08-13T03:05:35.453677+00:00`. Three identical live rounds proved
+the source remains 713 pieces / CAD 0.00, all eight item stock/rate protections
+remain exact, the correction reference is absent, and the CREATE scope is ready.
+Rachad then answered this plan with his own exact `APPROVED`. The one POST created
+VALUE Inventory Adjustment `96274000001555109`. The immediate verifier saw
+`is_inventory_valuation_pending: true`, permanently locked the plan
+`indeterminate`, and correctly made no retry. A later fresh read showed processing
+complete: status `adjusted`, `adjustment_type: value`, pending false, and all eight
+fixed lines at CAD 5,100.62 / 2,059.80 / 855.67 / 1,303.57 / 2,206.04 /
+37,786.74 / 15,866.75 / 13,637.32, totaling exactly CAD 78,816.51. Every
+`quantity_adjusted` is absent. Three saved fresh reads are business-identical and
+the protected source adjustment plus all eight item stock, purchase rate and
+selling rate projections match the staged plan exactly. The only two reconciliation
+false alarms were local verifier defects: Zoho serialized CAD 2,059.80 as `2059.8`,
+and a later fingerprint accidentally included the observation labels 1/2/3. Local
+Decimal normalization and exclusion of those labels proved all three saved reads
+identical; no further Zoho call was made. The commit lock deliberately remains
+`indeterminate` / no-retry as the permanent attempt record. STATUS: LIVE RESULT
+EXACT AND STABLE; CAD 78,816.51 value added, ZERO quantity changes, ZERO item/rate,
+order/invoice/website writes and ZERO emails.

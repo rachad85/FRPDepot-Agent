@@ -45,8 +45,15 @@ class ZohoToolTests(unittest.TestCase):
                 # invoice. Nothing else in the tree may use either.
                 "ZohoBooks.invoices.UPDATE",
                 "ZohoBooks.invoices.CREATE",
+                # Commissioned 2026-08-11 for zoho_sales_order_tool.py only: the
+                # ONE fixed SCT PO26330 draft sales order and the upload of the
+                # original client PO to the order that create just returned.
+                "ZohoBooks.salesorders.CREATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
+                # Commissioned 2026-08-11 for zoho_backing_ring_stock_tool.py
+                # only: one positive adjustment for the two fixed generic rings.
+                "ZohoInventory.inventoryadjustments.CREATE",
             },
         )
         # No invoice DELETE/ALL/fullaccess scope may ever be prepared, so an
@@ -59,6 +66,17 @@ class ZohoToolTests(unittest.TestCase):
             # estimate still cannot be deleted, sent, marked or converted.
             "ZohoBooks.estimates.DELETE",
             "ZohoBooks.estimates.ALL",
+            # The SCT PO26330 commission gained CREATE and nothing else: a sales
+            # order still cannot be updated, deleted, voided, restatused,
+            # confirmed, converted or mailed, and no Inventory sales-order write
+            # scope exists at all.
+            "ZohoBooks.salesorders.UPDATE",
+            "ZohoBooks.salesorders.DELETE",
+            "ZohoBooks.salesorders.ALL",
+            "ZohoInventory.salesorders.CREATE",
+            "ZohoInventory.salesorders.UPDATE",
+            "ZohoInventory.salesorders.DELETE",
+            "ZohoInventory.salesorders.ALL",
         ):
             self.assertNotIn(forbidden, tool.SCOPES)
         self.assertEqual(
@@ -66,7 +84,11 @@ class ZohoToolTests(unittest.TestCase):
                 scope for scope in tool.SCOPES
                 if scope.startswith("ZohoInventory.") and not scope.endswith(".READ")
             },
-            {"ZohoInventory.items.CREATE", "ZohoInventory.items.UPDATE"},
+            {
+                "ZohoInventory.items.CREATE",
+                "ZohoInventory.items.UPDATE",
+                "ZohoInventory.inventoryadjustments.CREATE",
+            },
         )
         self.assertTrue(all(scope.endswith(".READ") for scope in tool.READ_SCOPES))
         self.assertTrue(
@@ -78,6 +100,33 @@ class ZohoToolTests(unittest.TestCase):
                 "ZohoInventory.inventorycount.READ",
             }.issubset(set(tool.READ_SCOPES))
         )
+
+    def test_status_narration_never_calls_a_commissioned_scope_absent(self) -> None:
+        """The connect/reauthorize/check summaries must match the real scopes.
+
+        Those three lines are what Rachad reads to know what Dado can do. They
+        claimed "order write scopes: ABSENT" after ZohoBooks.salesorders.CREATE
+        was commissioned, which is the same false comfort as a stale status
+        line. Nothing here changes a guard: the scope lists above are the
+        authority, and this only pins the wording to them.
+        """
+        source = Path(tool.__file__).read_text(encoding="utf-8")
+        lines = source.splitlines()
+        self.assertIn("ZohoBooks.salesorders.CREATE", tool.SCOPES)
+        absent = [line for line in lines if "ABSENT" in line]
+        self.assertEqual(len(absent), 3, "connect, reauthorize and check each state this")
+        for line in absent:
+            lowered = line.casefold()
+            self.assertNotIn("order write scopes: absent", lowered)
+            # Only UPDATE and DELETE remain absent on sales orders; a bare
+            # "sales-order ... ABSENT" would read as covering CREATE too.
+            if "sales-order" in lowered:
+                self.assertIn("sales-order update", lowered)
+        disclosed = [line for line in lines if "Books sales-order writes:" in line]
+        self.assertEqual(len(disclosed), 3)
+        for line in disclosed:
+            self.assertIn("PO26330", line)
+            self.assertIn("NAMED TOOL ONLY", line)
 
     def test_scope_copy_uses_only_validated_configured_scopes(self) -> None:
         with patch.object(tool.subprocess, "run") as mocked:
@@ -100,7 +149,8 @@ class ZohoToolTests(unittest.TestCase):
             ["ZohoBooks.contacts.UPDATE"],
             ["ZohoBooks.estimates.DELETE"],
             ["ZohoBooks.fullaccess.all"],
-            ["ZohoInventory.inventoryadjustments.CREATE"],
+            ["ZohoInventory.inventoryadjustments.UPDATE"],
+            ["ZohoInventory.inventoryadjustments.DELETE"],
             ["ZohoBooks.invoices.DELETE"],
             ["ZohoBooks.contacts.UPDATE"],
             ["ZohoBooks.estimates.ALL"],

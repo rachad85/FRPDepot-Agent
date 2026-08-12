@@ -463,6 +463,53 @@ class ZohoInventoryItemGroupOptionTests(unittest.TestCase):
                 {"name": "Item", "attributes": []},
             )
 
+    def test_withdrawn_item_create_plan_is_refused_after_hash_validation(self) -> None:
+        core = {"tool": item_tool.TOOL_NAME, "kind": "item_create"}
+        digest = item_tool.digest_for(core)
+        path = self.root / "withdrawn_item_create.json"
+        path.write_text(json.dumps({**core, "sha256": digest}), encoding="utf-8")
+        with mock.patch.object(
+            item_tool,
+            "WITHDRAWN_ITEM_CREATE_PLAN_HASHES",
+            {digest: "withdrawn in test"},
+        ):
+            with self.assertRaisesRegex(item_tool.ItemToolError, "permanently withdrawn"):
+                item_tool.load_plan(str(path), "item_create")
+        loaded = item_tool.load_plan(str(path), "item_create")
+        self.assertEqual(loaded["sha256"], digest)
+
+    def test_all_superseded_backing_ring_plans_are_pinned(self) -> None:
+        expected = {
+            "9d62d3962fa00f981f0ef6766448a176cc4d3a134b677c7982b1b8d7f012910a",
+            "0a2d2944fd59a273000cd901b794727cd204f88eeeb3d40f47977a88b0030c1a",
+            "0c192caad2b972e7c63a85f6e4944348c044aeef9f2d579bb356c04ffb50613d",
+            "b44bc7cdb2e9c9bc023e630ffdfd550f63ff98c951974f6b90300e697844d38e",
+            "dea4b48f0a55a2abccc5b76256a97ccab593f1c129a53c43c11035a6467728d0",
+            "a3b3d81ca7046d01fc6218e823da9de24d9cbd5485efe022aee063d35150e5ab",
+            "30291ce09dbd505cc64f40417fed77a02ba23cc087a63b6e1342d74d6be7b884",
+            "0eabc41727bf143ce31e0a1801f7e544da74205555ca1db1ba30dbeaa2434621",
+            "fa721418e4bdab8fbafe46b9db6bc253267f3e350a8dd3b7b51506c46339dc14",
+            "d09f392e6444d923acbde8aad387cf23c628ebae38c30e5ba2c17c8b90caaf52",
+            "8b02f2ef477604a2c71f4ad2743010782e820339517674bca89124d1a1239a17",
+            "7efdea461d7974c61dd94f6bf05aae7fe97565b3707360567ffe98943596829d",
+            "7856e86eb4f7d7b22799561d5c07d4004203eb593d3e1bb80285eb9ca1d51f5d",
+            "e7a8688670ac0f43e6115e3b6d6cada10f2723387b55cac1167d21fd857c4318",
+            "dd88cb32d545be3b8619fbdcf7ce8a68d61adc8511a5a4c9347cdbeb35fe798f",
+            "d5340e598d5a2ed4d862c2e69c33eafdbef06b8db4b0e66eae917bcd9d584313",
+        }
+        self.assertEqual(set(item_tool.WITHDRAWN_ITEM_CREATE_PLAN_HASHES), expected)
+        current = {
+            "ceaf491e062574cc1c626604eb497029aac9e6b56858efc406412070bbe9b021",
+            "0b12cb2b1b6075c2dce32fad09919e3bae7179f8238eac64b2eded9bc384bc5e",
+            "bf55df0bec79e5d036c3662ce5e16c690cb07f99b7944afcb0fa8b5fe6fd00d5",
+            "b422d0e000516d293fdf98b7c60c52ac446c18175810fed420691056d9301912",
+            "db844527217a1c4908aeda06ccaf4aaace915533ee93581ab7e86f45b0432770",
+            "8bd3658c913a79b88df6a3202ac8b00e7ab1b140ecd87474d1860bc912af19ad",
+            "d09d398e74593b59fdcf067bf28a7bb93aad0bfffcde5ad79de52c170ab71dbd",
+            "de6c5e0f6e804210d6d3331907fc0bf4af79e466294dd00181369baf4b74cb09",
+        }
+        self.assertTrue(current.isdisjoint(item_tool.WITHDRAWN_ITEM_CREATE_PLAN_HASHES))
+
     def test_parser_exposes_only_separate_stage_and_commit_commands(self) -> None:
         parser = item_tool.build_parser()
         stage = parser.parse_args(["stage-group-option-rename", "--input", "x.json"])

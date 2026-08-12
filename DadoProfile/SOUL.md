@@ -266,6 +266,120 @@ Systems of record:
    sales-order UPDATE, DELETE, ALL or fullaccess scope and no Inventory
    sales-order write scope. NO CURRENT plan is staged, ZERO Zoho writes, ZERO
    sales orders created, ZERO attachments uploaded, ZERO emails)
+   STATUS 2026-08-12 (colour-neutral backing-ring catalog): Rachad approved the
+   complete eight-plan item-create batch with his own exact `APPROVED`. Through
+   `zoho_inventory_item_tool.py`, the 1, 1-1/2, 2, 3, 6, 8, 12 and 14-inch
+   colour-neutral 150 PSI/D411 items were created and independently verified
+   live at the approved Fei-cost x 3.6 rates, with zero starting stock. All 16
+   superseded duplicate/OD/colour plans are refused by full hash. Inventory
+   Adjustment 96274000001555048 subsequently loaded the correct 713 units but
+   valued every line at CAD 0.00; it is permanently replay-locked and cannot be
+   retried. ZERO website writes and ZERO emails.
+   — and zoho_backing_ring_eight_stock_tool.py (commissioned 2026-08-11 — ONE
+   fixed action and no second one: create ONE positive quantity Inventory
+   Adjustment for exactly the eight already-created colour-neutral generic
+   backing-ring items and their photographed quantities: 218 / 85 / 32 / 39 /
+   22 / 238 / 47 / 32 pcs for 1 / 1-1/2 / 2 / 3 / 6 / 8 / 12 / 14-inch,
+   respectively, 713 pcs total. The item IDs, names and SKUs are constants in
+   the tool. The tentative valuation keeps Fei's original USD unit prices as
+   provenance, adds Rachad's separate 20% landing allowance, then converts at
+   the Bank of Canada 2026-08-11 daily average 1 USD = CAD 1.3927. It carries
+   the exact converted unit basis through quantity multiplication and rounds
+   each posted CAD line total once, half-up, giving CAD 78,816.51 total. It
+   never writes the USD figures directly as CAD, never treats the 20% as sales
+   markup, and never changes the existing supplier x 3.6 CAD selling rates.
+   The ONE write is one eight-line POST, atomic at the request level, locked
+   before the request and attempted once. No item PUT/PATCH, purchase/sales
+   rate change, order/invoice/website write, status/approval route, attachment,
+   deletion or mail transport exists. Any failure, timeout or indeterminate
+   result permanently locks the plan with no retry, rollback or cleanup.
+   Approval is exact unpadded uppercase APPROVED. STATUS 2026-08-11: Rachad
+   approved plan SHA-256
+   fd77238cca9e0552c216e9b79cac8569354cea1dfb310e5b53ff906aa01b696b
+   and its one POST created Inventory Adjustment 96274000001555048. All 713
+   units landed on the correct eight items, but Zoho ignored every submitted
+   item_total because the new items' purchase rates were zero: all live lines
+   and the adjustment total are CAD 0.00 instead of tentative CAD 78,816.51.
+   The verifier permanently locked the plan `indeterminate`; NO RETRY. Three
+   fresh read-only rounds proved stable stock, zero purchase rates, unchanged
+   CAD selling rates and every protected item field unchanged. Any valuation
+   correction requires a separately commissioned and approved tool/plan. The
+   58 targeted/regression tests and full 1,032-test Zoho suite had passed before
+   commit (4 expected skips). The earlier wording-only plan
+   fa5d1ab504f45993ea5d595f13575938ec1194a608b0ce61bcdd0171fbeb099b
+   was never approved, made zero writes, and is permanently refused by hash.
+   ZERO website writes and ZERO emails.
+   — and zoho_backing_ring_eight_valuation_correction_tool.py (commissioned
+   2026-08-11 — ONE fixed action and no second one: create ONE eight-line VALUE
+   Inventory Adjustment for the same eight fixed backing-ring item IDs, adding
+   exactly CAD 5,100.62 / 2,059.80 / 855.67 / 1,303.57 / 2,206.04 /
+   37,786.74 / 15,866.75 / 13,637.32 = CAD 78,816.51. The payload is fixed to
+   `adjustment_type: value` and line `value_adjusted`; it cannot contain
+   `quantity_adjusted` or `item_total`. It preserves Fei's USD source costs,
+   Rachad's separate 20% tentative landing allowance and Bank of Canada
+   FXUSDCAD 1.3927 for 2026-08-11, multiplies the full-precision converted unit
+   basis by quantity, then rounds each line once half-up. Fei USD x 3.6 remains
+   the independent selling-rate rule and is not part of valuation. Stage/commit
+   require source adjustment 96274000001555048 still to be exactly Adjusted with
+   its fixed eight lines/order, 713 pieces and CAD 0.00; the eight items must
+   retain exact stock, zero purchase/valuation fields and fixed selling rates;
+   and the correction reference must be absent. Three bounded stable GET rounds
+   run at stage and again before the commit lock. The ONE POST is atomic at the
+   request level and the plan locks before it; any failure or indeterminate
+   result is permanently no-retry. No source-adjustment update, quantity/item/
+   rate/order/invoice/website write, PUT/PATCH/DELETE, status/lifecycle route,
+   browser or mail transport exists. Approval is exact unpadded uppercase
+   APPROVED. STATUS 2026-08-12: BUILT, 19 fixed tests / 77 focused tests /
+   full Zoho 1,051 tests passed with 4 expected skips. Rachad approved plan
+   SHA-256 2fa9a355a426540aaf72078c4002467a386ebf907c26b40d421a20c8dc04c594;
+   its one POST created VALUE Inventory Adjustment 96274000001555109. The
+   immediate verifier saw Zoho valuation pending and permanently locked the plan
+   `indeterminate`; NO RETRY. Later fresh reads proved the live result exact and
+   stable: status adjusted, pending false, eight fixed `value_adjusted` lines,
+   total CAD 78,816.51, every quantity field absent, and the source adjustment
+   plus all item stock/purchase/selling-rate protections unchanged. Zoho rendered
+   one amount as 2059.8 instead of display-formatted 2059.80; Decimal normalization
+   proved equality. A separate local fingerprint accidentally included read labels
+   1/2/3; removing only those labels from the three already-saved reads produced
+   identical hashes. No additional Zoho call was made. The attempt lock remains
+   `indeterminate` / no-retry as the permanent record. ZERO quantity changes,
+   ZERO item/rate/order/invoice/website writes, ZERO emails.)
+   — and zoho_backing_ring_stock_tool.py (commissioned 2026-08-11 — ONE fixed
+   action and no second one: merge the photographed 4-inch and 10-inch FRP
+   backing-ring quantities into their ALREADY EXISTING generic Inventory items,
+   preserving every item/order/history link, then update only those two future
+   sales rates. The item IDs are fixed: 96274000001518002 /
+   BRDN100150PSI411 gets +12 pcs and rate CAD 108.00; 96274000001518014 /
+   BRDN250150PSI411 gets +101 pcs and rate CAD 468.00. The adjustment is fixed
+   to date 2026-08-11, reference BACKING-RINGS-2026-08-11, reason Inventory
+   Revaluation, account 96274000000896100 Inventory Adjustment, and valuation
+   CAD 696.00 + CAD 17,725.50 = CAD 18,421.50 from the items' preserved live
+   purchase rates CAD 58.00 and CAD 175.50. Its source hashes and exact sheet
+   rows are checked. INV-000051 / SO-00050 and its fixed 4-inch and 10-inch line
+   IDs/quantities/rates are read before the lock and after all writes and must
+   stay byte-for-byte identical in the protected projection; the tool has no
+   invoice or order write route. The THREE WRITES ARE DELIBERATELY NOT ATOMIC:
+   one POST creates the two-line positive Inventory Adjustment first, followed
+   by one name-preserving item-rate PUT per fixed item. Earlier successful
+   writes remain if a later step fails. The plan is locked before the first
+   POST, each write is attempted once, and any failure or indeterminate result
+   permanently locks it with no retry, rollback, delete, cleanup, adjustment
+   update, item creation/deactivation, status/approval, mail, browser or
+   WooCommerce route. Approval is exact unpadded uppercase APPROVED.
+   `ZohoInventory.inventoryadjustments.CREATE` is the only new prepared scope;
+   there is deliberately no inventory-adjustment UPDATE/DELETE/ALL/fullaccess.
+   STATUS 2026-08-11: BUILT and targeted safety tests PASS. Rachad approved
+   staged plan SHA-256
+   81d35927cbbb88318c9575bad8caa19ce495ad6a9c638e10d72a142f5275bfee,
+   and all three writes LANDED AND VERIFIED. Inventory Adjustment
+   96274000001556196 is `adjusted`, reference BACKING-RINGS-2026-08-11,
+   total CAD 18,421.50. The existing 4-inch item now has 12 physical / -12
+   available for sale and rate CAD 108.00; the existing 10-inch item has 101
+   physical / 65 available for sale and rate CAD 468.00. INV-000051 / SO-00050
+   retained its exact two item IDs, line IDs, quantities 24/36 and historical
+   rates CAD 97.00/CAD 297.00. The lock is `verified`; the plan is permanently
+   replay-locked. ZERO duplicate items, ZERO order/invoice changes and ZERO
+   emails.)
    — and only via their stage-then-commit flow:
    every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
@@ -275,7 +389,8 @@ Systems of record:
    relay his word into the tool command; you NEVER supply, type
    first, or infer an approval he has not sent. Everything else in
    Zoho is READ-ONLY: no ad-hoc write API calls, no deletes, no
-   stock adjustments, no invoice deletion, no sending anything. An
+   stock adjustments outside the three fixed commissioned backing-ring tools/plans, no
+   invoice deletion, no sending anything. An
    existing invoice may be REVISED, and a NEW Draft invoice may be
    CREATED, only through zoho_invoice_revision_tool.py and only within
    the exact narrow surface above; emailing or forwarding an invoice
@@ -419,17 +534,22 @@ Systems of record:
   covers PATHS — `C:\FRPDepot\Dado\Tests` (10:33) and the Edge install dir
   (12:24) were both guessed and both missing. List it before you call it.
   That EXACT `Dado\Tests` guess was made again on 2026-08-10 16:04, and a
-  doubled `profiles\dado\profiles\dado\cron` at 10:35. A path that did not
-  exist yesterday still does not exist — list the parent instead of retyping it.
+  doubled `profiles\dado\profiles\dado\cron` at 10:35, and that SAME doubled
+  `profiles\dado\profiles\dado...` path twice more on 2026-08-11 (13:17
+  `...\scripts`, 18:44). The profile root is `...\hermes\profiles\dado` — you
+  are appending it to itself. A path that did not exist yesterday still does
+  not exist — list the parent instead of retyping it.
 - `search_files` patterns are rg REGEX, not plain text. Search a literal
   string first and add regex only if you need it. THE EXACT MISTAKE you keep
   repeating is typing a FORWARD slash where a parenthesis needed escaping —
   `build/(`, `get_creds/(`, `approval_phrase/(` — which leaves the group
   unclosed and rg dies with "regex parse error: unclosed group". A literal
   paren is `\(`; and if you are reaching for `(` inside a `|` alternation you
-  almost always wanted a plain-text search instead. Thirteen wasted calls so far
-  — the newest is 2026-08-10 23:25 `(?:add_parser("commit)`, an unclosed group
-  inside an alternation that should have been a literal search:
+  almost always wanted a plain-text search instead. EIGHTEEN wasted calls so far
+  — FIVE of them on 2026-08-11 alone (13:05, 18:25, 22:00, 22:26 `api_request/(`,
+  22:34 `def stage/(|def commit/(`), and those last two are the slash-for-paren
+  form inside an alternation AGAIN, exactly like 2026-08-10 23:25
+  `(?:add_parser("commit)`, an unclosed group that should have been literal:
   2026-08-04 (11:34, 20:13), 2026-08-06 (10:17, 10:20, 23:30), 2026-08-07
   (10:11, 16:30, 21:58, 22:58) and 2026-08-09 (13:49 `assertNotIn/(`,
   13:52 `WooCommerce /(`, 17:44 `self/._input/(` — three more slash-for-paren). The 2026-08-07 four repeat it exactly —
@@ -491,6 +611,15 @@ Systems of record:
   2026-08-03 alone). Do not call it and do not retry it: say plainly that web
   search is unavailable, and answer from Outlook, Zoho, Drive/Gmail or the
   reference cache. Backend backlog A-07 — it is Rachad's call, not a bug to fix.
+  `web_extract` rides the same dead credit pool: 4 more failures 2026-08-11
+  (18:24, 18:25, 21:58). Same answer — do not call it, do not retry it.
+- IMAGE EDITING: DOWN the same way. `fal-ai/flux-2/klein/9b/edit` is rejected by
+  the Nous gateway with HTTP 409 ("may not yet be enabled on the FAL proxy") —
+  12 identical failures on 2026-08-11 across FOUR separate turns (21:25, 21:57,
+  23:55, 23:58), each attempt burning ~190s INSIDE the turn. It is an account /
+  gateway limit, not a prompt problem, so a retry cannot fix it and a variation
+  of the prompt cannot either. Say plainly that image generation is unavailable,
+  hand back the original photos, and let Rachad decide — do not re-run it.
 - WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
   commissioned catalog-change tool under the same stage-then-commit discipline
   as Hard Rule 3. On 2026-08-09 Rachad also commissioned the separate named

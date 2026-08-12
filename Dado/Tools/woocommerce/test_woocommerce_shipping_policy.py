@@ -30,6 +30,23 @@ Two artifacts are under test:
    immediately) or the same entry settling, confirmed across a fixed bounded
    schedule. The tests below hold both halves: the new path exists and is honest,
    and the settled path is byte-for-byte the behaviour schema 3 proved.
+
+   Plan schema 5 (2026-08-11) repairs the verifier again, and for the same class
+   of reason: schema 4 was right about the transition and wrong about its SHAPE.
+   It recognised a settlement only when EXACTLY ONE metadata entry moved. On the
+   31-target FRP Pipe plan the 22nd target, /products/1455/variations/1476, had its
+   single approved PUT land correctly and came back with THREE entries changed --
+   `_wc_gla_sync_status` pending -> settled plus `_wc_gla_synced_at` and
+   `_wc_gla_sync_hash` -- same ids, same keys, same indexes, same count, same
+   order. Schema 4 could only call that a third-party edit; it locked the plan
+   indeterminate mid-run over a resource that was in fact exactly right. Schema 5
+   adds that one measured shape as a second CLOSED settlement, gated on the same
+   pinned status transition, and the tests below hold the hard property: the exact
+   triplet is accepted, and every neighbouring shape -- a fourth changed value, a
+   status that does not move pending -> settled, a duplicate, a malformed entry, an
+   identity or index drift, an add/remove/reorder, the triplet on the wrong
+   baseline, and a settled state that will not hold still -- is still refused,
+   still locked, still never retried.
 2. freight_checkout_guard/ -- the site-side WordPress plugin that blocks checkout.
 
 The checkout-guard scenarios live in freight_checkout_guard/freight_guard_scenarios.json
@@ -221,11 +238,64 @@ FIXED_VOCABULARY = (
     "pending_settle_confirm_schedule_seconds", "pending_settle_confirm_max_seconds",
     "pending_baseline_value_sha256", "pending_final_requirement",
     "pending_settled_confirmed_targets",
+    # Schema 5. `_wc_gla_synced_at` is a WordPress FIELD NAME hard-coded in the
+    # tool's source, exactly like `_wc_gla_sync_status`, and metadata_projection
+    # deliberately stores key names in clear -- Rachad cannot act on "some entry
+    # changed". It is stripped here because it literally contains the substring
+    # "synced": without stripping it, the leak checks below could not tell a field
+    # name the tool always knew from a VALUE it read back off a record.
+    "_wc_gla_synced_at", "_wc_gla_sync_hash",
 )
 
 
 def gla_meta_entries(value: str = GLA_STAGED) -> list[dict]:
     return meta_entries() + [{"id": GLA_ID, "key": GLA_KEY, "value": value}]
+
+
+# The exact live shape on /products/1455/variations/1476 (SKU PIDN450150PSI411),
+# the target schema 4 locked: seven entries, with the Google status flag at index
+# 1 between its save stamp at index 0 and its content hash at index 5. The three
+# indexes and the two companion ids are the measured ones from the 2026-08-11
+# commit lock; the status entry keeps this file's existing GLA_ID so the schema-3
+# and schema-4 fixtures stay comparable.
+GLA_SYNCED_AT_KEY = "_wc_gla_synced_at"
+GLA_SYNC_HASH_KEY = "_wc_gla_sync_hash"
+GLA_SYNCED_AT_ID = 45151
+GLA_SYNC_HASH_ID = 74838
+GLA_VISIBILITY_ID = 45153
+# Sentinels, not plausible values: a stamp and a content hash are as much
+# "metadata value" as a licence key is, and must never reach a plan or a lock.
+SYNCED_AT_BEFORE = "SENTINEL-SYNCED-AT-BEFORE-MUST-NOT-LEAK"
+SYNCED_AT_AFTER = "SENTINEL-SYNCED-AT-AFTER-MUST-NOT-LEAK"
+SYNC_HASH_BEFORE = "SENTINEL-SYNC-HASH-BEFORE-MUST-NOT-LEAK"
+SYNC_HASH_AFTER = "SENTINEL-SYNC-HASH-AFTER-MUST-NOT-LEAK"
+
+
+def triplet_meta_entries(status: str = GLA_TRANSIENT,
+                         synced_at: str = SYNCED_AT_BEFORE,
+                         sync_hash: str = SYNC_HASH_BEFORE) -> list[dict]:
+    """Seven entries in the store's own order, matching the measured indexes."""
+    return (
+        [{"id": GLA_SYNCED_AT_ID, "key": GLA_SYNCED_AT_KEY, "value": synced_at},
+         {"id": GLA_ID, "key": GLA_KEY, "value": status}]
+        + meta_entries()
+        + [{"id": GLA_SYNC_HASH_ID, "key": GLA_SYNC_HASH_KEY, "value": sync_hash},
+           {"id": GLA_VISIBILITY_ID, "key": "_wc_gla_visibility",
+            "value": SECRET_META_VALUE}]
+    )
+
+
+def settled_triplet_meta_entries() -> list[dict]:
+    """The readback shape: all three moved value, nothing else moved at all."""
+    return triplet_meta_entries(GLA_STAGED, SYNCED_AT_AFTER, SYNC_HASH_AFTER)
+
+
+def triplet_variation_record(parent_id: int, variation_id: int,
+                             status: str = GLA_TRANSIENT, **overrides) -> dict:
+    record = variation_record(parent_id, variation_id,
+                              meta_data=triplet_meta_entries(status))
+    record.update(overrides)
+    return record
 
 
 def gla_product_record(product_id: int, value: str = GLA_STAGED, **overrides) -> dict:
@@ -1292,16 +1362,16 @@ class MetadataDiagnosticTests(unittest.TestCase):
 
 
 class SchemaVersionTests(PlanFixture):
-    def test_a_staged_plan_declares_schema_four_and_the_tool_version(self):
+    def test_a_staged_plan_declares_schema_five_and_the_tool_version(self):
         store = self._assign_store()
         plan_path, result = self._stage(store, self._assign_input())
         plan = json.loads(plan_path.read_text(encoding="utf-8"))
-        self.assertEqual(policy.SCHEMA_VERSION, 4)
-        self.assertEqual(policy.TOOL_VERSION, "4.0.0")
-        self.assertEqual(plan["schema_version"], 4)
-        self.assertEqual(plan["tool_version"], "4.0.0")
-        self.assertEqual(result["schema_version"], 4)
-        self.assertEqual(result["tool_version"], "4.0.0")
+        self.assertEqual(policy.SCHEMA_VERSION, 5)
+        self.assertEqual(policy.TOOL_VERSION, "5.0.0")
+        self.assertEqual(plan["schema_version"], 5)
+        self.assertEqual(plan["tool_version"], "5.0.0")
+        self.assertEqual(result["schema_version"], 5)
+        self.assertEqual(result["tool_version"], "5.0.0")
 
     def test_every_target_carries_the_closed_per_field_and_metadata_evidence(self):
         store = self._assign_store()
@@ -1423,12 +1493,72 @@ class SchemaVersionTests(PlanFixture):
         self.assertIn("schema", str(caught.exception).casefold())
         self.assertFalse(policy.lock_path(plan_path.resolve()).exists())
 
+    def test_a_schema_four_plan_is_refused_before_any_network_even_when_rehashed(self):
+        """Schema 4's verifier recognised only the narrower settlement shape, so
+        the measured three-entry Google settlement locked it indeterminate mid-run.
+        A schema-4 plan is refused exactly like 1, 2 and 3 -- before the vault,
+        before the network -- and rehashing one does not revive it. This is what
+        makes every already-staged schema-4 Manway and Manway Cover plan dead."""
+        store = self._assign_store()
+        plan_path, _ = self._stage(store, self._assign_input())
+
+        def downgrade(plan):
+            plan["schema_version"] = 4
+            plan["tool_version"] = "4.0.0"
+            for field in ("settlement_shapes", "settlement_status_meta_key",
+                          "settlement_companion_meta_keys",
+                          "settlement_max_changed_meta_entries"):
+                plan["convergence_contract"].pop(field)
+
+        self._rewrite(plan_path, downgrade, rehash=True)
+        with mock.patch.object(policy.wc, "load_vault") as load, \
+             mock.patch.object(policy.wc, "api_get") as get, \
+             mock.patch.object(policy.wc, "api_request") as write:
+            with self.assertRaises(policy.ShippingPolicyError) as caught:
+                policy.command_commit(argparse.Namespace(
+                    plan=str(plan_path), approval="APPROVED"))
+            load.assert_not_called()
+            get.assert_not_called()
+            write.assert_not_called()
+        self.assertIn("schema", str(caught.exception).casefold())
+        self.assertFalse(policy.lock_path(plan_path.resolve()).exists())
+
+    def test_a_schema_four_plan_is_refused_even_with_the_new_contract_grafted_on(self):
+        """Belt and braces: the version bump alone refuses it, and so would the
+        contract alone. Neither is load-bearing by itself."""
+        store = self._assign_store()
+        plan_path, _ = self._stage(store, self._assign_input())
+        # Version downgraded, contract left entirely current.
+        self._rewrite(plan_path, lambda plan: plan.update(
+            {"schema_version": 4, "tool_version": "4.0.0"}), rehash=True)
+        with mock.patch.object(policy.wc, "load_vault") as load, \
+             mock.patch.object(policy.wc, "api_get") as get:
+            with self.assertRaises(policy.ShippingPolicyError):
+                policy.load_plan(str(plan_path))
+            load.assert_not_called()
+            get.assert_not_called()
+        # Version current, contract downgraded to the schema-4 field set.
+        self._rewrite(plan_path, lambda plan: (
+            plan.update({"schema_version": 5, "tool_version": "5.0.0"}),
+            [plan["convergence_contract"].pop(field) for field in
+             ("settlement_shapes", "settlement_status_meta_key",
+              "settlement_companion_meta_keys",
+              "settlement_max_changed_meta_entries")]), rehash=True)
+        with mock.patch.object(policy.wc, "load_vault") as load, \
+             mock.patch.object(policy.wc, "api_get") as get:
+            with self.assertRaises(policy.ShippingPolicyError) as caught:
+                policy.load_plan(str(plan_path))
+            load.assert_not_called()
+            get.assert_not_called()
+        self.assertIn("convergence_contract", str(caught.exception))
+
     def test_only_the_current_schema_and_tool_version_load(self):
         """Every earlier schema is unusable, and so is a version-only edit."""
         store = self._assign_store()
         plan_path, _ = self._stage(store, self._assign_input())
         for schema, tool_version in ((1, "1.0.0"), (2, "2.0.0"), (3, "3.0.0"),
-                                     (5, "5.0.0"), (4, "3.0.0"), (3, "4.0.0")):
+                                     (4, "4.0.0"), (6, "6.0.0"), (5, "4.0.0"),
+                                     (4, "5.0.0"), (3, "5.0.0")):
             with self.subTest(schema=schema, tool_version=tool_version):
                 self._rewrite(plan_path, lambda plan: plan.update(
                     {"schema_version": schema, "tool_version": tool_version}),
@@ -1804,7 +1934,38 @@ class ConvergenceContractTests(PlanFixture):
             "pending_settle_confirm_max_seconds": 6,
             "pending_final_requirement":
                 "exact_staged_pending_state_or_confirmed_settled_state",
+            # Schema 5 adds the measured settlement shape. It introduces NO third
+            # digest and NO third status value: the gate is still the same one
+            # transition between the same two digests the incident proved.
+            "settlement_shapes": ["gla_status_only",
+                                  "gla_status_with_stamp_and_hash"],
+            "settlement_status_meta_key": "_wc_gla_sync_status",
+            "settlement_companion_meta_keys": ["_wc_gla_synced_at",
+                                               "_wc_gla_sync_hash"],
+            "settlement_max_changed_meta_entries": 3,
         })
+
+    def test_the_settlement_shapes_are_closed_and_name_only_three_keys(self):
+        self.assertEqual(policy.SETTLEMENT_SHAPES,
+                         ("gla_status_only", "gla_status_with_stamp_and_hash"))
+        self.assertEqual(policy.GLA_SETTLEMENT_TRIPLET_KEYS,
+                         ("_wc_gla_sync_status", "_wc_gla_synced_at",
+                          "_wc_gla_sync_hash"))
+        self.assertEqual(policy.GLA_SETTLEMENT_COMPANION_KEYS,
+                         ("_wc_gla_synced_at", "_wc_gla_sync_hash"))
+        self.assertEqual(policy.GLA_SETTLEMENT_TRIPLET_ENTRY_COUNT, 3)
+        # The status key is the gate and is never demoted to a companion.
+        self.assertNotIn(policy.GLA_META_KEY, policy.GLA_SETTLEMENT_COMPANION_KEYS)
+        self.assertEqual(policy.GLA_SETTLEMENT_TRIPLET_KEY_SHA256[policy.GLA_META_KEY],
+                         policy.GLA_META_KEY_SHA256)
+        for key, digest in policy.GLA_SETTLEMENT_TRIPLET_KEY_SHA256.items():
+            with self.subTest(key=key):
+                self.assertEqual(digest, policy.sha256_of(key))
+        # No shape name is a bare live value either.
+        for shape in policy.SETTLEMENT_SHAPES:
+            with self.subTest(shape=shape):
+                self.assertNotEqual(shape, GLA_STAGED)
+                self.assertNotEqual(shape, GLA_TRANSIENT)
 
     def test_the_two_baselines_reuse_the_two_proven_digests_and_add_no_third(self):
         contract = policy.convergence_contract()
@@ -1952,6 +2113,31 @@ class ConvergenceContractTests(PlanFixture):
                 "pending_baseline_value_sha256": policy.GLA_STAGED_VALUE_SHA256})),
             mutated(lambda c: c.__setitem__("pending_final_requirement",
                                             "accept_anything")),
+            # Schema 5. No third shape, no fourth companion key, no wider entry
+            # ceiling, no re-pointed status key, and no float in place of the
+            # integer count.
+            mutated(lambda c: c.__setitem__(
+                "settlement_shapes", ["gla_status_only",
+                                      "gla_status_with_stamp_and_hash", "anything"])),
+            mutated(lambda c: c.__setitem__("settlement_shapes", ["gla_status_only"])),
+            mutated(lambda c: c.__setitem__(
+                "settlement_shapes", ["gla_status_with_stamp_and_hash",
+                                      "gla_status_only"])),
+            mutated(lambda c: c.__setitem__("settlement_shapes", [])),
+            mutated(lambda c: c.__setitem__("settlement_status_meta_key",
+                                            "_wc_gla_synced_at")),
+            mutated(lambda c: c.__setitem__("settlement_status_meta_key",
+                                            "_wc_gla_sync_status2")),
+            mutated(lambda c: c["settlement_companion_meta_keys"].append("_anything")),
+            mutated(lambda c: c["settlement_companion_meta_keys"].reverse()),
+            mutated(lambda c: c.__setitem__("settlement_companion_meta_keys", [])),
+            mutated(lambda c: c.__setitem__(
+                "settlement_companion_meta_keys",
+                ["_wc_gla_synced_at", "_wc_gla_sync_status"])),
+            mutated(lambda c: c.__setitem__("settlement_max_changed_meta_entries", 4)),
+            mutated(lambda c: c.__setitem__("settlement_max_changed_meta_entries", 250)),
+            mutated(lambda c: c.__setitem__("settlement_max_changed_meta_entries", 3.0)),
+            mutated(lambda c: c.__setitem__("settlement_max_changed_meta_entries", True)),
         )
         for value in refused:
             with self.subTest(value=str(value)[:70]):
@@ -2005,6 +2191,14 @@ class ConvergenceContractTests(PlanFixture):
             {**self._assign_input(), "pending_settle_confirm_schedule_seconds": []},
             {**self._assign_input(), "pending_settle_confirm_max_seconds": 0},
             {**self._assign_input(), "pending_final_requirement": "accept_anything"},
+            # Schema 5: a request may not name a settlement shape, a companion key
+            # or a changed-entry ceiling either.
+            {**self._assign_input(), "settlement_shapes": ["anything"]},
+            {**self._assign_input(), "settlement_shape": "gla_status_only"},
+            {**self._assign_input(),
+             "settlement_companion_meta_keys": ["_wc_gla_synced_at", "_anything"]},
+            {**self._assign_input(), "settlement_max_changed_meta_entries": 250},
+            {**self._assign_input(), "settlement_status_meta_key": "_anything"},
         )
         for data in refused:
             with self.subTest(extra=sorted(set(data) - {"action", "targets", "sources"})):
@@ -2427,6 +2621,436 @@ class GlaSettlingDetectorTests(GlaTransientDetectorTests):
                 copy = json.loads(json.dumps(diagnostic))
                 mutate(copy)
                 self.assertIs(policy.is_gla_sync_settling(target, copy, True), False)
+
+
+# ---------------------------------------------------------------------------
+# Schema 5: the measured three-entry settlement (pure)
+# ---------------------------------------------------------------------------
+class GlaSettlementTripletDetectorTests(unittest.TestCase):
+    """The exact movement schema 4 could not see, and everything it is not.
+
+    The endpoint is the real one schema 4 locked. Pure predicate tests: no store,
+    no clock, no plan, no I/O.
+    """
+
+    ENDPOINT = "/products/1455/variations/1476"
+    PRODUCT_ID = 1455
+    VARIATION_ID = 1476
+
+    def _target(self, record, mode="pending_baseline"):
+        projection = policy.metadata_projection(record)
+        derived = policy.gla_baseline_mode(projection)
+        return {
+            "kind": "variation", "product_id": self.PRODUCT_ID,
+            "variation_id": self.VARIATION_ID,
+            "before_shipping_class": "",
+            "before_stale_fingerprint": policy.stale_fingerprint(record),
+            "before_protected_fingerprint": policy.protected_fingerprint(record),
+            "before_date_modified_gmt": str(record.get("date_modified_gmt") or ""),
+            "before_protected_field_fingerprints":
+                policy.protected_field_fingerprints(record),
+            "before_meta_data_projection": projection,
+            "gla_baseline_mode": derived if mode is None else mode,
+            "gla_convergence_eligible": derived == "settled_baseline",
+            "gla_pending_stability": None,
+        }
+
+    def _diagnostic(self, target, entries, **readback):
+        moved = triplet_variation_record(self.PRODUCT_ID, self.VARIATION_ID,
+                                         shipping_class=policy.FREIGHT_CLASS_SLUG)
+        moved["meta_data"] = entries
+        moved.update(readback)
+        return policy.protected_diagnostic(self.ENDPOINT, "post_write", target, moved)
+
+    def _pair(self, readback_entries=None, staged_entries=None,
+              staged_status=GLA_TRANSIENT, mode="pending_baseline", **readback):
+        staged = triplet_variation_record(self.PRODUCT_ID, self.VARIATION_ID,
+                                          staged_status)
+        if staged_entries is not None:
+            staged["meta_data"] = staged_entries
+        target = self._target(staged, mode=mode)
+        entries = (settled_triplet_meta_entries() if readback_entries is None
+                   else readback_entries)
+        return target, self._diagnostic(target, entries, **readback)
+
+    def _refused(self, target, diagnostic):
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True), False)
+        self.assertIsNone(policy.gla_settlement_shape(target, diagnostic, True))
+
+    # -- the accepted shape --------------------------------------------------
+    def test_the_exact_three_field_settlement_is_recognised(self):
+        target, diagnostic = self._pair()
+        self.assertIsNotNone(diagnostic)
+        self.assertEqual(diagnostic["changed_protected_fields"], ["meta_data"])
+        detail = diagnostic["meta_data_projection"]["diagnostic"]
+        # The measured shape, entry for entry: same count either side, three
+        # values moved, nothing added, removed, re-identified or reordered.
+        self.assertEqual(detail["staged_entry_count"], 7)
+        self.assertEqual(detail["readback_entry_count"], 7)
+        self.assertEqual(detail["value_changed_entry_count"], 3)
+        self.assertEqual(detail["added_entry_count"], 0)
+        self.assertEqual(detail["removed_entry_count"], 0)
+        self.assertEqual(detail["identity_changed_position_count"], 0)
+        self.assertIs(detail["order_changed"], False)
+        rows = {row["key"]: row for row in detail["value_changed_entries"]}
+        self.assertEqual(set(rows), {GLA_KEY, GLA_SYNCED_AT_KEY, GLA_SYNC_HASH_KEY})
+        self.assertEqual(rows[GLA_KEY]["id"], GLA_ID)
+        self.assertEqual(rows[GLA_KEY]["staged_index"], 1)
+        self.assertEqual(rows[GLA_SYNCED_AT_KEY]["staged_index"], 0)
+        self.assertEqual(rows[GLA_SYNCED_AT_KEY]["id"], GLA_SYNCED_AT_ID)
+        self.assertEqual(rows[GLA_SYNC_HASH_KEY]["staged_index"], 5)
+        self.assertEqual(rows[GLA_SYNC_HASH_KEY]["id"], GLA_SYNC_HASH_ID)
+        for key, row in rows.items():
+            with self.subTest(key=key):
+                self.assertEqual(row["staged_index"], row["readback_index"])
+                self.assertIs(row["value_differs"], True)
+        # Exactly the pinned status transition, and nothing invented for it.
+        self.assertEqual(rows[GLA_KEY]["staged_value_sha256"],
+                         policy.GLA_TRANSIENT_VALUE_SHA256)
+        self.assertEqual(rows[GLA_KEY]["readback_value_sha256"],
+                         policy.GLA_STAGED_VALUE_SHA256)
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, True), True)
+        self.assertEqual(policy.gla_settlement_shape(target, diagnostic, True),
+                         "gla_status_with_stamp_and_hash")
+
+    def test_the_schema_four_predicate_alone_still_cannot_see_it(self):
+        """The defect itself, pinned. The repair is a SECOND closed shape, not a
+        loosened first one -- so the single-entry rule must answer exactly as it
+        did, and it is the wider rule that recognises this movement."""
+        target, diagnostic = self._pair()
+        self.assertIs(policy._is_single_gla_value_move(
+            diagnostic, True, policy.GLA_TRANSIENT_VALUE_SHA256,
+            policy.GLA_STAGED_VALUE_SHA256), False)
+        self.assertIs(
+            policy._is_gla_settlement_triplet_move(target, diagnostic, True), True)
+
+    def test_the_narrow_status_only_settlement_still_wins_its_own_name(self):
+        """A resource with no companion entries settles exactly as schema 4 said."""
+        staged = gla_variation_record(1455, 1476, GLA_TRANSIENT)
+        target = self._target(staged)
+        moved = gla_variation_record(1455, 1476, GLA_STAGED,
+                                     shipping_class=policy.FREIGHT_CLASS_SLUG)
+        diagnostic = policy.protected_diagnostic(
+            self.ENDPOINT, "post_write", target, moved)
+        self.assertEqual(policy.gla_settlement_shape(target, diagnostic, True),
+                         "gla_status_only")
+
+    # -- the status transition is the gate -----------------------------------
+    def test_the_status_must_move_the_pinned_pending_to_the_pinned_settled(self):
+        for label, status in (("unchanged", GLA_TRANSIENT),
+                              ("a_third_value", "error"),
+                              ("empty", ""),
+                              ("case_shifted", GLA_STAGED.upper()),
+                              ("padded", GLA_STAGED + " "),
+                              ("prefixed", "not-" + GLA_STAGED)):
+            with self.subTest(label=label):
+                target, diagnostic = self._pair(
+                    readback_entries=triplet_meta_entries(
+                        status, SYNCED_AT_AFTER, SYNC_HASH_AFTER))
+                self._refused(target, diagnostic)
+
+    def test_the_forward_transition_with_its_companions_is_not_a_settlement(self):
+        """settled -> pending, even carrying the same two companions, is the other
+        half of the convergence. It is never a settlement, on any baseline."""
+        target, diagnostic = self._pair(
+            staged_status=GLA_STAGED,
+            readback_entries=triplet_meta_entries(
+                GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER))
+        self._refused(target, diagnostic)
+        # Nor is it the settled path's waitable transient: that one is ONE entry.
+        settled_target = self._target(
+            triplet_variation_record(self.PRODUCT_ID, self.VARIATION_ID, GLA_STAGED),
+            mode="settled_baseline")
+        settled_target["gla_convergence_eligible"] = True
+        self.assertIs(
+            policy.is_gla_sync_transient(settled_target, diagnostic, True), False)
+
+    def test_a_class_that_does_not_match_is_never_a_settlement(self):
+        target, diagnostic = self._pair()
+        self.assertIs(policy.is_gla_sync_settling(target, diagnostic, False), False)
+        self.assertIsNone(policy.gla_settlement_shape(target, diagnostic, False))
+
+    def test_the_triplet_from_any_other_baseline_is_not_a_settlement(self):
+        for mode in ("absent", "settled_baseline", "", "pending", "PENDING_BASELINE"):
+            with self.subTest(mode=mode):
+                target, diagnostic = self._pair(mode=mode)
+                self._refused(target, diagnostic)
+        # A schema-3 shaped target, carrying no mode at all, reaches neither path.
+        target, diagnostic = self._pair()
+        target.pop("gla_baseline_mode")
+        self._refused(target, diagnostic)
+
+    def test_a_settled_baseline_resource_can_never_be_settled_confirmed(self):
+        """Its before-state is already the settled digest, so the pinned pending ->
+        settled transition cannot be what its readback shows."""
+        target, diagnostic = self._pair(staged_status=GLA_STAGED,
+                                        mode="settled_baseline")
+        self._refused(target, diagnostic)
+
+    # -- nothing else may move ----------------------------------------------
+    def test_a_fourth_metadata_value_change_is_not_a_settlement(self):
+        settled = settled_triplet_meta_entries()
+        for label, index in (("an_unrelated_third_party_entry", 2),
+                             ("a_fourth_google_entry", 6)):
+            with self.subTest(label=label):
+                entries = [dict(row) for row in settled]
+                entries[index] = {**entries[index], "value": "MOVED-AS-WELL"}
+                target, diagnostic = self._pair(readback_entries=entries)
+                detail = diagnostic["meta_data_projection"]["diagnostic"]
+                self.assertEqual(detail["value_changed_entry_count"], 4)
+                self._refused(target, diagnostic)
+
+    def test_only_the_two_observed_counts_are_settlements(self):
+        """One entry (schema 3's proven shape) and three (the measured one). Two is
+        a shape nobody has observed, so it is refused rather than interpolated."""
+        for label, entries in (
+            ("status_and_stamp_only",
+             triplet_meta_entries(GLA_STAGED, SYNCED_AT_AFTER, SYNC_HASH_BEFORE)),
+            ("status_and_hash_only",
+             triplet_meta_entries(GLA_STAGED, SYNCED_AT_BEFORE, SYNC_HASH_AFTER)),
+            ("companions_only",
+             triplet_meta_entries(GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)),
+        ):
+            with self.subTest(label=label):
+                target, diagnostic = self._pair(readback_entries=entries)
+                self._refused(target, diagnostic)
+        # ...and the status moving ALONE, while both companions sit still, is the
+        # narrow shape, not a refusal. The two shapes are the two observed counts.
+        target, diagnostic = self._pair(readback_entries=triplet_meta_entries(
+            GLA_STAGED, SYNCED_AT_BEFORE, SYNC_HASH_BEFORE))
+        self.assertEqual(
+            diagnostic["meta_data_projection"]["diagnostic"]["value_changed_entry_count"],
+            1)
+        self.assertEqual(policy.gla_settlement_shape(target, diagnostic, True),
+                         "gla_status_only")
+
+    def test_any_add_remove_or_reorder_is_not_a_settlement(self):
+        settled = settled_triplet_meta_entries()
+        for label, entries in (
+            ("added", settled + [{"id": 9500, "key": "_added",
+                                  "value": SECRET_META_VALUE}]),
+            ("removed", settled[:-1]),
+            ("status_removed", [row for row in settled if row["key"] != GLA_KEY]),
+            ("companion_removed",
+             [row for row in settled if row["key"] != GLA_SYNC_HASH_KEY]),
+            ("reordered", list(reversed(settled))),
+            ("triplet_reordered", [settled[1], settled[0]] + settled[2:]),
+        ):
+            with self.subTest(label=label):
+                target, diagnostic = self._pair(readback_entries=entries)
+                self.assertIsNotNone(diagnostic)
+                self._refused(target, diagnostic)
+
+    def test_an_identity_change_in_any_of_the_three_is_not_a_settlement(self):
+        settled = settled_triplet_meta_entries()
+        for entry, index in (("status", 1), ("stamp", 0), ("hash", 5)):
+            # Swapped to ANOTHER of the three, never to its own key: relabelling an
+            # entry as one of its siblings must not read as "still one of the three".
+            sibling = GLA_KEY if entry != "status" else GLA_SYNC_HASH_KEY
+            for drift, patch in (("id_changed", {"id": 99999}),
+                                 ("id_dropped", {"id": None}),
+                                 ("key_renamed", {"key": "_renamed"}),
+                                 ("key_swapped", {"key": sibling})):
+                with self.subTest(entry=entry, drift=drift):
+                    entries = [dict(row) for row in settled]
+                    entries[index] = {**entries[index], **patch}
+                    target, diagnostic = self._pair(readback_entries=entries)
+                    self.assertIsNotNone(diagnostic)
+                    self._refused(target, diagnostic)
+
+    def test_an_index_change_in_any_of_the_three_is_not_a_settlement(self):
+        """Same entries, same ids, same keys -- one of them moved position."""
+        settled = settled_triplet_meta_entries()
+        for entry, index in (("status", 1), ("stamp", 0), ("hash", 5)):
+            with self.subTest(entry=entry):
+                entries = [dict(row) for row in settled]
+                moved = entries.pop(index)
+                entries.append(moved)
+                target, diagnostic = self._pair(readback_entries=entries)
+                self.assertIsNotNone(diagnostic)
+                self._refused(target, diagnostic)
+
+    # -- duplicates and malformed entries ------------------------------------
+    def test_a_duplicate_appearing_on_the_readback_is_not_a_settlement(self):
+        settled = settled_triplet_meta_entries()
+        for entry, key, entry_id in (("status", GLA_KEY, GLA_ID),
+                                     ("stamp", GLA_SYNCED_AT_KEY, GLA_SYNCED_AT_ID),
+                                     ("hash", GLA_SYNC_HASH_KEY, GLA_SYNC_HASH_ID)):
+            with self.subTest(entry=entry):
+                entries = settled + [{"id": entry_id, "key": key, "value": "AGAIN"}]
+                target, diagnostic = self._pair(readback_entries=entries)
+                self._refused(target, diagnostic)
+
+    def test_a_companion_duplicated_in_the_before_state_can_never_settle(self):
+        """A duplicated status entry already refuses at staging. A duplicated
+        COMPANION does not, so the triplet rule counts all three itself rather
+        than guessing which of two Google meant to move."""
+        staged_entries = triplet_meta_entries() + [
+            {"id": 74839, "key": GLA_SYNC_HASH_KEY, "value": SYNC_HASH_BEFORE}]
+        readback_entries = [dict(row) for row in staged_entries]
+        readback_entries[0] = {**readback_entries[0], "value": SYNCED_AT_AFTER}
+        readback_entries[1] = {**readback_entries[1], "value": GLA_STAGED}
+        readback_entries[5] = {**readback_entries[5], "value": SYNC_HASH_AFTER}
+        target, diagnostic = self._pair(staged_entries=staged_entries,
+                                        readback_entries=readback_entries)
+        # Structurally this is three values moved, each keeping its identity --
+        # the count check alone would accept it. The singularity rule refuses it.
+        detail = diagnostic["meta_data_projection"]["diagnostic"]
+        self.assertEqual(detail["value_changed_entry_count"], 3)
+        self.assertEqual(detail["added_entry_count"], 0)
+        self.assertEqual(detail["identity_changed_position_count"], 0)
+        self._refused(target, diagnostic)
+        self.assertIs(policy._triplet_entries_are_singular(
+            target["before_meta_data_projection"]), False)
+
+    def test_a_malformed_relevant_entry_is_not_a_settlement(self):
+        settled = settled_triplet_meta_entries()
+        for entry, index in (("status", 1), ("stamp", 0), ("hash", 5)):
+            for drift, replacement in (
+                ("not_an_object", "just a string"),
+                ("no_key", {"id": 4242, "value": "v"}),
+                ("renamed_key", {"id": 4242, "key": "_renamed", "value": "v"}),
+                ("unprintable_key", {"id": 4242, "key": "bad\nkey", "value": "v"}),
+                ("negative_id", {"id": -1, "key": GLA_SYNCED_AT_KEY, "value": "v"}),
+            ):
+                with self.subTest(entry=entry, drift=drift):
+                    entries = [dict(row) if isinstance(row, dict) else row
+                               for row in settled]
+                    entries[index] = replacement
+                    target, diagnostic = self._pair(readback_entries=entries)
+                    self.assertIsNotNone(diagnostic)
+                    self._refused(target, diagnostic)
+
+    def test_a_malformed_status_entry_in_the_before_state_refuses_outright(self):
+        """gla_baseline_mode is the gate at staging; it never reaches a detector."""
+        entries = [dict(row) for row in triplet_meta_entries()]
+        entries[1] = {"key": GLA_KEY, "value": GLA_TRANSIENT}   # no stable id
+        record = triplet_variation_record(self.PRODUCT_ID, self.VARIATION_ID)
+        record["meta_data"] = entries
+        with self.assertRaises(policy.ShippingPolicyError):
+            policy.gla_baseline_mode(policy.metadata_projection(record))
+
+    # -- another protected field --------------------------------------------
+    def test_another_protected_field_moving_alongside_it_is_not_a_settlement(self):
+        for field, value in (("weight", "99.9"), ("regular_price", "0.01"),
+                             ("name", "Renamed"), ("sku", "OTHER"),
+                             ("status", "draft")):
+            with self.subTest(field=field):
+                target, diagnostic = self._pair(**{field: value})
+                self.assertEqual(diagnostic["changed_protected_fields"],
+                                 sorted(["meta_data", field]))
+                self._refused(target, diagnostic)
+
+    # -- hand-built diagnostics ----------------------------------------------
+    def test_a_hand_built_diagnostic_cannot_fake_the_triplet(self):
+        target, diagnostic = self._pair()
+        rows = "value_changed_entries"
+        for label, mutate in (
+            ("no_aggregate_mismatch",
+             lambda d: d["aggregate_protected_fingerprint"].__setitem__("matches", True)),
+            ("meta_status_matched",
+             lambda d: d["meta_data_projection"].__setitem__("status", "matched")),
+            ("meta_refused",
+             lambda d: d["meta_data_projection"].__setitem__("status", "refused")),
+            ("no_meta_detail",
+             lambda d: d["meta_data_projection"].__setitem__("diagnostic", None)),
+            ("extra_changed_field",
+             lambda d: d.__setitem__("changed_protected_fields", ["meta_data", "price"])),
+            ("empty_changed_field",
+             lambda d: d.__setitem__("changed_protected_fields", [])),
+            ("field_fingerprints_equal",
+             lambda d: d["field_fingerprints"]["meta_data"].__setitem__(
+                 "readback_sha256",
+                 d["field_fingerprints"]["meta_data"]["staged_sha256"])),
+            ("identity_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "identity_changed_position_count", 1)),
+            ("order_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "order_changed", True)),
+            ("counts_differ",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "readback_entry_count", 9)),
+            ("added_claimed",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "added_entry_count", 1)),
+            ("removed_claimed",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 "removed_entry_count", 1)),
+            ("omitted_rows",
+             lambda d: d["meta_data_projection"]["diagnostic"]["omitted_from_report"]
+             .__setitem__("value_changed", 3)),
+            ("count_says_three_but_two_rows",
+             lambda d: d["meta_data_projection"]["diagnostic"].__setitem__(
+                 rows, d["meta_data_projection"]["diagnostic"][rows][:2])),
+            ("a_row_is_not_an_object",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows]
+             .__setitem__(0, "not an object")),
+            ("a_key_is_unhashable",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("key", ["_wc_gla_synced_at"])),
+            ("a_key_digest_disagrees_with_its_name",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("key_sha256", "0" * 64)),
+            ("a_foreign_key_joins_the_three",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("key", "_frp_packing_group")),
+            ("index_moved",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("readback_index", 9)),
+            ("id_dropped",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("id", None)),
+            ("id_is_a_bool",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("id", True)),
+            ("value_not_differing",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("value_differs", False)),
+            ("entry_hashes_equal",
+             lambda d: d["meta_data_projection"]["diagnostic"][rows][0]
+             .__setitem__("readback_entry_sha256",
+                          d["meta_data_projection"]["diagnostic"][rows][0]
+                          ["staged_entry_sha256"])),
+        ):
+            with self.subTest(label=label):
+                copy = json.loads(json.dumps(diagnostic))
+                mutate(copy)
+                self._refused(target, copy)
+
+    def test_a_hand_built_status_row_cannot_invent_the_transition(self):
+        """Row 0 of the fixture is the stamp. Relabelling it as the status entry
+        must not produce a second status row that satisfies the transition."""
+        target, diagnostic = self._pair()
+        copy = json.loads(json.dumps(diagnostic))
+        detail = copy["meta_data_projection"]["diagnostic"]
+        detail["value_changed_entries"][0].update({
+            "key": GLA_KEY, "key_sha256": policy.GLA_META_KEY_SHA256,
+            "staged_value_sha256": policy.GLA_TRANSIENT_VALUE_SHA256,
+            "readback_value_sha256": policy.GLA_STAGED_VALUE_SHA256,
+        })
+        self._refused(target, copy)
+
+    def test_the_predicates_never_raise_on_a_malformed_diagnostic(self):
+        target, _ = self._pair()
+        for diagnostic in (None, "", [], {}, {"changed_protected_fields": None},
+                           {"meta_data_projection": "x"},
+                           {"changed_protected_fields": ["meta_data"],
+                            "field_fingerprints": None}):
+            with self.subTest(diagnostic=str(diagnostic)[:40]):
+                self.assertIs(
+                    policy.is_gla_sync_settling(target, diagnostic, True), False)
+                self.assertIs(
+                    policy.is_gla_sync_transient(target, diagnostic, True), False)
+
+    def test_neither_predicate_stores_or_returns_a_metadata_value(self):
+        target, diagnostic = self._pair()
+        text = strip_fixed_vocabulary(json.dumps(diagnostic) + json.dumps(target))
+        for token in (GLA_STAGED, GLA_TRANSIENT, SYNCED_AT_BEFORE, SYNCED_AT_AFTER,
+                      SYNC_HASH_BEFORE, SYNC_HASH_AFTER, SECRET_META_VALUE,
+                      SECRET_DESCRIPTION):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
 
 
 # ---------------------------------------------------------------------------
@@ -3366,6 +3990,313 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
         self.assertIn("pending_settled_confirmed_targets=1", evidence)
 
 
+# ---------------------------------------------------------------------------
+# Schema 5: the measured three-entry settlement, end to end
+# ---------------------------------------------------------------------------
+class TripletSettlementFixture(PendingBaselineFixture):
+    """The live 2026-08-11 shape: a pending resource carrying all three Google
+    entries, whose one approved PUT settles the status, the save stamp and the
+    content hash together."""
+
+    ENDPOINT = "/products/1455/variations/1476"
+    SECOND = "/products/1455/variations/1477"
+
+    def _store(self):
+        return FakeStore(
+            {
+                self.ENDPOINT: triplet_variation_record(1455, 1476),
+                self.SECOND: triplet_variation_record(1455, 1477),
+            },
+            classes=[dict(FREIGHT_CLASS_ROW)],
+        )
+
+    def _request(self, targets=None):
+        return {
+            "action": "shipping_class_assign",
+            "targets": targets or [
+                {"kind": "variation", "product_id": 1455, "variation_id": 1476}],
+            "sources": {"policy": "shipping_policy_manifest.json 2026-08-11; FRP Pipe"},
+        }
+
+    def _both(self):
+        return self._request([
+            {"kind": "variation", "product_id": 1455, "variation_id": 1476},
+            {"kind": "variation", "product_id": 1455, "variation_id": 1477},
+        ])
+
+    def _meta(self, status, synced_at=SYNCED_AT_BEFORE, sync_hash=SYNC_HASH_BEFORE):
+        return {"meta_data": triplet_meta_entries(status, synced_at, sync_hash)}
+
+    def _settled(self):
+        return {"meta_data": settled_triplet_meta_entries()}
+
+
+class TripletSettlementCommitTests(TripletSettlementFixture):
+    def test_a_triplet_resource_stages_on_the_ordinary_pending_proof(self):
+        store = self._store()
+        plan_path, result = self._stage(store, self._request())
+        self.assertEqual(result["status"], "STAGED_NOT_COMMITTED")
+        self.assertEqual(result["targets"][0]["gla_baseline_mode"], "pending_baseline")
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 3)
+        self.assertEqual(self.sleeps, [2, 4])
+        self.assertEqual(store.writes, [])
+        proof = json.loads(plan_path.read_text(encoding="utf-8"))["targets"][0]
+        # The status entry, at its measured index, is what the proof stands on --
+        # never the stamp beside it.
+        self.assertEqual(proof["gla_pending_stability"]["meta_entry_index"], 1)
+        self.assertEqual(proof["gla_pending_stability"]["meta_entry_id"], GLA_ID)
+        self.assertEqual(len(proof["before_meta_data_projection"]), 7)
+        policy.load_plan(str(plan_path))
+
+    def test_the_measured_settlement_now_commits_after_a_stable_confirmation(self):
+        """THE regression. This exact readback is what locked
+        20260811T204921Z_shipping_class_assign_3e02e445093c9afb indeterminate at
+        target 22 of 31, on a resource that was in fact exactly right."""
+        store, plan_path = self._armed({self.ENDPOINT: [self._settled()] * 3})
+        result = self._commit(store, plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        row = result["outcome"][0]
+        self.assertIs(row["written"], True)
+        self.assertEqual(row["baseline_mode"], "pending_baseline")
+        self.assertEqual(row["settlement_shape"], "gla_status_with_stamp_and_hash")
+        self.assertIs(row["convergence_used"], True)
+        self.assertEqual(row["convergence_attempts"], 2)
+        self.assertEqual(row["convergence_elapsed_seconds"], 6.0)
+        self.assertEqual(row["final_state"], "confirmed_stable_settled_state")
+        self.assertEqual(row["final_requirement"],
+                         "exact_staged_pending_state_or_confirmed_settled_state")
+        # One PUT, then reads only: the read-back plus both confirming reads.
+        self.assertEqual(store.writes, [
+            ("PUT", self.ENDPOINT, {"shipping_class": policy.FREIGHT_CLASS_SLUG})])
+        self.assertEqual(store.calls.count(("GET", self.ENDPOINT)), 4)
+        self.assertEqual(self.sleeps, [2, 4])
+        self.assertLessEqual(sum(self.sleeps),
+                             policy.PENDING_SETTLE_CONFIRM_CEILING_SECONDS)
+        self.assertEqual(result["convergence"]["pending_settled_confirmed_targets"], 1)
+        self.assertEqual(result["convergence"]["settlement_shapes"],
+                         {"gla_status_only": 0, "gla_status_with_stamp_and_hash": 1})
+        self.assertEqual(self._lock(plan_path)["status"], "committed_verified")
+
+    def test_the_unchanged_pending_triplet_state_is_still_immediate_success(self):
+        store, plan_path = self._armed({})
+        result = self._commit(store, plan_path)
+        row = result["outcome"][0]
+        self.assertIs(row["convergence_used"], False)
+        self.assertEqual(row["final_state"], "exact_staged_pending_state")
+        self.assertNotIn("settlement_shape", row)
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(result["convergence"]["settlement_shapes"],
+                         {"gla_status_only": 0, "gla_status_with_stamp_and_hash": 0})
+
+    def test_a_status_only_settlement_on_a_triplet_resource_keeps_its_own_name(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
+        result = self._commit(store, plan_path)
+        row = result["outcome"][0]
+        self.assertEqual(row["settlement_shape"], "gla_status_only")
+        self.assertEqual(row["final_state"], "confirmed_stable_settled_state")
+        self.assertEqual(result["convergence"]["settlement_shapes"],
+                         {"gla_status_only": 1, "gla_status_with_stamp_and_hash": 0})
+
+    def test_an_unstable_settled_state_during_confirmation_fails_closed(self):
+        third_stamp = "SENTINEL-SYNCED-AT-THIRD-MUST-NOT-LEAK"
+        third_hash = "SENTINEL-SYNC-HASH-THIRD-MUST-NOT-LEAK"
+        cases = {
+            "the_stamp_moves_again": [
+                self._settled(),
+                self._meta(GLA_STAGED, third_stamp, SYNC_HASH_AFTER)],
+            "the_hash_moves_again": [
+                self._settled(),
+                self._meta(GLA_STAGED, SYNCED_AT_AFTER, third_hash)],
+            "it_moves_again_on_the_second_observation": [
+                self._settled(), self._settled(),
+                self._meta(GLA_STAGED, SYNCED_AT_AFTER, third_hash)],
+            "the_status_flips_back": [
+                self._settled(),
+                self._meta(GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)],
+            "it_moves_on_to_an_undiagnosed_value": [
+                self._settled(),
+                self._meta("error", SYNCED_AT_AFTER, SYNC_HASH_AFTER)],
+            "another_protected_field_moves": [
+                self._settled(), {**self._settled(), "weight": "99.9"}],
+            "the_class_drifts_away": [
+                self._settled(),
+                {**self._settled(), "shipping_class": "some-other-class"}],
+        }
+        for label, script in cases.items():
+            with self.subTest(label=label):
+                store, plan_path = self._armed({self.ENDPOINT: script})
+                message = self._commit_expecting_failure(store, plan_path)
+                lock = self._lock(plan_path)
+                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
+                self.assertEqual(lock["diagnostic"]["phase"],
+                                 "pending_settle_confirmation")
+                self.assertNotIn("COMMITTED", message)
+                # One write, then reads only. No retry, no rollback, no repair.
+                self.assertEqual(store.writes, [
+                    ("PUT", self.ENDPOINT,
+                     {"shipping_class": policy.FREIGHT_CLASS_SLUG})])
+                for token in (SYNCED_AT_AFTER, SYNC_HASH_AFTER, third_stamp,
+                              third_hash, SECRET_META_VALUE):
+                    self.assertNotIn(token, json.dumps(lock))
+
+    def test_any_other_post_write_movement_fails_before_any_confirmation(self):
+        fourth = [dict(row) for row in settled_triplet_meta_entries()]
+        fourth[2] = {**fourth[2], "value": "MOVED-AS-WELL"}
+        fourth_google = [dict(row) for row in settled_triplet_meta_entries()]
+        fourth_google[6] = {**fourth_google[6], "value": "MOVED-AS-WELL"}
+        cases = {
+            "a_fourth_entry_moves": {"meta_data": fourth},
+            "a_fourth_google_entry_moves": {"meta_data": fourth_google},
+            "only_the_companions_move": self._meta(
+                GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER),
+            "the_status_moves_to_an_undiagnosed_value": self._meta(
+                "error", SYNCED_AT_AFTER, SYNC_HASH_AFTER),
+            "an_entry_is_added": {"meta_data": settled_triplet_meta_entries() + [
+                {"id": 9500, "key": "_added", "value": SECRET_META_VALUE}]},
+            "an_entry_is_removed": {
+                "meta_data": settled_triplet_meta_entries()[:-1]},
+            "the_entries_are_reordered": {
+                "meta_data": list(reversed(settled_triplet_meta_entries()))},
+            "a_companion_id_changes": {"meta_data": [
+                {"id": 99999, "key": GLA_SYNCED_AT_KEY, "value": SYNCED_AT_AFTER}]
+                + settled_triplet_meta_entries()[1:]},
+            "a_companion_is_duplicated": {
+                "meta_data": settled_triplet_meta_entries() + [
+                    {"id": 74839, "key": GLA_SYNC_HASH_KEY, "value": SYNC_HASH_AFTER}]},
+            "another_protected_field_moves": {
+                **self._settled(), "weight": "99.9"},
+        }
+        for label, patch in cases.items():
+            with self.subTest(label=label):
+                store, plan_path = self._armed({self.ENDPOINT: [patch]})
+                self._commit_expecting_failure(store, plan_path)
+                lock = self._lock(plan_path)
+                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["diagnostic"]["phase"], "post_write")
+                # It failed on the read-back; no confirmation was ever attempted.
+                self.assertEqual(self.sleeps, [])
+                self.assertEqual(len(store.writes), 1)
+                self.assertNotIn(SECRET_META_VALUE, json.dumps(lock))
+
+    def test_a_failed_triplet_confirmation_can_never_be_replayed(self):
+        store, plan_path = self._armed({self.ENDPOINT: [
+            self._settled(),
+            self._meta(GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)]})
+        self._commit_expecting_failure(store, plan_path)
+        store.after_write_gets = {}
+        store.writes.clear()
+        self.sleeps.clear()
+        self._commit_expecting_failure(store, plan_path)
+        self.assertEqual(store.writes, [])
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+
+    def test_the_second_target_starts_only_after_the_first_is_confirmed(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._settled()] * 3}, targets=self._both())
+        result = self._commit(store, plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        first = store.calls.index(("PUT", self.ENDPOINT))
+        second = store.calls.index(("PUT", self.SECOND))
+        self.assertLess(first, second)
+        self.assertEqual(store.calls[first + 1:second], [
+            ("GET", self.ENDPOINT), ("GET", self.ENDPOINT), ("GET", self.ENDPOINT),
+            ("GET", self.SECOND)])
+
+    def test_a_failed_settlement_never_starts_the_second_target(self):
+        store, plan_path = self._armed(
+            {self.ENDPOINT: [self._settled(),
+                             self._meta(GLA_TRANSIENT, SYNCED_AT_AFTER,
+                                        SYNC_HASH_AFTER)]},
+            targets=self._both())
+        self._commit_expecting_failure(store, plan_path)
+        self.assertNotIn(("PUT", self.SECOND), store.calls)
+        self.assertEqual(store.records[self.SECOND]["shipping_class"], "")
+        self.assertEqual(len(store.writes), 1)
+
+    def test_exactly_one_put_and_no_metadata_write_on_any_triplet_path(self):
+        for label, script in (
+            ("unchanged", {}),
+            ("settles", {self.ENDPOINT: [self._settled()] * 3}),
+            ("fails", {self.ENDPOINT: [
+                self._settled(),
+                self._meta(GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)]}),
+        ):
+            with self.subTest(label=label):
+                store, plan_path = self._armed(script)
+                try:
+                    self._commit(store, plan_path)
+                except policy.ShippingPolicyError:
+                    pass
+                self.assertEqual(len(store.writes), 1)
+                method, endpoint, payload = store.writes[0]
+                self.assertEqual(method, "PUT")
+                self.assertEqual(endpoint, self.ENDPOINT)
+                self.assertEqual(payload,
+                                 {"shipping_class": policy.FREIGHT_CLASS_SLUG})
+                self.assertEqual(store.records[self.ENDPOINT]["shipping_class"],
+                                 policy.FREIGHT_CLASS_SLUG)
+
+    def test_the_triplet_path_still_requires_the_exact_approval_word(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._settled()] * 3})
+        for approval in ("approved", "APPROVED ", "Approved", "", "yes", "PROCEED"):
+            with self.subTest(approval=repr(approval)):
+                with mock.patch.object(policy.wc, "load_vault") as load, \
+                     mock.patch.object(policy.wc, "api_get") as get, \
+                     mock.patch.object(policy.wc, "api_request") as write:
+                    with self.assertRaises(policy.ShippingPolicyError):
+                        policy.command_commit(argparse.Namespace(
+                            plan=str(plan_path), approval=approval))
+                    load.assert_not_called()
+                    get.assert_not_called()
+                    write.assert_not_called()
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(store.writes, [])
+
+    def test_the_committed_receipt_names_the_settlement_shape_it_accepted(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._settled()] * 3})
+        self._commit(store, plan_path)
+        evidence = next(text for action, text in self.receipts
+                        if action == "woocommerce_shipping_policy_committed")
+        self.assertIn("settlement_gla_status_with_stamp_and_hash_targets=1", evidence)
+        self.assertIn("settlement_gla_status_only_targets=0", evidence)
+        self.assertIn("pending_settled_confirmed_targets=1", evidence)
+
+    def test_no_successful_triplet_record_carries_a_raw_metadata_value(self):
+        store, plan_path = self._armed({self.ENDPOINT: [self._settled()] * 3})
+        result = self._commit(store, plan_path)
+        text = strip_fixed_vocabulary(
+            json.dumps(result) + json.dumps(self.receipts)
+            + json.dumps(self._lock(plan_path))
+            + plan_path.read_text(encoding="utf-8"))
+        for token in (GLA_STAGED, GLA_TRANSIENT, SYNCED_AT_BEFORE, SYNCED_AT_AFTER,
+                      SYNC_HASH_BEFORE, SYNC_HASH_AFTER, SECRET_META_VALUE,
+                      SECRET_DESCRIPTION, "ck_abcdefghijklmnopqrstuvwxyz"):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
+        # It still names the three keys it is allowed to name.
+        contract = json.loads(plan_path.read_text(
+            encoding="utf-8"))["convergence_contract"]
+        self.assertEqual(contract["settlement_companion_meta_keys"],
+                         [GLA_SYNCED_AT_KEY, GLA_SYNC_HASH_KEY])
+        self.assertIn(GLA_KEY, json.dumps(result))
+
+    def test_no_failed_triplet_record_carries_a_raw_metadata_value_either(self):
+        store, plan_path = self._armed({self.ENDPOINT: [
+            self._settled(),
+            self._meta(GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)]})
+        message = self._commit_expecting_failure(store, plan_path)
+        text = strip_fixed_vocabulary(
+            message + json.dumps(self._lock(plan_path)) + json.dumps(self.receipts))
+        for token in (GLA_STAGED, GLA_TRANSIENT, SYNCED_AT_BEFORE, SYNCED_AT_AFTER,
+                      SYNC_HASH_BEFORE, SYNC_HASH_AFTER, SECRET_META_VALUE,
+                      SECRET_DESCRIPTION):
+            with self.subTest(token=token):
+                self.assertNotIn(token, text)
+
+
 class SettledBaselineIsUnchangedTests(ConvergenceFixture):
     """Schema 4 added a path. It must not have moved the one already proven."""
 
@@ -3395,6 +4326,40 @@ class SettledBaselineIsUnchangedTests(ConvergenceFixture):
         self.assertEqual(lock["reason_class"], "ConvergenceTimeout")
         self.assertEqual(lock["convergence"]["final_state"], "pending_not_accepted")
         self.assertEqual(sum(self.sleeps), 90)
+
+    def test_the_settled_ninety_second_contract_survived_schema_five(self):
+        """The schema-5 repair touched the pending path only. Every fixed value of
+        the settled contract is still exactly what schema 3 proved."""
+        contract = policy.convergence_contract()
+        self.assertEqual(contract["schedule_seconds"], [2, 4, 8, 16, 30, 30])
+        self.assertEqual(contract["max_seconds"], 90)
+        self.assertEqual(contract["final_requirement"], "exact_staged_protected_state")
+        self.assertEqual(contract["allowed_changed_protected_fields_during_wait"],
+                         ["meta_data"])
+        self.assertEqual(contract["staged_value_sha256"],
+                         policy.GLA_STAGED_VALUE_SHA256)
+        self.assertEqual(contract["transient_value_sha256"],
+                         policy.GLA_TRANSIENT_VALUE_SHA256)
+
+    def test_a_settled_target_seeing_the_three_entry_move_is_refused_not_settled(self):
+        """The wider settlement shape belongs to the pending baseline alone. On a
+        settled baseline the same three-entry readback is an undiagnosed edit, and
+        it must lock rather than converge or confirm."""
+        settled_triplet = triplet_variation_record(1455, 2056, GLA_STAGED)
+        store = FakeStore({self.ENDPOINT: settled_triplet},
+                          classes=[dict(FREIGHT_CLASS_ROW)])
+        plan_path, staged = self._stage(store, self._request())
+        self.assertEqual(staged["targets"][0]["gla_baseline_mode"], "settled_baseline")
+        store.after_write_gets = {self.ENDPOINT: [{"meta_data": triplet_meta_entries(
+            GLA_TRANSIENT, SYNCED_AT_AFTER, SYNC_HASH_AFTER)}]}
+        store.calls.clear()
+        self.sleeps.clear()
+        self._commit_expecting_failure(store, plan_path)
+        lock = self._lock(plan_path)
+        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["diagnostic"]["phase"], "post_write")
+        self.assertEqual(self.sleeps, [])
+        self.assertEqual(len(store.writes), 1)
 
     def test_a_settled_target_is_never_confirmed_by_the_pending_path(self):
         """A settled target whose entry goes to the transient value must use the

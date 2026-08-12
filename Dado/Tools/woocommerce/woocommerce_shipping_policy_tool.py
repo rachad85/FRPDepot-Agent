@@ -122,6 +122,56 @@ Schema 4 repairs the verifier by adding a SECOND closed baseline, and nothing el
 Schema-1, schema-2 and schema-3 plans are all permanently unusable and are refused
 before any vault or network access even if their hash is recomputed. Existing
 commit locks remain authoritative.
+
+*** SCHEMA 5 (2026-08-11) -- THE MEASURED THREE-ENTRY SETTLEMENT. ***
+Schema 4's pending path was right about the transition and wrong about its SHAPE.
+It recognised a settlement only when EXACTLY ONE metadata entry moved. Live
+evidence disproved that on the 31-target FRP Pipe plan
+20260811T204921Z_shipping_class_assign_3e02e445093c9afb: 21 targets verified, then
+at target 22 -- /products/1455/variations/1476, SKU PIDN450150PSI411 -- the single
+approved PUT set the freight class and the immediate readback showed Google's save
+hook had settled the resource in ONE step, moving THREE existing entries' values
+together with no add, no remove, no id change, no key change and no reorder:
+
+    `_wc_gla_sync_status`  id 45152, index 1   pending digest -> settled digest
+    `_wc_gla_synced_at`    id 45151, index 0   new save stamp
+    `_wc_gla_sync_hash`    id 74838, index 5   new content hash
+
+Schema 4 could only read that as an unknown third-party edit. It raised
+ProtectedStateMismatch, locked the plan indeterminate and stopped -- correctly, by
+its own rules, but on a resource that was in fact exactly right. Later read-only
+GETs confirmed variation 1476 carries the freight class and a settled Google
+status; the 9 remaining Pipe targets and the 24 Manway/Manway Cover targets were
+never attempted.
+
+Schema 5 adds ONE more exactly-known movement, and nothing else:
+
+  * SETTLEMENT SHAPES are a closed enum fixed by SOURCE: "gla_status_only" (the
+    schema-4 shape, unchanged) and "gla_status_with_stamp_and_hash" (the measured
+    one). There is no third shape and no way to add one from outside this module.
+  * THE STATUS TRANSITION IS THE GATE. In BOTH shapes `_wc_gla_sync_status` must
+    move from the one pinned pending digest to the one pinned settled digest --
+    never to a third value, never in the other direction.
+  * ONLY TWO NAMED COMPANIONS, and only their VALUES. `_wc_gla_synced_at` and
+    `_wc_gla_sync_hash` may differ; their ids, keys and list indexes may not, they
+    are matched by key digest as well as by name, and exactly three entries in
+    total may differ. A fourth changed value, a duplicate of any of the three, or
+    any add/remove/reorder/identity drift is refused exactly as before. This is
+    NOT an exemption for Google metadata, for all metadata, or for these three
+    keys unconditionally: outside the one status transition, on any other
+    baseline, or in any other structural shape, all three are protected as ever.
+  * CONFIRMATION IS UNCHANGED AND STILL EXACT. The accepted settled state must
+    reproduce COMPLETELY -- class, date_modified_gmt, aggregate hash, every
+    per-field hash and the whole projection -- on the fixed 2s/4s schedule. A
+    stamp or hash that moves AGAIN during confirmation fails closed; ongoing churn
+    is never accepted.
+  * The unchanged pending state remains immediate success, and the settled
+    baseline's 90-second contract is untouched in every respect.
+
+Schema-1 through schema-4 plans are all permanently unusable and are refused before
+any vault or network access even if their hash is recomputed -- the version bump
+and the four new contract fields make that true twice over. Existing commit locks,
+including 3e02e445093c9afb's, remain authoritative and are never revisited.
 """
 from __future__ import annotations
 
@@ -141,8 +191,8 @@ from typing import Any
 import woocommerce_common as wc
 
 TOOL_NAME = "FRP Depot WooCommerce Approved Shipping-Policy Tool"
-SCHEMA_VERSION = 4
-TOOL_VERSION = "4.0.0"
+SCHEMA_VERSION = 5
+TOOL_VERSION = "5.0.0"
 EXACT_ORIGIN = "https://frpdepots.com:443"
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "woocommerce_shipping_plans"
@@ -377,6 +427,46 @@ def clean_digest(value: Any, label: str) -> str:
 # uses, so the two can never disagree about what the key hashes to.
 GLA_META_KEY_SHA256 = sha256_of(GLA_META_KEY)
 
+# --- The CLOSED settlement shapes (schema 5) -------------------------------
+# Schema 4 recognised a settlement as ONE entry moving: `_wc_gla_sync_status`,
+# pending digest -> settled digest, nothing else at all. Live evidence on
+# 2026-08-11 disproved that as the only shape. On
+# /products/1455/variations/1476 the single approved PUT set the freight class,
+# and the immediate readback showed Google's own save hook had settled the
+# resource in ONE step: three existing entries changed VALUE together, with no
+# entry added, removed, re-identified or reordered --
+#
+#   `_wc_gla_sync_status`  pending digest -> settled digest   (id 45152, index 1)
+#   `_wc_gla_synced_at`    new stamp                          (id 45151, index 0)
+#   `_wc_gla_sync_hash`    new content hash                   (id 74838, index 5)
+#
+# Schema 4 could only read that as an unknown third-party edit, so it locked the
+# plan indeterminate at target 22 of 31 after the assignment had already landed.
+#
+# The repair is NOT a tolerance for Google metadata. It is one more exactly-known
+# movement, and it is as closed as the first: the same one status transition
+# between the same two pinned digests, plus exactly these two named companions,
+# each of which may move its VALUE and nothing else -- not its id, not its key,
+# not its index. A stamp and a content hash are unpredictable BY CONSTRUCTION, so
+# they are the only two entries whose new value cannot be pinned; that is why the
+# rule pins their identity instead, and why the settled state still has to hold
+# still across the bounded confirmation before anything is called committed.
+GLA_SYNCED_AT_META_KEY = "_wc_gla_synced_at"
+GLA_SYNC_HASH_META_KEY = "_wc_gla_sync_hash"
+GLA_SETTLEMENT_COMPANION_KEYS = (GLA_SYNCED_AT_META_KEY, GLA_SYNC_HASH_META_KEY)
+GLA_SETTLEMENT_TRIPLET_KEYS = (GLA_META_KEY,) + GLA_SETTLEMENT_COMPANION_KEYS
+GLA_SETTLEMENT_TRIPLET_ENTRY_COUNT = len(GLA_SETTLEMENT_TRIPLET_KEYS)
+GLA_SETTLEMENT_TRIPLET_KEY_SHA256 = {key: sha256_of(key)
+                                     for key in GLA_SETTLEMENT_TRIPLET_KEYS}
+
+# What a pending baseline's write is allowed to look like, as a closed enum. Both
+# are settlements of the SAME status entry between the SAME two pinned digests;
+# they differ only in whether Google's two companion entries moved with it.
+SETTLEMENT_STATUS_ONLY = "gla_status_only"
+SETTLEMENT_STATUS_WITH_STAMP_AND_HASH = "gla_status_with_stamp_and_hash"
+SETTLEMENT_SHAPES = (SETTLEMENT_STATUS_ONLY, SETTLEMENT_STATUS_WITH_STAMP_AND_HASH)
+SETTLEMENT_SHAPE_FIELD = "settlement_shape"
+
 
 def convergence_contract() -> dict[str, Any]:
     """The one convergence contract this tool will ever honour.
@@ -407,6 +497,15 @@ def convergence_contract() -> dict[str, Any]:
             list(PENDING_SETTLE_CONFIRM_SCHEDULE_SECONDS),
         "pending_settle_confirm_max_seconds": PENDING_SETTLE_CONFIRM_MAX_SECONDS,
         "pending_final_requirement": PENDING_FINAL_REQUIREMENT,
+        # Schema 5. The two closed settlement shapes, and the exact three metadata
+        # keys the wider one may ever find moved. No third shape and no fourth key
+        # can be introduced from outside this module, and adding these four fields
+        # is what makes every schema-4 contract semantically invalid: load_plan
+        # requires the contract's key set to be exactly this one.
+        "settlement_shapes": list(SETTLEMENT_SHAPES),
+        "settlement_status_meta_key": GLA_META_KEY,
+        "settlement_companion_meta_keys": list(GLA_SETTLEMENT_COMPANION_KEYS),
+        "settlement_max_changed_meta_entries": GLA_SETTLEMENT_TRIPLET_ENTRY_COUNT,
     }
 
 
@@ -476,6 +575,13 @@ def validate_convergence_contract(raw: Any) -> dict[str, Any]:
     for field in ("staged_value_sha256", "transient_value_sha256",
                   "settled_baseline_value_sha256", "pending_baseline_value_sha256"):
         clean_digest(raw[field], f"convergence_contract.{field}")
+    # `3.0 == 3` in Python, so the generic equality below would let a rehashed
+    # float through -- the same trap _exact_int exists for on the schedules.
+    if not _exact_int(raw["settlement_max_changed_meta_entries"]):
+        raise ShippingPolicyError(
+            "REFUSED: convergence_contract.settlement_max_changed_meta_entries must "
+            "be an integer."
+        )
     for field, value in fixed.items():
         # Order matters for the schedule, so this is list equality, not a set.
         if raw[field] != value:
@@ -1076,10 +1182,91 @@ def matched_diagnostic(endpoint: str, phase: str, target: dict[str, Any],
     }
 
 
+def _gla_meta_only_movement(diagnostic: Any, shipping_class_matches: bool,
+                            changed_entries: int) -> list[dict[str, Any]] | None:
+    """The structural half every accepted Google-sync movement must satisfy.
+
+    Returns the bounded value-changed rows when meta_data is the ONLY protected
+    field that moved, exactly ``changed_entries`` entries changed value, and
+    NOTHING else moved -- no entry added, removed, re-identified or reordered, no
+    count change, and no row omitted from the bounded report. Returns None
+    otherwise. Pure: no I/O, no clock.
+
+    Fail-closed by construction: every shape is checked before it is read, so a
+    malformed or hand-built diagnostic answers None rather than raising, and the
+    caller still records the ordinary protected-state mismatch.
+    """
+    # A malformed or absent bounded diagnostic can never prove a known movement.
+    if not isinstance(diagnostic, dict):
+        return None
+    # 1. The approved class is already exactly in place.
+    if not shipping_class_matches:
+        return None
+    # 2. meta_data is the only protected field that moved, and it really moved.
+    if diagnostic.get("changed_protected_fields") != list(CONVERGENCE_ALLOWED_CHANGED_FIELDS):
+        return None
+    fields = diagnostic.get("field_fingerprints")
+    if not isinstance(fields, dict) or set(fields) != set(CONVERGENCE_ALLOWED_CHANGED_FIELDS):
+        return None
+    pair = fields[META_FIELD]
+    if not isinstance(pair, dict) or pair.get("staged_sha256") == pair.get("readback_sha256"):
+        return None
+    # 3. The aggregate mismatch shape agrees with exactly that one field change.
+    aggregate = diagnostic.get("aggregate_protected_fingerprint")
+    if not isinstance(aggregate, dict) or aggregate.get("matches") is not False:
+        return None
+    meta = diagnostic.get("meta_data_projection")
+    if not isinstance(meta, dict) or meta.get("status") != "changed":
+        return None
+    detail = meta.get("diagnostic")
+    if not isinstance(detail, dict):
+        return None
+    # 4. Same entry count; nothing added, removed, re-identified or reordered.
+    if detail.get("staged_entry_count") != detail.get("readback_entry_count"):
+        return None
+    if detail.get("added_entry_count") or detail.get("removed_entry_count"):
+        return None
+    if detail.get("identity_changed_position_count"):
+        return None
+    if detail.get("order_changed") is not False:
+        return None
+    # 5. Exactly the expected number of value-changed entries, and the bounded
+    #    report omitted nothing -- an omitted row could hide a further change.
+    if detail.get("value_changed_entry_count") != changed_entries:
+        return None
+    omitted = detail.get("omitted_from_report")
+    if not isinstance(omitted, dict) or any(
+            omitted.get(name) for name in
+            ("added", "removed", "value_changed", "identity_changed")):
+        return None
+    rows = detail.get("value_changed_entries")
+    if not isinstance(rows, list) or len(rows) != changed_entries:
+        return None
+    if not all(isinstance(row, dict) for row in rows):
+        return None
+    return rows
+
+
+def _is_value_only_move(row: dict[str, Any]) -> bool:
+    """One value-changed row whose VALUE moved and whose identity did not.
+
+    Same list index before and after, same stable non-negative numeric id, and a
+    real difference. Position and identity are what this pins; the value itself is
+    pinned (or deliberately not) by the caller.
+    """
+    if row.get("staged_index") != row.get("readback_index"):
+        return False
+    if not _exact_int(row.get("id")) or row["id"] < 0:
+        return False
+    if row.get("value_differs") is not True:
+        return False
+    return row.get("staged_entry_sha256") != row.get("readback_entry_sha256")
+
+
 def _is_single_gla_value_move(diagnostic: dict[str, Any], shipping_class_matches: bool,
                               before_sha256: str, after_sha256: str) -> bool:
     """One `_wc_gla_sync_status` value move, between two FIXED digests, and nothing
-    else at all. Pure: no I/O, no clock.
+    else at all. Pure: no I/O, no clock. Unchanged in behaviour since schema 3.
 
     Every condition must hold. Anything else -- any other field, entry, identity,
     count, order, value, class or shape -- is an immediate permanent indeterminate
@@ -1088,73 +1275,105 @@ def _is_single_gla_value_move(diagnostic: dict[str, Any], shipping_class_matches
     This is not a tolerance. It recognises one exactly-known movement; what the
     caller may then do with it is decided by the caller's baseline, not here.
     """
-    # A malformed or absent bounded diagnostic can never prove a known movement.
-    # This predicate is deliberately pure and fail-closed: it returns False rather
-    # than raising before the caller records the ordinary protected-state mismatch.
-    if not isinstance(diagnostic, dict):
-        return False
-    # 1. The approved class is already exactly in place.
-    if not shipping_class_matches:
-        return False
-    # 2. meta_data is the only protected field that moved, and it really moved.
-    if diagnostic.get("changed_protected_fields") != list(CONVERGENCE_ALLOWED_CHANGED_FIELDS):
-        return False
-    fields = diagnostic.get("field_fingerprints")
-    if not isinstance(fields, dict) or set(fields) != set(CONVERGENCE_ALLOWED_CHANGED_FIELDS):
-        return False
-    pair = fields[META_FIELD]
-    # Every shape is checked before it is read: this predicate must answer False
-    # for a malformed diagnostic, never raise on one.
-    if not isinstance(pair, dict) or pair.get("staged_sha256") == pair.get("readback_sha256"):
-        return False
-    # 4. The aggregate mismatch shape agrees with exactly that one change.
-    aggregate = diagnostic.get("aggregate_protected_fingerprint")
-    if not isinstance(aggregate, dict) or aggregate.get("matches") is not False:
-        return False
-    meta = diagnostic.get("meta_data_projection")
-    if not isinstance(meta, dict) or meta.get("status") != "changed":
-        return False
-    detail = meta.get("diagnostic")
-    if not isinstance(detail, dict):
-        return False
-    # 5. Same entry count; nothing added, removed, re-identified or reordered.
-    if detail.get("staged_entry_count") != detail.get("readback_entry_count"):
-        return False
-    if detail.get("added_entry_count") or detail.get("removed_entry_count"):
-        return False
-    if detail.get("identity_changed_position_count"):
-        return False
-    if detail.get("order_changed") is not False:
-        return False
-    # 6. Exactly one value-changed entry, and the bounded report omitted nothing.
-    if detail.get("value_changed_entry_count") != 1:
-        return False
-    omitted = detail.get("omitted_from_report")
-    if not isinstance(omitted, dict) or any(
-            omitted.get(name) for name in
-            ("added", "removed", "value_changed", "identity_changed")):
-        return False
-    rows = detail.get("value_changed_entries")
-    if not isinstance(rows, list) or len(rows) != 1:
+    rows = _gla_meta_only_movement(diagnostic, shipping_class_matches, 1)
+    if rows is None:
         return False
     row = rows[0]
-    if not isinstance(row, dict):
-        return False
-    # 7. That entry is the fixed key, at the same index, with the same numeric id.
-    if row.get("staged_index") != row.get("readback_index"):
-        return False
-    if not _exact_int(row.get("id")) or row["id"] < 0:
+    # The fixed key, at the same index, with the same numeric id.
+    if not _is_value_only_move(row):
         return False
     if row.get("key") != GLA_META_KEY or row.get("key_sha256") != GLA_META_KEY_SHA256:
         return False
-    # 8. Exactly the caller's fixed digest before, exactly its fixed digest after.
+    # Exactly the caller's fixed digest before, exactly its fixed digest after.
     if row.get("staged_value_sha256") != before_sha256:
         return False
-    if row.get("readback_value_sha256") != after_sha256:
+    return row.get("readback_value_sha256") == after_sha256
+
+
+def _triplet_entries_are_singular(projection: Any) -> bool:
+    """Each of the three named keys appears EXACTLY once in the staged projection.
+
+    Matched by key DIGEST, exactly as gla_baseline_row matches, so an entry
+    carrying one of these keys beside an unsound id or an unprintable key cannot
+    slip past as "not there". A resource holding two `_wc_gla_sync_hash` entries is
+    a state nobody has diagnosed, and this tool must not guess which of them
+    Google meant to move.
+
+    The readback side needs no separate count: the structural half above already
+    proved the two projections carry one identity list, in one order, with nothing
+    added, removed or re-identified -- so if the staged side is singular the
+    readback side is too.
+    """
+    if not isinstance(projection, list):
         return False
-    if row.get("value_differs") is not True:
+    counts = Counter(row.get("key_sha256") for row in projection
+                     if isinstance(row, dict))
+    return all(counts.get(digest) == 1
+               for digest in GLA_SETTLEMENT_TRIPLET_KEY_SHA256.values())
+
+
+def _is_gla_settlement_triplet_move(target: dict[str, Any], diagnostic: dict[str, Any],
+                                    shipping_class_matches: bool) -> bool:
+    """The EXACT three-entry Google settlement observed live on 2026-08-11.
+
+    The same single status transition the predicate above recognises -- the one
+    pinned pending digest to the one pinned settled digest, never to a third value
+    -- carried out together with Google's two named companion entries, and nothing
+    else whatsoever. Pure: no I/O, no clock.
+
+    Closed on every axis that can be closed:
+      * meta_data is the only protected field that moved (shared structural half);
+      * the entry count, order, ids and keys are identical, and nothing is added,
+        removed, re-identified or omitted from the bounded report;
+      * EXACTLY three entries changed value -- no fewer, no more;
+      * their keys are exactly `_wc_gla_sync_status`, `_wc_gla_synced_at` and
+        `_wc_gla_sync_hash`, one occurrence each, matched by key digest as well as
+        by name, so a relabelled entry cannot pass;
+      * each of those three keys occurs EXACTLY once in the staged projection
+        itself, so a resource carrying a duplicate of any of them is refused
+        rather than guessed at;
+      * each of the three kept its own index and its own stable numeric id;
+      * the status entry moved pending digest -> settled digest and nothing else.
+
+    The two companions are a save stamp and a content hash: their new values are
+    unpredictable by construction, so they are the only part of this movement that
+    cannot be pinned to a digest. Their IDENTITY and POSITION are pinned instead,
+    the count is exact, and the resulting settled state still has to hold still
+    across the bounded read-only confirmation before anything is committed. This
+    is not "Google metadata is exempt": a fourth key, a second occurrence of one
+    of these three, a status move to any other value, or a companion entry that
+    changed anything but its value all answer False.
+    """
+    if not isinstance(target, dict):
         return False
-    return row.get("staged_entry_sha256") != row.get("readback_entry_sha256")
+    if not _triplet_entries_are_singular(target.get("before_meta_data_projection")):
+        return False
+    rows = _gla_meta_only_movement(diagnostic, shipping_class_matches,
+                                   GLA_SETTLEMENT_TRIPLET_ENTRY_COUNT)
+    if rows is None:
+        return False
+    if not all(_is_value_only_move(row) for row in rows):
+        return False
+    by_key: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        key = row.get("key")
+        # `key` is checked to be one of three fixed strings BEFORE it is used as a
+        # mapping key: a hand-built diagnostic could carry an unhashable value
+        # there, and this predicate must answer False rather than raise.
+        if not isinstance(key, str) or key not in GLA_SETTLEMENT_TRIPLET_KEY_SHA256:
+            return False
+        if row.get("key_sha256") != GLA_SETTLEMENT_TRIPLET_KEY_SHA256[key]:
+            return False
+        if key in by_key:
+            # The same key twice is not the triplet, whatever the third row says.
+            return False
+        by_key[key] = row
+    if set(by_key) != set(GLA_SETTLEMENT_TRIPLET_KEYS):
+        return False
+    status = by_key[GLA_META_KEY]
+    if status.get("staged_value_sha256") != GLA_TRANSIENT_VALUE_SHA256:
+        return False
+    return status.get("readback_value_sha256") == GLA_STAGED_VALUE_SHA256
 
 
 def is_gla_sync_transient(target: dict[str, Any], diagnostic: dict[str, Any],
@@ -1170,22 +1389,45 @@ def is_gla_sync_transient(target: dict[str, Any], diagnostic: dict[str, Any],
                                      GLA_STAGED_VALUE_SHA256, GLA_TRANSIENT_VALUE_SHA256)
 
 
-def is_gla_sync_settling(target: dict[str, Any], diagnostic: dict[str, Any],
-                         shipping_class_matches: bool) -> bool:
-    """The PENDING baseline's one acceptable movement: pending -> settled.
+def gla_settlement_shape(target: dict[str, Any], diagnostic: dict[str, Any],
+                         shipping_class_matches: bool) -> str | None:
+    """Which CLOSED settlement shape this post-write movement is, or None.
 
-    This is the reverse half of the convergence schema 3 already proved live. It is
-    still not success on its own -- the caller must confirm the settled state holds
-    across a fixed bounded schedule before anything is called committed.
+    The PENDING baseline's acceptable movement is always the same status
+    transition -- pending digest -> settled digest -- in one of exactly two
+    observed shapes:
 
-    Only a target whose plan re-derived the pending baseline can reach this, so a
-    settled-baseline target can never be settled-confirmed by mistake, and an
-    absent-baseline target can reach neither path.
+    "gla_status_only"
+        The status entry alone. Schema 3 proved this transition live in the
+        forward direction on /products/1455/variations/2056, and schema 4 accepted
+        its reverse half.
+    "gla_status_with_stamp_and_hash"
+        The same transition carried out together with `_wc_gla_synced_at` and
+        `_wc_gla_sync_hash`. Measured live on /products/1455/variations/1476 on
+        2026-08-11, where schema 4 could only read it as an unknown third-party
+        edit and locked the plan indeterminate mid-run.
+
+    Neither is success on its own -- the caller must confirm the settled state
+    holds across a fixed bounded schedule before anything is called committed.
+
+    Only a target whose plan re-derived the pending baseline can reach either
+    shape, so a settled-baseline target can never be settled-confirmed by mistake,
+    and an absent-baseline target can reach neither path.
     """
     if target.get(GLA_BASELINE_MODE_FIELD) != BASELINE_PENDING:
-        return False
-    return _is_single_gla_value_move(diagnostic, shipping_class_matches,
-                                     GLA_TRANSIENT_VALUE_SHA256, GLA_STAGED_VALUE_SHA256)
+        return None
+    if _is_single_gla_value_move(diagnostic, shipping_class_matches,
+                                 GLA_TRANSIENT_VALUE_SHA256, GLA_STAGED_VALUE_SHA256):
+        return SETTLEMENT_STATUS_ONLY
+    if _is_gla_settlement_triplet_move(target, diagnostic, shipping_class_matches):
+        return SETTLEMENT_STATUS_WITH_STAMP_AND_HASH
+    return None
+
+
+def is_gla_sync_settling(target: dict[str, Any], diagnostic: dict[str, Any],
+                         shipping_class_matches: bool) -> bool:
+    """True for either closed settlement shape. One decision point, not two."""
+    return gla_settlement_shape(target, diagnostic, shipping_class_matches) is not None
 
 
 def mismatch_message(diagnostic: dict[str, Any]) -> str:
@@ -1524,8 +1766,11 @@ def load_plan(path: str) -> dict[str, Any]:
             "Google-sync eligibility, so the bounded wait has no evidence to stand on. "
             f"Schema-3 plans carry no baseline mode and no {GLA_STABILITY_FIELD} proof, "
             f"so a {BASELINE_PENDING} before-state in one could never have been measured "
-            "still. All three are permanently unusable and rehashing one does not revive "
-            "it. Stage a new plan. Existing commit locks remain authoritative."
+            "still. Schema-4 plans carry a verifier that recognised only the narrower "
+            "settlement shape, so the measured three-entry Google settlement locked them "
+            "indeterminate mid-run. All four are permanently unusable and rehashing one "
+            "does not revive it. Stage a new plan. Existing commit locks remain "
+            "authoritative."
         )
     if plan.get("tool_version") != TOOL_VERSION:
         raise ShippingPolicyError(
@@ -1723,18 +1968,25 @@ def _confirm_pending_settled(target: dict[str, Any], endpoint: str, desired: str
                              vault: dict[str, Any]) -> dict[str, Any]:
     """Bounded, READ-ONLY confirmation that a newly SETTLED state is holding.
 
-    Reached only when a pending-baseline write moved exactly one thing: the fixed
-    `_wc_gla_sync_status` entry, from the pending digest to the settled digest,
-    same id, same index, same count, same order, nothing else. That is the reverse
-    half of the convergence already proved live -- but it is a state change, so it
-    is not accepted on sight.
+    Reached only when a pending-baseline write produced one of the two CLOSED
+    settlement shapes: the fixed `_wc_gla_sync_status` entry moving from the
+    pending digest to the settled digest, same id, same index, same count, same
+    order -- alone, or together with `_wc_gla_synced_at` and `_wc_gla_sync_hash`
+    changing value only. Either way it is a state change, so it is not accepted on
+    sight.
 
     The post-write read becomes the expected state, and every observation on the
-    fixed 2s/4s schedule must reproduce it exactly: the shipping class,
+    fixed 2s/4s schedule must reproduce it EXACTLY: the shipping class,
     date_modified_gmt, the aggregate fingerprint, every per-field fingerprint, the
     complete projection, and the settled baseline itself. A resource that flips
     back to pending, moves on to anything else, or errors, fails here -- the plan
     locks indeterminate and nothing is retried, rolled back or written again.
+
+    That exactness is what keeps the wider settlement shape honest. The stamp and
+    the content hash are accepted ONCE, as part of one recognised transition; if
+    either moves AGAIN during this confirmation the complete-projection comparison
+    below fails and the plan locks. Ongoing churn is never tolerated, because the
+    expected state is the whole snapshot and not a subset of it.
     """
     expected = baseline_snapshot(settled_record)
     started = monotonic()
@@ -1832,13 +2084,16 @@ def _commit_assignment(plan: dict[str, Any], vault: dict[str, Any],
             results.append(unchanged)
             continue
         if mode == BASELINE_PENDING:
-            # A pending baseline has exactly one other acceptable shape: the same
-            # entry moving on to the settled digest -- the reverse half of the
-            # proven convergence. It is confirmed, not assumed.
-            if not is_gla_sync_settling(target, post_write, True):
+            # A pending baseline has exactly two other acceptable shapes, both of
+            # them the SAME status entry moving on to the settled digest -- alone,
+            # or together with Google's two named companion entries. Either is
+            # confirmed, not assumed, and the confirmation is identical for both.
+            shape = gla_settlement_shape(target, post_write, True)
+            if shape is None:
                 raise ProtectedStateMismatch(mismatch_message(post_write), post_write)
-            results.append({**row, **_confirm_pending_settled(
-                target, endpoint, desired, readback, vault)})
+            results.append({**row, SETTLEMENT_SHAPE_FIELD: shape,
+                            **_confirm_pending_settled(
+                                target, endpoint, desired, readback, vault)})
             continue
         if not is_gla_sync_transient(target, post_write, True):
             raise ProtectedStateMismatch(mismatch_message(post_write), post_write)
@@ -1982,6 +2237,12 @@ def command_commit(args: argparse.Namespace) -> None:
              for mode in BASELINE_MODES}
     settled_confirmed = sum(1 for row in converged
                             if row.get("final_state") == PENDING_SETTLED_FINAL_STATE)
+    # Which of the two closed settlement shapes was actually accepted, per target.
+    # A count, never a value: this is how a reader tells "Google settled the status
+    # alone" from "Google settled it with its stamp and content hash".
+    shapes = {shape: sum(1 for row in rows if isinstance(row, dict)
+                         and row.get(SETTLEMENT_SHAPE_FIELD) == shape)
+              for shape in SETTLEMENT_SHAPES}
     wc.append_receipt(
         "woocommerce_shipping_policy_committed",
         f"action={action}; plan={plan_path}; sha256={plan['sha256']}; "
@@ -1989,7 +2250,9 @@ def command_commit(args: argparse.Namespace) -> None:
         f"convergence_meta_key={GLA_META_KEY}; "
         f"final_state={CONVERGENCE_FINAL_REQUIREMENT}; "
         + "; ".join(f"baseline_{mode}_targets={count}" for mode, count in modes.items())
-        + f"; pending_settled_confirmed_targets={settled_confirmed}",
+        + f"; pending_settled_confirmed_targets={settled_confirmed}; "
+        + "; ".join(f"settlement_{shape}_targets={count}"
+                    for shape, count in shapes.items()),
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED", "action": action,
@@ -2004,6 +2267,7 @@ def command_commit(args: argparse.Namespace) -> None:
             "pending_final_requirement": PENDING_FINAL_REQUIREMENT,
             "pending_settle_confirm_max_seconds": PENDING_SETTLE_CONFIRM_MAX_SECONDS,
             "pending_settled_confirmed_targets": settled_confirmed,
+            "settlement_shapes": shapes,
         },
         "plan_sha256": plan["sha256"], "replay_locked": True,
     }, indent=2, ensure_ascii=False))

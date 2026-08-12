@@ -106,8 +106,23 @@ ALLOWED_WRITE_SCOPES = (
     # deliberately no invoice DELETE, ALL or fullaccess scope, and no scope of
     # any kind that could mail, void or change the status of an invoice.
     "ZohoBooks.invoices.CREATE",
+    # ONE fixed sales-order creation through zoho_sales_order_tool.py ONLY, and
+    # inside it only the single commissioned action
+    # create_sct_po26330_draft_sales_order_with_attachment: the SCT PO26330
+    # draft Sales Order and the upload of the original client PO to the order
+    # that create just returned. Zoho's own numbering assigns the order number.
+    # There is deliberately no sales-order UPDATE, DELETE, ALL or fullaccess
+    # scope, no ZohoInventory sales-order write scope, and no scope of any kind
+    # that could confirm, void, restatus, convert, mail or delete an order or
+    # its attachment.
+    "ZohoBooks.salesorders.CREATE",
     "ZohoInventory.items.CREATE",
     "ZohoInventory.items.UPDATE",
+    # ONE fixed backing-ring merge through zoho_backing_ring_stock_tool.py ONLY:
+    # create one positive quantity adjustment for existing items
+    # 96274000001518002 (+12) and 96274000001518014 (+101). No adjustment
+    # update/delete/approval route and no other item is reachable.
+    "ZohoInventory.inventoryadjustments.CREATE",
 )
 SCOPES = READ_SCOPES + ALLOWED_WRITE_SCOPES
 FORBIDDEN_SCOPE_PARTS = (".UPDATE", ".DELETE", ".ALL", "fullaccess")
@@ -378,7 +393,8 @@ def command_connect(_: argparse.Namespace) -> None:
     print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
-    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
+    print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_scope_list(args: argparse.Namespace) -> None:
@@ -442,7 +458,8 @@ def command_reauthorize(_: argparse.Namespace) -> None:
     print("Zoho reauthorization: SAVED FOR FRP DEPOT")
     print("New granular read scopes: INCLUDED")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
+    print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_check(_: argparse.Namespace) -> None:
@@ -493,7 +510,8 @@ def command_check(_: argparse.Namespace) -> None:
     print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
-    print("Estimate/invoice DELETE, status/send/void/approval/payment, stock-adjustment and order write scopes: ABSENT")
+    print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -94,6 +94,35 @@ GROUP_OPTION_BASELINE_ATTRIBUTES = [
 # answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
 APPROVAL_WORD = "APPROVED"
 
+# Local plans that were staged but explicitly withdrawn before any approval or
+# commit. They are permanently refused by full digest so an old file cannot be
+# replayed after Rachad corrected the product mapping.
+WITHDRAWN_ITEM_CREATE_PLAN_HASHES = {
+    # 4-inch white/black and 10-inch black: Rachad mapped the stock to the
+    # already-existing generic 4-inch/10-inch item IDs.
+    "9d62d3962fa00f981f0ef6766448a176cc4d3a134b677c7982b1b8d7f012910a": "withdrawn: use existing generic 4-inch item",
+    "0a2d2944fd59a273000cd901b794727cd204f88eeeb3d40f47977a88b0030c1a": "withdrawn: use existing generic 4-inch item",
+    "0c192caad2b972e7c63a85f6e4944348c044aeef9f2d579bb356c04ffb50613d": "withdrawn: use existing generic 10-inch item",
+    # Two OD-specific 1-1/2-inch plans: Rachad corrected them to one black
+    # product, 85 pcs total, with no OD shown in the item name or SKU.
+    "b44bc7cdb2e9c9bc023e630ffdfd550f63ff98c951974f6b90300e697844d38e": "withdrawn: corrected to one 1-1/2-inch black product with no OD",
+    "dea4b48f0a55a2abccc5b76256a97ccab593f1c129a53c43c11035a6467728d0": "withdrawn: corrected to one 1-1/2-inch black product with no OD",
+    # Colour-specific plans withdrawn when Rachad directed one item per nominal
+    # size regardless of black/white colour. The short-lived colour-neutral
+    # 1-1/2-inch BLACK plan is included because colour must not appear either.
+    "a3b3d81ca7046d01fc6218e823da9de24d9cbd5485efe022aee063d35150e5ab": "withdrawn: merge colours into one 1-inch item",
+    "30291ce09dbd505cc64f40417fed77a02ba23cc087a63b6e1342d74d6be7b884": "withdrawn: colour must not appear on the 1-1/2-inch item",
+    "0eabc41727bf143ce31e0a1801f7e544da74205555ca1db1ba30dbeaa2434621": "withdrawn: merge colours into one 2-inch item",
+    "fa721418e4bdab8fbafe46b9db6bc253267f3e350a8dd3b7b51506c46339dc14": "withdrawn: merge colours into one 3-inch item",
+    "d09f392e6444d923acbde8aad387cf23c628ebae38c30e5ba2c17c8b90caaf52": "withdrawn: merge colours into one 6-inch item",
+    "8b02f2ef477604a2c71f4ad2743010782e820339517674bca89124d1a1239a17": "withdrawn: merge colours into one 6-inch item",
+    "7efdea461d7974c61dd94f6bf05aae7fe97565b3707360567ffe98943596829d": "withdrawn: merge colours into one 8-inch item",
+    "7856e86eb4f7d7b22799561d5c07d4004203eb593d3e1bb80285eb9ca1d51f5d": "withdrawn: merge colours into one 12-inch item",
+    "e7a8688670ac0f43e6115e3b6d6cada10f2723387b55cac1167d21fd857c4318": "withdrawn: merge colours into one 12-inch item",
+    "dd88cb32d545be3b8619fbdcf7ce8a68d61adc8511a5a4c9347cdbeb35fe798f": "withdrawn: merge colours into one 14-inch item",
+    "d5340e598d5a2ed4d862c2e69c33eafdbef06b8db4b0e66eae917bcd9d584313": "withdrawn: merge colours into one 14-inch item",
+}
+
 
 def require_rachad_approval(approval: str) -> None:
     if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
@@ -210,6 +239,12 @@ def load_plan(path: str, kind: str) -> dict[str, Any]:
         raise ItemToolError("Plan hash check failed. The plan changed after review.")
     if plan.get("tool") != TOOL_NAME or plan.get("kind") != kind:
         raise ItemToolError("The plan belongs to a different tool or action.")
+    if kind == "item_create" and saved in WITHDRAWN_ITEM_CREATE_PLAN_HASHES:
+        raise ItemToolError(
+            "REFUSED: this uncommitted item-create plan was permanently withdrawn — "
+            + WITHDRAWN_ITEM_CREATE_PLAN_HASHES[saved]
+            + "."
+        )
     plan["sha256"] = saved
     return plan
 

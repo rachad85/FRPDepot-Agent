@@ -20,6 +20,8 @@ sheet — ask instead.
 - Outlook reply-thread rule (Rachad, 2026-07-23): every email reply draft must use **Reply All** from the latest live external non-draft message in the existing Outlook conversation—never a new standalone message. Preserve the existing subject, conversation identity, quoted history, and externally appropriate To/Cc roles; add the new reply above the history and the official HTML signature once. Check Drafts first, keep only one active response draft, then reopen it and verify the thread, recipients, body, signature, attachments, and that no newer source message arrived before reporting it ready.
 - Internal-copy rule (Rachad, 2026-08-10): every outbound email must copy at least one of `logistics@frpdepots.com`, `accounting@frpdepots.com`, or `operations@frpdepots.com`, or all three, as Rachad selects for that message. These addresses should be readily selectable in his Android email/Zoho workflow rather than manually copied and pasted.
 - Zoho Android recurring-CC finding (live-tested 2026-08-10): Zoho Books Android did not expose Android contacts in its Cc picker even with Contacts permission, and its recipient field would not accept Microsoft SwiftKey clipboard clips. The live invoice-email API exposed only customer-specific contact persons and one organization-wide `Default` email template. Official Zoho Books Canada documentation confirms email templates can carry preset Cc/Bcc addresses. The scalable solution is four module-specific clones of the Default template (`CC - Logistics`, `CC - Accounting`, `CC - Operations`, `CC - All`), not adding FRP Depot staff to every customer. Test one clone on Android before creating the rest; do not associate these templates with individual customers or make one universal default.
+- Sales-order processing notification requirement (Rachad, 2026-08-11): after converting a Quote to a Sales Order, Rachad wants to send the processing message directly from Zoho using a Sales Order email template. The fixed internal recipients are `logistics@frpdepots.com` and `operations@frpdepots.com` in To, with `accounting@frpdepots.com` in Cc, and the Sales Order PDF attached. Rachad presses Send himself; no automatic sending and no Outlook watcher.
+- Sales Receipt policy (Rachad, 2026-08-11): use Zoho Sales Receipts only when the customer pays in full at the time of sale. Normal FRP Depot business remains Quote -> Sales Order -> Invoice -> Record Payment -> payment confirmation or paid invoice. The live organization had zero Sales Receipts when this policy was set.
 - Chase-own exception (Rachad, 2026-08-02): when a thread he started has NO external message at all (nobody ever answered his email), the follow-up chase draft is a Reply All under HIS OWN latest sent message in that thread — `outlook_tool.py reply-all --chase-own` — keeping the original recipients and quoted history. The tool refuses this path the moment any live external message exists, and refuses it for anything but a chase. Ruled when the 2026-07-31 digest found 5 genuine follow-ups and could draft none.
 - Rachad's standard email signature block (verified from repeated Outlook Sent Items):
   Rachad Homsi
@@ -38,15 +40,85 @@ sheet — ask instead.
   are all in CAD". Stated over the stocked-coupling price comparison, so it governs
   the prices Dado presents and quotes. It does NOT restate the currency of a Zoho
   record or a supplier invoice — read those from the record itself.
-- FNPT pricing rule (Rachad, 2026-08-10): for the current FNPT supplier quotation,
-  calculate the target CAD selling price as `supplier USD cost × 3.6`. The multiplier
-  includes currency conversion, shipping, handling, and margin. Flag every current
-  Zoho/Woo selling price below that target for review; do not change a price without
-  a separate approved write plan. This is scoped to FNPT until Rachad applies it
-  elsewhere.
-- FNPT rollout order (Rachad, 2026-08-10): hold all WooCommerce FNPT price changes
-  until every supplier price is available. Set the Zoho selling rates first, then
-  prepare the website push.
+- Supplier-cost pricing rule (Rachad, 2026-08-10; extended 2026-08-11): calculate
+  the target CAD selling price as `supplier USD cost × 3.6`. The multiplier includes
+  currency conversion, shipping, handling, and margin. It applies to the current FNPT
+  supplier quotation and to the FRP backing-ring stock Rachad listed on 2026-08-11.
+  Flag every current Zoho/Woo selling price below that target for review; do not
+  change a price without a separate approved write plan.
+- FRP backing-ring landed valuation (Rachad, 2026-08-11): use Fei's quoted USD
+  unit costs tentatively, preserve those supplier figures as provenance, add a
+  separate 20% landing allowance, then convert to CAD using the Bank of Canada
+  daily average for the 2026-08-11 inventory-receipt date: 1 USD = CAD 1.3927.
+  Formula: `quantity × Fei USD unit cost × 1.20 × 1.3927`; retain the exact
+  converted unit basis through multiplication and round each CAD line total once,
+  half-up, to two decimals. This gives CAD 78,816.51 for the eight new items / 713
+  pieces. The 20% is tentative freight/duty/landing cost, not selling markup, and
+  does not change the separate Fei USD cost × 3.6 CAD selling-rate rule. The
+  approved 713-piece quantity adjustment loaded the quantities but Zoho valued
+  every line at CAD 0.00 because the eight new items' purchase rates were zero;
+  adjustment 96274000001555048 is permanently replay-locked. Therefore the
+  CAD 78,816.51 remains the approved tentative valuation basis, not the current
+  live Zoho inventory value. Rachad commissioned the separate fixed value-only
+  correction tool on 2026-08-11 and approved its plan on 2026-08-12. VALUE
+  Inventory Adjustment 96274000001555109 added exactly CAD 78,816.51 through
+  eight `value_adjusted` lines with no quantity field or item/rate write. Fresh
+  reads show status Adjusted, valuation no longer pending, and the 713 pieces plus
+  every protected item field unchanged. The plan remains permanently no-retry.
+  Replace the tentative valuation when actual supplier/freight costs are known
+  only through a separately approved accounting correction.
+- FRP backing-ring catalog facts (Rachad, 2026-08-11): treat every ring on his
+  handwritten stock sheet as 150 PSI and use the default D411 resin. Prepare the
+  Zoho Inventory catalog first; do not publish the website products until Rachad
+  supplies product pictures. Catalogue exactly ONE item per nominal size: black
+  and white colour differences do not matter and colour must not appear in the
+  Zoho item name, SKU, description, quotes, or later website label. Do not show
+  outside diameter either. The 4-inch and 10-inch sheet rows are the same
+  products as existing generic Zoho items `BRDN100150PSI411` and
+  `BRDN250150PSI411`; merge their counts into those existing item IDs and keep
+  current orders linked. The 1-1/2-inch total is 85 pcs. The eight colour-neutral
+  1, 1-1/2, 2, 3, 6, 8, 12 and 14-inch Zoho items were created and live-verified
+  on 2026-08-12 at the approved Fei-cost × 3.6 rates. Their 713 physical units
+  are not loaded yet; live starting stock is zero pending a separate approved
+  inventory-adjustment plan. The existing 4-inch/10-inch items already hold 113.
+- FNPT WEBSITE GO-LIVE RULE (Rachad, 2026-08-11; supersedes the earlier hold-for-
+  every-supplier-price rollout rule): publish product 2061 using the lower of
+  (a) revised supplier USD cost × 3.6 CAD and (b) the exactly equivalent
+  Litek/FRP Supply public USD price converted at the stated exchange-rate source.
+  Where supplier cost is missing, match FRP Supply only when a defensible cost
+  ceiling proves the result remains profitable; otherwise keep that variation
+  unavailable rather than expose a placeholder price. Unsupported resins may not
+  borrow D411/D470 competitor prices. Product type, size, length, pressure, resin,
+  connection, currency and price basis must match before applying a competitor
+  price. Zoho `actual_available_stock` remains the stock authority and must be
+  freshly matched immediately before the first website write. Public product
+  photos are visual references only; the live gallery uses original, unbranded
+  FRP Depot imagery. The specific immutable go-live plan still requires Rachad's
+  later exact one-word `APPROVED` before any website write.
+- FNPT ONLINE RECOVERY STATUS (2026-08-12): the first approved immutable go-live
+  plan is permanently replay-locked `indeterminate` after exactly one PUT. Live
+  readback proves variation 2062 (`FNPTCOUPLING-DERAKANE470-1/2\"6\"`) is at
+  CAD 37.44 and published; parent 2061 remains Draft with an empty gallery and
+  the other 63 variations remain at their staged baselines. The stop was caused
+  by WooCommerce automatically recalculating the parent's price HTML and Yoast
+  price fields after the child price save; those exact derived fields are now
+  modelled and tested, not broadly ignored. No retry or rollback occurred.
+  Rachad's Aug. 12 supplier workbook (SHA-256
+  `fc99d4a46d289062540535a686dc482d7224b944d3fe9bf51f7caf18ce4d416e`)
+  provides all 32 D411/D470 6-inch and 8-inch costs and states MOQ >=10 per
+  specification. A new read-only recovery plan is staged at canonical SHA-256
+  `19c1c8bfecd9a6e51eb067c9a7a90cc54fd939aa6db6085cec42105b0d1221e7`:
+  32 supported D411/D470 variations, 32 unsupported Hetron 922/D510A variations
+  Private, six fixed original images, then parent publication last. Price sources
+  are 19 exact FRP Supply caps, 9 supplier-cost x3.6 results and 4 supplier-cost
+  x3.6 results where no exact 8-inch competitor equivalent exists; conservative
+  margins using supplier USD cost x1.20 at CAD/USD 1.3943 range 30.64%-53.53%.
+  Variation 2062 is verify-only and has no PUT route; 65 independent writes remain
+  (63 variations, gallery, publication). Fresh staging stock comparison passed
+  64/64 against Zoho physical availability (12 in stock, 52 out), and commit must
+  repeat it before its lock and first write. Tests: targeted 31/31 and complete
+  WooCommerce 690 passed with one expected PHP-only skip. The old approval cannot
+  authorize this replacement plan; it awaits a new exact `APPROVED`.
 - Existing Zoho sales-rate writes: NO LONGER BLOCKED for FNPT (Rachad commissioned
   the named `zoho_inventory_price_tool.py` on 2026-08-10). It changes only the
   sales rate `rate` on existing items whose live SKU begins exactly with
@@ -61,6 +133,13 @@ sheet — ask instead.
   verified all 26 sales rates at supplier USD cost × 3.6; 20 increased and 6
   decreased. The plan is replay-locked. Six current 8-inch D411/D470 variations
   remain excluded because their supplier cells are blank; no cost was inferred.
+- FNPT supplier quotation Rev. 01 dated Aug. 12, 2026 supersedes the earlier
+  incomplete Rev. 01 evidence for online pricing. It contains 32 mapped D411/D470
+  catalog costs: both 6-inch and 8-inch lengths for sizes 1/2, 3/4, 1, 1-1/4,
+  1-1/2, 2, 3 and 6 inches. Every mapped value is pinned to its workbook cell and
+  the workbook SHA-256 above. Supplier note: unit prices require minimum order
+  quantity >=10 for each specification. This does not by itself authorize any
+  Zoho sales-rate update; Zoho writes remain a separate staged plan and approval.
 - Payment terms default: No global default confirmed. Customer terms are account/order-specific; supplier terms are negotiated per PO/invoice.
 - Shipping terms default: No global default confirmed. Observed orders use Ex Works, FCA, or customer-account collect arrangements.
 - Quote validity default: No general default found in the mailbox; Rachad must confirm.
@@ -80,6 +159,8 @@ sheet — ask instead.
 
 ## People
 - Rachad Homsi — owner. Telegram 891365639.
+- Anh — handles Forte (payroll / direct deposit) matters; Rachad stated
+  2026-08-11 "Forte is being handled by Anh", so do not raise Forte items to him.
 - (others as learned)
 
 ## Dated notes
@@ -548,6 +629,73 @@ sheet — ask instead.
   authorize a blocked capture of the Clone form's single Save request the way the
   New form's was captured; or (2) say plainly that the stock body is acceptable,
   which changes what customers receive and is his decision, not Dado's.
+- 2026-08-11: Rachad chose option (1). The blocked `Clone` capture ran, he
+  answered **`YES`** to accepting the one difference it revealed, and the Clone
+  create path was implemented and tested. Tool is now **v2.0.0 / schema 3**, so
+  every plan staged under the old New-form blocker fails closed.
+  THE CLONE CONTRACT, measured not assumed: the `Default` row's exact
+  `Show dropdown menu` disclosure -> exact `Clone` item -> fixed name + fixed Cc
+  option -> Save emitted exactly ONE request, `POST`
+  `https://books.zohocloud.ca/api/v3/settings/emailtemplates`, empty query, form
+  body `JSONString` + `organization_id`, body SHA-256
+  `f6e9d14c56e6560632f21245755674cee0a4013282a82ac5282b258eee5ff0ab`, aborted
+  before the network. Its payload is a FLAT EIGHT-KEY object (`bcc_mail_ids`,
+  `body`, `cc_mail_ids`, `from_address_id`, `is_default`, `name`, `subject`,
+  `type`) — a DIFFERENT schema from the `New` form's nested `language_content`,
+  which is why the two are decoded by separate functions and neither may stand
+  in for the other. No header, cookie, storage value, token or password was read.
+  THE ACCEPTED EQUIVALENCE, and its exact limit: the Clone body is byte-different
+  from `Default` but canonically identical. Both are 2,131 characters, both parse
+  to exactly 106 canonical events, and every event is equal; Zoho only reorders
+  `href`/`style` on the PAY NOW `<a>` and `class`/`style` on its two nested
+  `<span>`s. `same_canonical_html` ignores HTML ATTRIBUTE ORDER AND NOTHING ELSE
+  — it preserves tags, nesting, attribute names, attribute values, quoting, data
+  and whitespace nodes, entities, comments and declarations exactly, REFUSES
+  duplicate attributes rather than letting a parser collapse them, and REFUSES
+  malformed or unclosed markup rather than repairing it. The plan's own source
+  fingerprint still protects the live `Default` body BYTE-for-byte.
+  *** AN UNAUTHORIZED LIVE WRITE HAPPENED DURING THIS BUILD. SAY IT PLAINLY. ***
+  Mutation-checking deleted `@holds_zoho_browser` to prove it was load-bearing.
+  It was — but with it gone,
+  `test_busy_browser_refuses_for_free_and_leaves_the_plan_reusable` (which calls
+  `command_commit` directly and deliberately does NOT patch
+  `create_template_via_ui`) had nothing left between it and the live session. The
+  suite's fake vault carries the REAL organization id and the real `Default`
+  template id, so it drove the real browser and saved a real `CC - Accounting`
+  invoice template, ID **`96274000001558092`**, WITHOUT Rachad's approval. It is
+  a faithful fixed clone — CC exactly `accounting@frpdepots.com`, BCC empty,
+  non-default, subject/From/type matching `Default`, body canonically identical
+  — and NO email was sent and nothing else changed. It has NOT been deleted:
+  this tool has no delete route and removing it is Rachad's call, not Dado's.
+  TWO FIXES, both mutation-checked: (a) the test module now patches
+  `sync_playwright` ITSELF at module scope, because patching the read transport
+  was never enough — the create path opens its own playwright session; (b) the
+  read-back defect the accident exposed, below.
+  *** `placeholder` IS DERIVED FROM THE NAME, NOT INHERITED. *** It was in
+  `SOURCE_CLONE_FIELDS`, i.e. required byte-equal to the source. Zoho derives it
+  from the template's own name — measured on both live templates, `Default` ->
+  `mt_default` and `CC - Accounting` -> `mt_cc_accounting` — so a faithful clone
+  can NEVER carry the source's. Every successful create would have failed its own
+  read-back, reported indeterminate, and left an ORPHAN template behind a
+  permanently locked plan: the exact outcome the create gate exists to prevent.
+  Now checked by `derived_placeholder` under its own explicit rule. The accidental
+  write is what proved this; no test written against the old assumption could have.
+  SAFETY UNCHANGED OTHERWISE: `New` is never clicked (it stays pinned negative
+  evidence, recorded in every plan); the whole commit command takes the shared
+  Zoho browser mutex BEFORE the plan replay lock, so a busy lane is a free
+  refusal that never burns a plan; the interceptor aborts every non-read request
+  and releases exactly ONE fully validated POST, once, with no retry; and the
+  source is pinned to the FRESH live `Default` id, not the plan's.
+  Tests: 147 in the email-template suite (all passing), 643 across the whole Zoho
+  suite, 19 in `test_ui_lane_lock`, 618 WooCommerce (1 PHP-only skip). Six
+  mutations — removed mutex, removed body comparison, case-blind comparator,
+  repeat-save allowed, loose read-back, missing live-Default check — plus the two
+  new placeholder mutations were each caught by the suite.
+  NO PLAN IS STAGED. `stage --action create_accounting_test` now correctly
+  REFUSES, because `CC - Accounting` already exists (the accidental write). The
+  next step is Rachad's: either keep `96274000001558092` and confirm the Android
+  test against it, or ask for it to be removed — deletion is not reachable from
+  any commissioned tool.
 - 2026-08-10 21:56 EDT live queue verification: the saved Zoho connection now
   includes the named restricted existing-invoice revision and draft-invoice
   creation access; `zoho_tool.py check` verified Books and Inventory. This
@@ -660,3 +808,182 @@ sheet — ask instead.
   1457), 55 blank, zero unexpected classes, zero missing targets. Plan SHA-256
   `2546a31f414cc049d5f737d5816aedda8b169c266c7b022d991dbad8a0d332ed`
   is `committed_verified` and replay-locked. No WordPress write and no email.
+- 2026-08-11: Rachad approved the three remaining freight-class plans covering 55
+  variations: 31 Pipe, 13 Manway and 11 Manway Cover. The first Pipe plan issued
+  and verified 21 writes, then issued the write for Pipe variation 1476 / SKU
+  `PIDN450150PSI411`. That write also landed, but Google for WooCommerce changed
+  three protected metadata values at read-back (`_wc_gla_sync_status` from
+  pending to synced, `_wc_gla_synced_at`, and `_wc_gla_sync_hash`). The verifier
+  treated the three-value transition as a protected-state mismatch, locked the
+  Pipe plan indeterminate and stopped without retry. Fresh live read-only audit
+  proved the intended `freight-quote-required` class on all 22 attempted Pipe
+  variations, including 1476; the last 9 Pipe targets are still blank, and the
+  13 Manway plus 11 Manway Cover plans were never started. Together with the
+  three earlier verified Pipe assignments, current protected coverage is 25 of
+  58 intended variations, with 33 blank. No other shipping class appeared.
+- 2026-08-11: Rachad explicitly commissioned ONE additional narrow action inside
+  the existing named `zoho_customer_quote_tool.py`: correct only estimate
+  QT-000029 (`96274000001559037`, PO 104750 / J6276), only line Item 9 /
+  line-item ID `96274000001559046` / item ID `96274000000030497` (FRP ELBOW-
+  12\"/150PSI/D411), and only its quantity from 4 to 1. The live source is Jasmin
+  Leblanc's Outlook message received 2026-08-11 12:29; the rate remains CAD
+  810.00, the TDS 10% item discount and GST+QST remain unchanged, and the
+  independently predicted revised total is CAD 11,165.88. Every other header,
+  line ID/order/item, quantity, rate, discount, description, tax and returned
+  protected field must be preserved; the live status must remain exactly `sent`.
+  The complete live line list must be resent in one PUT, after a read-only stable
+  rehearsal and fresh pre-write fingerprint, with a 24-hour immutable plan,
+  byte-exact `APPROVED`, replay lock before the one attempt, full live readback,
+  no retry/rollback and no mail/send/status/delete route. This authorizes build,
+  tests and staging only; it is NOT approval of a staged plan. At commissioning:
+  zero Zoho writes, zero estimate changes and zero emails.
+  STATUS 2026-08-11: BUILT and independently verified with the complete Zoho
+  suite, 584 tests passed with 3 expected skips. Rachad approved staged plan
+  `20260811T160516Z_tds_item9_quantity_correction_e718dc3fdb1801a4.json`
+  (SHA-256 `e718dc3fdb1801a42b3a1dd588d8e93e5fc7d5115abe63ca8a1bd1e61f073624`)
+  with his exact `APPROVED`, and the tool issued its one PUT. The verifier then
+  locked the plan `indeterminate` because the gross-subtotal field
+  `sub_total_exclusive_of_discount` moved from 13,220.64 to 10,790.64; that is
+  the expected quantity-derived movement but was not on the narrow verifier's
+  derived-field list. NO RETRY: the plan remains permanently replay-locked.
+  Three fresh read-only reconciliation GETs were stable and proved the write
+  landed exactly: status `sent`, all 11 line IDs/order/items preserved, Item 9
+  quantity 1 at CAD 810.00 with 10% discount and the same GST+QST tax, subtotal
+  CAD 9,711.57, tax CAD 1,454.31 and total CAD 11,165.88. A complete protected
+  comparison found exactly one difference beyond the explicitly verified
+  quantity/totals: `sub_total_exclusive_of_discount`, the expected gross
+  subtotal above. QT-000029 is live-corrected; zero emails were sent.
+- 2026-08-11: Rachad explicitly commissioned `zoho_sales_order_tool.py` for one
+  narrow action only: create one new Draft Zoho Books Sales Order for existing
+  active customer Structural Composites Technologies Ltd from client PO26330,
+  then attach the exact original PDF received from Bon Bacani. The order is one
+  existing active non-legacy item, FNPTCOUPLING-DERAKANE470-3/4\"6\"
+  (`96274000000523055`), quantity 2 at CAD 50.20 each (source: client PO26330
+  and Rachad's 2026-08-07 email), with GST 5% / CAD 5.02, subtotal CAD 100.40,
+  total CAD 105.42, date 2026-08-11, required date 2026-08-12, PO reference
+  PO26330, Net 30, SCT's existing Winnipeg billing/shipping addresses, tag
+  SO38211-Nutrien Vanscoy, and Purolator Express collect account 3763800. The
+  exact correct item has physical available stock 2; the similarly priced 8-inch
+  item has zero and the old matching custom item is explicitly LEGACY — DO NOT
+  USE. The original PDF is
+  `Dado/20_Working/sct_po26330/PO26330-FRP Depot - Couplings.pdf`, 156,997 bytes,
+  SHA-256 `274854b82b47231a74a940118995e1f27fd3d9f4a508ac8657781467f43661d9`.
+  The tool must stage from fresh live reads, refuse any duplicate PO26330, use
+  Zoho auto-numbering, create exactly Draft status, lock before the first write,
+  attach only that hash-verified PDF to only the newly created Sales Order, and
+  verify both the complete Sales Order and downloaded attachment hash live.
+  Creation and attachment are two non-atomic POSTs: any failure/timeout or
+  indeterminate result permanently locks the plan, with no retry, rollback,
+  deletion or cleanup. No existing Sales Order, customer, item, stock, price,
+  shipment/package/invoice, status or email may be changed; the tool has no send
+  route. Every 24-hour immutable plan requires Rachad's later exact unpadded
+  uppercase `APPROVED`; this commissioning message authorizes build/test/stage
+  only and is not approval of a staged plan. At commissioning: the saved OAuth
+  connection lacks `ZohoBooks.salesorders.CREATE`; zero Sales Orders created,
+  zero attachments uploaded, zero Zoho writes and zero emails.
+- 2026-08-11 (same day, later) — **RACHAD CORRECTED THE TAX ON THAT ORDER:
+  ONTARIO HST 13%, NOT GST 5%.** His instruction on the not-yet-approved plan
+  was "we want to charge sale of Ontario". The order now carries the live
+  existing active tax `96274000000035516` `ON HST` at 13%: subtotal CAD 100.40
+  (unchanged, still the client PO's own), tax **CAD 13.05**, total **CAD
+  113.45**, Decimal ROUND_HALF_UP. Every other fact in the entry above stands
+  exactly as written — customer, PO reference, item, quantity, CAD 50.20 rate,
+  dates, addresses, Bon Bacani, Net 30, notes/tag, stock rule, PDF and every
+  guard. **The client PO's own printed `GST (ITC)@5.0% CAD 5.02` is no longer
+  used and is no longer checked against**; it is kept in the tool as a named
+  constant purely so the plan can state the difference and its source, the same
+  way it already discloses that CAD 50.20 is not the live item rate of 45.72.
+  This is a tax-treatment decision Rachad made and Dado records — do not infer
+  from it that Ontario tax now applies to any other order; sales tax still
+  follows the customer's address/jurisdiction and the delivery terms.
+  **THE GST-5% PLAN IS SUPERSEDED, WAS NEVER APPROVED AND WAS NEVER COMMITTED.**
+  `20260811T175734Z_create_sct_po26330_draft_sales_order_with_attachment_2950664b01e2366a.json`
+  (SHA-256 `2950664b01e2366a...`) is permanently invalid: the tool is now
+  v2.0.0 / schema 2 so every plan from the old build fails validation, and that
+  plan's own hash is additionally named in code so a retry is told why. No lock
+  file was ever written for it. Its file is deliberately left on disk,
+  byte-unmodified, as the record. No replacement plan is staged.
+  **MANITOBA — he asked whether the threshold had been passed. It has not.**
+  Read-only Zoho Books, 2025-08-12 through 2026-08-11: 4 Manitoba-destined
+  invoices, CAD 12,100.20 net subtotal, CAD 605.01 GST, CAD 12,705.21 total,
+  zero credit notes. Adding this PO's CAD 100.40 gives CAD 12,200.60 — CAD
+  17,799.40 below Manitoba's CAD 30,000 annual taxable-sales small-business
+  threshold. Manitoba Finance Bulletin RST 004 (revised June 2024) states that
+  threshold but ALSO caveats eligibility for out-of-province businesses that
+  have not paid Manitoba RST on taxable goods bought for resale, so the
+  threshold alone does not settle registration. CRA GST/HST Memorandum 3-3-3
+  (April 2026), example and paras 13-16: where the PURCHASER established the
+  freight terms and carrier account and the supplier merely contacts that
+  carrier for pickup, the supplier is not treated as having retained the
+  carrier and legal delivery remains at the supplier's premises — PO26330 says
+  Puro Collect / Purolator Express on SCT account 3763800. Dado does not decide
+  or change any registration; Rachad elected Ontario HST.
+  STATUS: BUILD AND TESTS ONLY. 100 tests in the SCT file (1 Windows-symlink
+  skip), 812 across the whole Zoho suite, 618 WooCommerce (1 PHP-only skip), 19
+  `test_ui_lane_lock` — all passing. Zero Zoho writes, zero Sales Orders, zero
+  attachments, zero emails; vault, `.env` and the live profile untouched.
+- 2026-08-11 — **THE FREIGHT VERIFIER STOPPED A CORRECT WRITE. SCHEMA 5 IS THE
+  REPAIR. CODE AND TESTS ONLY: NOTHING WAS EXECUTED, RECONCILED OR STAGED.**
+  THE DEFECT, measured not guessed. The 31-target FRP Pipe plan
+  `20260811T204921Z_shipping_class_assign_3e02e445093c9afb` verified 21 targets
+  and stopped at target 22, `/products/1455/variations/1476`, SKU
+  `PIDN450150PSI411`. Its ONE approved PUT set `shipping_class` correctly. The
+  immediate readback showed Google's save hook had settled the resource in a
+  SINGLE step, moving three EXISTING metadata values together with no add, no
+  removal, no id change, no key change and no reorder: `_wc_gla_sync_status`
+  (id 45152, index 1) pending digest -> settled digest, `_wc_gla_synced_at`
+  (id 45151, index 0) new stamp, `_wc_gla_sync_hash` (id 74838, index 5) new
+  content hash. Schema 4's verifier recognised a settlement ONLY when exactly
+  ONE entry moved (`value_changed_entry_count != 1` -> reject), so it read the
+  triplet as an unknown third-party edit, raised `ProtectedStateMismatch`,
+  locked the plan indeterminate and stopped. It was right by its own rules and
+  wrong about the world. **The write itself was correct and stands.**
+  THE REPAIR. `Dado\Tools\woocommerce\woocommerce_shipping_policy_tool.py` is
+  now SCHEMA 5 / TOOL_VERSION 5.0.0. A pending baseline now has exactly TWO
+  closed settlement shapes, `gla_status_only` (schema 4's, unchanged) and
+  `gla_status_with_stamp_and_hash` (the measured one). The wider shape requires
+  ALL of: `pending_baseline` mode re-derived from the immutable plan; the
+  approved class already in place; `meta_data` the only protected field moved;
+  identical entry count, order, ids and keys; EXACTLY three values changed;
+  those three keys and no others, matched by key digest, one occurrence each in
+  the staged projection; each keeping its own index and stable numeric id; and
+  the status entry moving from the one pinned pending digest to the one pinned
+  settled digest, never a third value. **It is not an exemption for Google
+  metadata, for all metadata, or for those three keys unconditionally** — a
+  fourth changed value (including a fourth Google key), a duplicate, a
+  two-of-three move, a wrong baseline or any identity drift is still refused,
+  still locked, still never retried. The stamp and hash are the only values that
+  cannot be pinned to a digest because they are unpredictable by construction,
+  so their IDENTITY and POSITION are pinned instead and the existing fixed 2s/4s
+  read-only confirmation still demands the COMPLETE settled state, unchanged, on
+  every observation — if either moves again mid-confirmation the plan fails
+  closed. The settled baseline's 90-second contract is untouched.
+  REPLAY SAFETY. The version bump plus four new `convergence_contract` fields
+  make every schema-4 plan invalid before vault or network even when rehashed.
+  `3e02e445093c9afb` stays consumed and permanently locked, byte-unmodified.
+  The two never-started schema-4 plans `bc715e551e3cd948` (Manway) and
+  `edf228120165b883` (Manway Cover) are now dead and must not be reused.
+  **BLOCKER — READ THIS BEFORE TRUSTING ANY OF IT: NOTHING RAN.** That session
+  could not execute python at all (`python --version` answered 3.11.15; every
+  other invocation, in both shells, returned "This command requires approval"
+  and the session was non-interactive). So: the new and existing tests were
+  NEVER EXECUTED, no fresh live GETs were taken, and ZERO plans were staged.
+  WooCommerce writes 0, WordPress writes 0, Zoho writes 0, emails 0. Run
+  `python -m unittest discover -s C:\FRPDepot\Dado\Tools\woocommerce -p "test_*.py"`
+  before the tool is used for anything.
+  LIVE STATE, from local artifacts only and NOT re-verified: 58 intended
+  targets, 25 assigned, 33 blank — 9 FRP Pipe (product 1455, variations
+  1477-1485), 13 FRP Manway (product 1397, variations 1398-1410), 11 FRP Manway
+  Cover (product 1411, variations 1412-1422). Source:
+  `pipe_31_post_commit_reconciliation_20260811.json` (2026-08-11T21:39:29Z,
+  read-only) plus the two `*_remaining_20260811.json` inputs.
+  **THE LIKELY NEXT STOP, on evidence already in hand.** That same
+  reconciliation shows `/products/1455/variations/2057` — a target this plan
+  committed cleanly as attempt 1 — now differing from its staged state by
+  `value_changed_entry_count: 2`, `changed_keys: ["_wc_gla_synced_at",
+  "_wc_gla_sync_hash"]`, with its status STILL pending. So Google does move the
+  stamp and hash WITHOUT the status. That two-entry shape has never been
+  observed at a post-write readback, so schema 5 deliberately refuses it
+  (fail-closed: only the two counts anyone has actually seen are accepted) — but
+  if a future run stops on it, that is the reason, and it needs its own measured
+  decision from Rachad, not a quiet widening.

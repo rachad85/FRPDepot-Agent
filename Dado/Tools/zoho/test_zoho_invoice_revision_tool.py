@@ -1360,7 +1360,12 @@ class ScopeTests(unittest.TestCase):
             "ZohoBooks.invoices.DELETE", "ZohoBooks.invoices.ALL",
             "ZohoBooks.contacts.UPDATE", "ZohoBooks.creditnotes.UPDATE",
             "ZohoBooks.customerpayments.UPDATE", "ZohoInventory.packages.UPDATE",
-            "ZohoBooks.fullaccess.all", "ZohoBooks.salesorders.CREATE",
+            "ZohoBooks.fullaccess.all",
+            # ZohoBooks.salesorders.CREATE was commissioned on 2026-08-11 for
+            # zoho_sales_order_tool.py. Every broader sales-order scope, and the
+            # Inventory sales-order writes, remain refused.
+            "ZohoBooks.salesorders.UPDATE", "ZohoBooks.salesorders.DELETE",
+            "ZohoBooks.salesorders.ALL", "ZohoInventory.salesorders.CREATE",
         ):
             with self.subTest(scope=scope):
                 with self.assertRaises(zoho_tool.ZohoError):
