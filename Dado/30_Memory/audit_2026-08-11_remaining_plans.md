@@ -1,34 +1,515 @@
 # Remaining cron-audit plans - designed 2026-08-11, NOT yet implemented
 
-> DATA WALL NOTE. These plans were designed by agents that could see the whole
-> machine, including the neighbouring TDI profile on the same shared hermes
-> install. Cross-company specifics (job names, TDI paths) have been scrubbed:
-> this file lives in the FRP repo and feeds the nightly conduct bundle, and
-> Hard Rule 4 keeps the two companies' material apart. Where a step belongs to
-> the TDI side it is named as such without detail.
+> DATA WALL: designed by agents that could see the whole machine, including the
+> neighbouring TDI profile on the shared hermes install. Cross-company specifics
+> are scrubbed; what remains are pointers to the shared patch harness, which
+> CLAUDE.md already names.
 
-Source: the 11-agent design workflow of 2026-08-11, each plan adversarially
-reviewed against the real code before being recorded here. Saved because the
-workflow output and the scratchpad copy were both swept mid-session; the plans
-were recovered from the workflow journal.
+Source: the 11-agent design workflow of 2026-08-11, each plan adversarially reviewed
+against the real code. Saved here because the workflow output and the scratchpad copy
+were both swept mid-session; recovered from the workflow journal.
 
-READ THE REVIEW NOTES. Every plan came back with corrections - several would
-have shipped a regression as written. Where a corrected_plan exists it SUPERSEDES
-the plan text above it.
+READ THE PLAN'S OWN RISK AND VERIFICATION SECTIONS. Every plan came back from review
+with corrections and several would have shipped a regression as written.
 
-These five are FRP-side. B-08 appears twice in the audit as two entries for one
-defect. The Zoho one is the critical partial: the daily banking review has never
-produced a single review, and the data-centre half is fixed while the
-account-filter half is not.
+Five entries. B-08 was filed twice by the audit as two findings; this is one defect.
+The Zoho one is the critical partial: the daily banking review has never produced a
+single review since 2026-08-07. The data-centre cause is fixed; Zoho returning a
+DIFFERENT account than the one requested is not, and that is data integrity.
 
 
-## dado-b08
+==============================================================================
+## dado-b08  (covers BOTH audit entries - one defect)
+==============================================================================
 
-(plan not recovered)
+**Finding:** Backlog B-08 (both entries, one defect): dado-job-watch and dado-stall-tripwire persist "announced" before delivery is confirmed
 
-## dado-b08 (duplicate entry)
+**Verdict:** fix-needed | **Effort:** medium | **Hermes patch:** False | **Fingerprints note:** False
 
-(plan not recovered)
+**Files:** C:\FRPDepot\Dado\Tools\watch\dado_inbox_reasoner.py, C:\FRPDepot\Dado\Tools\watch\job_runner.py, C:\FRPDepot\Dado\Tools\watch\stall_tripwire.py, C:\FRPDepot\Dado\Tools\watch\test_watch_delivery.py, C:\FRPDepot\Dado\Tools\watch\test_job_runner.py, C:\FRPDepot\Dado\Tools\watch\test_stall_tripwire.py, C:\FRPDepot\Dado\30_Memory\backend_backlog.md, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\dado_inbox_reasoner.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\job_runner.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\stall_tripwire.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\cron\jobs.json
+
+### Root cause
+
+CONFIRMED, live, and both open_findings entries describe the same defect. Verified independently:
+
+MECHANISM — the flag is written on the strength of a `print()`, and hermes' delivery happens later, out of process, with no callback.
+- `C:\FRPDepot\Dado\Tools\watch\job_runner.py`, `cmd_watch()` tail: `print("\n".join(lines))` then `for _, job_id, flags in shown: if job_id and flags: save_flags(job_id, **flags)` where flags are `{"reported": True}` / `{"stall_reported": True}` / `{"status": "died", "reported": True}`. The write is unconditional on delivery outcome.
+- `C:\FRPDepot\Dado\Tools\watch\stall_tripwire.py`, `main()` tail: `for _, key, record in shown: record["alerts"] += 1; record["last_alert"] = now...; state[key] = record` then `save_state(state)` — and only AFTER that `print("\n".join(lines))`. The alert budget (`MAX_ALERTS_PER_TURN = 3`) and the re-alert clock (`REALERT_MINUTES = 60`) are both spent before hermes has attempted anything.
+- Both jobs carry `"deliver": "telegram:891365639"` in the live `%LOCALAPPDATA%\hermes\profiles\dado\cron\jobs.json` (ids `7eb0333f5a25` dado-job-watch `*/10 * * * *` repeat.completed 2584; `faaabfa052e9` dado-stall-tripwire `*/15 * * * *` repeat.completed 1723). `grep -n "send_clean|queue_undelivered"` on both files returns nothing.
+- Nothing retries. `cron/scheduler.py:_deliver_result` sends once per target; a failure only writes `last_delivery_error`, which no code in `C:\FRPDepot` reads (separate finding). One concrete named drop path in the same function: the standalone send is guarded by `_interpreter_shutting_down()` and, when it trips, logs "delivery to telegram:... skipped — interpreter is shutting down" and delivers nothing — i.e. a gateway restart landing inside a tick silently eats the message. `profiles\dado\gateway-starts.log` shows 4 restarts in the last 24h.
+
+DEPLOYMENT IS NOT A COMPLICATION HERE — repo and profile copies are byte-identical, so there is one logical file per script:
+  job_runner.py          sha256 cc102ca9a0980f5a…  (repo == profile, both 2026-08-08 11:55)
+  stall_tripwire.py      sha256 2114c17d99653ec8…  (repo == profile, 2026-07-25 01:10/01:12)
+  dado_inbox_reasoner.py sha256 d8cacb994c25e990…  (repo == profile)
+
+THE LOSS IS PERMANENT, and I measured the window rather than assuming it:
+- job-watch: `C:\FRPDepot\Dado\40_Logs\jobs\` holds 164 files back to 2026-07-24 and nothing prunes it, so the job record survives — but `reported: true` means `cmd_watch` never looks at it again. Live example today: `cron\output\7eb0333f5a25\2026-08-11_14-50-15.md` announced "Background job 'zoho-cc-all-only-build-v2' died without finishing". If that send had been dropped, that job is now stamped announced and will never be mentioned.
+- tripwire: worse, because its source is transient. `cron\output\faaabfa052e9\2026-08-11_21-45-51.md` fired "Dado has been on one discord reply for 25 min (295 internal steps) and has sent you nothing." By 22:00 (the very next tick) `C:\FRPDepot\Dado\40_Logs\stall_tripwire_state.json` was back to `{}` — the turn ended and `for key in [k for k in state if k not in seen]: del state[key]` deleted the record. So a dropped tripwire send has at most ONE 15-minute tick of accidental re-derivation before the evidence is gone, and the gateway restart that drops the send is usually the same event that ends the turn. That is the exact case the fix has to cover.
+
+The safe path exists and is proven in the same directory: `dado_inbox_reasoner.py` `_try_send` / `send_clean` (3 attempts, backoff, TimeoutExpired+FileNotFoundError reported not raised — B-03) / `queue_undelivered` / `flush_undelivered`, imported wholesale by `dado_followup_digest.py:35-36`. Both of those jobs run `deliver: local` precisely because they deliver themselves. `cron/scheduler.py:_resolve_single_delivery_target` — `if deliver_value == "local": return None` — confirms hermes then sends nothing.
+
+TWO NITS in the filed evidence, substance unaffected: the first entry's job_runner line cite (376-381) is stale — the print/save_flags pair is at 445-448 today (the second entry's 441-447 is right); and B-08 in the backlog is at lines 160-165, not 160-166.
+
+### Plan
+
+GATE FIRST — READ THIS BEFORE APPLYING. `backend_backlog.md:646-649` (D-08) records B-08 as one of "the two items Rachad reserved for himself." This change also alters what his phone shows: today both jobs arrive wrapped by hermes as "Cronjob Response: dado-job-watch / (job_id: ...) / ------- / <text> / To stop or manage this job...", and after the fix they arrive as the bare self-identifying text (`cron.wrap_response` defaults True and dado's config.yaml has no `cron:` block — verified). So this needs one question with a recommendation before it lands, not a silent apply. Recommendation to put to him: yes, do it — the wrapper is the thing that is dropping messages, and the bare text already names itself ("Background job 'X' FAILED…", "Dado has been on one telegram reply for N min…").
+
+DESIGN, and the one place I deliberately did NOT copy the reasoner. Reuse the RETRY half verbatim by import — that is genuinely the right shape. Do NOT reuse the shared `undelivered_alerts.txt` QUEUE for these two, for a reason that is specific to them: `flush_undelivered()` is a read-all/rewrite-all over one file with no lock, and it would now be touched by inbox-watch (2h), job-watch (10m) and the tripwire (15m) — job-watch and the tripwire collide on the same minute every 30 minutes. Worse, both of these alerts are RE-DERIVED from durable state every tick, so a queued copy plus a re-derived copy is the same warning twice. Instead: each script keeps its own alert owed in its own state file and re-emits it itself. That is still "persist only after a confirmed send"; it just uses the state each script already owns as the queue. `send_clean` gains one parameter so the retry policy stays single-sourced.
+
+=== STEP 1 — dado_inbox_reasoner.py (single delivery path gains an opt-out for the queue, plus one escalation helper) ===
+File: C:\FRPDepot\Dado\Tools\watch\dado_inbox_reasoner.py
+
+(a) Change `send_clean`'s signature and its failure tail. Everything else in the function is unchanged; existing positional callers (`run_once`, `dado_followup_digest`) are unaffected.
+
+    def send_clean(message, queue_on_failure=True):
+        """Send, retrying transient failures; queue for the next run if it never
+        lands so an alert is never silently lost (Aze's dropped-RFQ lesson).
+
+        Returns True ONLY when Telegram accepted the message.
+
+        queue_on_failure=False is for callers whose alert is RE-DERIVED from
+        durable state on a short cadence - job_runner's 10-minute watch tick and
+        stall_tripwire's 15-minute tick (B-08). They keep the alert owed in their
+        OWN state file and re-emit it themselves, so queueing it here as well
+        would deliver the same warning twice: once when the next inbox sweep
+        flushes this queue, once from the caller's own re-derivation.
+        """
+        last = ""
+        try:
+            for attempt in range(1, 4):
+                rc, err = _try_send(message)
+                if rc == 0:
+                    log(f"sent business message (attempt {attempt})")
+                    return True
+                last = err
+                log(f"send attempt {attempt}/3 failed rc={rc} err={err[:200]!r}")
+                if attempt < 3:
+                    time.sleep(5 * attempt)
+        except Exception as exc:
+            last = f"{type(exc).__name__}: {exc}"
+            log(f"send loop raised, falling through to the queue: {last}")
+        if not queue_on_failure:
+            log(f"send failed after 3 attempts; caller owns re-emission. last_err={last[:200]!r}")
+            return False
+        queue_undelivered(message)
+        log(f"send failed after 3 attempts; queued for next sweep. last_err={last[:200]!r}")
+        return False
+
+(b) Add, immediately after `queue_undelivered` (new module constant next to UNDELIVERED):
+
+    URGENT_ALERT_PY = Path(r"C:\FRPDepot\Dado\Tools\watch\dado_urgent_alert.py")
+
+    def escalate_out_of_band(reason, message):
+        """Last resort when the hermes send path ITSELF keeps failing.
+
+        dado_urgent_alert.py posts straight to the Telegram Bot API with the
+        standard library - no hermes, no gateway - which is the whole point: if
+        `hermes send` has failed for an hour, an alert routed through hermes is
+        not an alert (W-02's rule). It carries its own one-per-reason-per-hour
+        cooldown, so callers may call it every tick without spamming.
+
+        It deliberately lives ONLY in the repo (it is not in the profile scripts
+        dir), so it is invoked by absolute path exactly as
+        dado_gateway_watchdog.ps1 does. NEVER pass --clear from here: that also
+        deletes the shared Desktop marker a real gateway-down alert may have left.
+        """
+        if not URGENT_ALERT_PY.exists():
+            log(f"cannot escalate ({reason}): {URGENT_ALERT_PY} is missing")
+            return False
+        try:
+            proc = subprocess.run(
+                [VENV_PY, str(URGENT_ALERT_PY), "--reason", reason, "--message", message],
+                text=True, encoding="utf-8", errors="replace",
+                capture_output=True, timeout=90,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+        except Exception as exc:
+            log(f"escalation raised ({reason}): {type(exc).__name__}: {exc}")
+            return False
+        log(f"escalated out of band ({reason}) rc={proc.returncode} "
+            f"{(proc.stdout or '').strip()[:200]}")
+        return proc.returncode == 0
+
+=== STEP 2 — job_runner.py ===
+File: C:\FRPDepot\Dado\Tools\watch\job_runner.py
+
+(a) New constants beside MAX_WATCH_MESSAGES:
+
+    # B-08: this script DELIVERS its own announcements; the cron job is
+    # `deliver: local`. `deliver: telegram` had no retry and no confirmation, and
+    # cmd_watch wrote reported=True regardless - one dropped send destroyed the
+    # warning permanently, because a reported job is never looked at again. The
+    # job record is durable (nothing prunes 40_Logs\jobs; 164 files back to
+    # 2026-07-24), so an announcement that fails to send is simply NOT marked and
+    # is re-derived, identical, on the next 10-minute tick.
+    DELIVERY_ESCALATE_FAILURES = 6      # ~1h of failed ticks -> out-of-band alert
+    _HERE = str(Path(__file__).resolve().parent)
+
+(b) New helpers above `cmd_watch`:
+
+    def _reasoner():
+        """The tree's one delivery path. Imported LAZILY on purpose: `start` and
+        `_run` are on Dado's critical path for every long job and must not gain a
+        new import-time failure mode because the watch tick learned to send."""
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import dado_inbox_reasoner
+        return dado_inbox_reasoner
+
+    def deliver(message: str) -> bool:
+        """True only if Telegram accepted it."""
+        try:
+            reasoner = _reasoner()
+        except Exception as exc:
+            receipt("job_watch_delivery_unavailable", f"{type(exc).__name__}: {exc}")
+            return False
+        try:
+            # queue_on_failure=False - an unsent announcement stays owed on the
+            # job record and is rebuilt next tick; queueing it too would send twice.
+            return bool(reasoner.send_clean(message, queue_on_failure=False))
+        except Exception as exc:
+            receipt("job_watch_delivery_failed", f"{type(exc).__name__}: {exc}")
+            return False
+
+    def escalate(message: str) -> None:
+        try:
+            _reasoner().escalate_out_of_band("job_watch_undeliverable", message)
+        except Exception as exc:
+            receipt("job_watch_escalation_failed", f"{type(exc).__name__}: {exc}")
+
+    def _record_delivery_failure(shown) -> int:
+        """Count consecutive failed ticks per owed job; return the highest."""
+        worst = 0
+        for _, job_id, flags in shown:
+            if not (job_id and flags):
+                continue
+            try:
+                count = int(load(job_id).get("delivery_failures") or 0) + 1
+            except (OSError, json.JSONDecodeError, ValueError, TypeError):
+                count = 1
+            save_flags(job_id, delivery_failures=count)
+            worst = max(worst, count)
+        return worst
+
+(c) Rename the existing `def cmd_watch(_: argparse.Namespace) -> int:` to `def _watch(_: argparse.Namespace) -> int:` (body unchanged down to the `shown = pending[:MAX_WATCH_MESSAGES]` line), REPLACE its tail, and add a crash-guarding `cmd_watch` wrapper.
+
+REPLACE (current tail of the function):
+
+        shown = pending[:MAX_WATCH_MESSAGES]
+        held = len(pending) - len(shown)
+        if shown:
+            lines = [text for text, _, _ in shown]
+            if held > 0:
+                lines.append(f"({held} more job update(s) held for the next tick.)")
+            print("\n".join(lines))
+            for _, job_id, flags in shown:
+                if job_id and flags:
+                    save_flags(job_id, **flags)
+        return 0
+
+WITH:
+
+        shown = pending[:MAX_WATCH_MESSAGES]
+        held = len(pending) - len(shown)
+        if not shown:
+            return 0
+        lines = [text for text, _, _ in shown]
+        if held > 0:
+            lines.append(f"({held} more job update(s) held for the next tick.)")
+        message = "\n".join(lines)
+        # stdout stays the durable record: hermes saves it under
+        # cron\output\<job_id>\ whatever `deliver` is set to, and the
+        # output-file freshness check depends on it.
+        print(message)
+
+        if not deliver(message):
+            # B-08: nothing is marked announced unless Telegram took it. Every
+            # job in `shown` stays owed and this identical announcement is
+            # rebuilt from the same job files on the next tick.
+            failures = _record_delivery_failure(shown)
+            if failures >= DELIVERY_ESCALATE_FAILURES:
+                escalate(
+                    "Dado's job-watch cron has been unable to deliver a background-job "
+                    f"announcement for {failures} consecutive ticks. Pending text:\n\n{message}"
+                )
+            return 0
+
+        for _, job_id, flags in shown:
+            if job_id and flags:
+                save_flags(job_id, delivery_failures=0, **flags)
+        return 0
+
+ADD:
+
+    def cmd_watch(args: argparse.Namespace) -> int:
+        """Cron entry point. With `deliver: local`, hermes no longer delivers a
+        script crash either - so this tick owns reporting its own death, the same
+        way dado_inbox_reasoner owns reporting a failed brain run (B-02)."""
+        try:
+            return _watch(args)
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            receipt("job_watch_crashed", detail)
+            deliver("Dado's background-job watch crashed and announced nothing this tick: "
+                    f"{detail}. Nothing was marked announced, so anything pending will be "
+                    "re-announced once this is fixed.")
+            raise
+
+=== STEP 3 — stall_tripwire.py ===
+File: C:\FRPDepot\Dado\Tools\watch\stall_tripwire.py
+
+(a) New constants after MAX_PROBLEMS_PER_TICK:
+
+    # B-08. An alert this script could not DELIVER is kept owed in this same
+    # state file, because its source is transient: the turn it describes usually
+    # ends within one tick (measured 2026-08-11 - alert at 21:45:51 for a 25-min
+    # Discord turn, state file back to {} by 22:00), and the gateway restart that
+    # drops the send is normally the same event that killed the turn. Re-deriving
+    # is not enough here; the text has to be stored.
+    OWED_MAX_HOURS = 24          # an undelivered warning older than this is stale
+    OWED_ESCALATE_MINUTES = 90   # still undelivered after ~6 ticks -> out of band
+    LOG_PATH = Path(r"C:\FRPDepot\Dado\40_Logs\stall_tripwire.log")
+    _HERE = str(Path(__file__).resolve().parent)
+
+(b) New helpers above `main()`:
+
+    def log(line: str) -> None:
+        try:
+            LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+            stamp = dt.datetime.now().astimezone().isoformat(timespec="seconds")
+            with LOG_PATH.open("a", encoding="utf-8") as fh:
+                fh.write(f"{stamp} {line}\n")
+        except OSError:
+            pass
+
+    def _reasoner():
+        if _HERE not in sys.path:
+            sys.path.insert(0, _HERE)
+        import dado_inbox_reasoner
+        return dado_inbox_reasoner
+
+    def deliver(message: str) -> bool:
+        """One delivery path for the whole tree - send_clean: 3 attempts with
+        backoff, TimeoutExpired/FileNotFoundError reported rather than raised
+        (B-03). queue_on_failure=False because an undelivered warning is kept in
+        THIS script's state instead, which lets a fresher warning about the same
+        turn SUPERSEDE it rather than duplicate it."""
+        try:
+            return bool(_reasoner().send_clean(message, queue_on_failure=False))
+        except Exception as exc:
+            log(f"delivery unavailable: {type(exc).__name__}: {exc}")
+            return False
+
+    def escalate(message: str) -> None:
+        try:
+            _reasoner().escalate_out_of_band("stall_alert_undeliverable", message)
+        except Exception as exc:
+            log(f"escalation failed: {type(exc).__name__}: {exc}")
+
+    def _oldest_owed_minutes(state: dict, now: dt.datetime) -> float:
+        ages = []
+        for record in state.values():
+            pending = record.get("owed")
+            if not pending:
+                continue
+            try:
+                ages.append((now - dt.datetime.fromisoformat(pending["at"])).total_seconds() / 60)
+            except (KeyError, TypeError, ValueError):
+                continue
+        return max(ages) if ages else 0.0
+
+(c) REPLACE everything in `main()` from `# Forget turns that have finished` to `return 0` WITH:
+
+        shown = problems[:MAX_PROBLEMS_PER_TICK]
+        held = len(problems) - len(shown)
+        fresh_keys = {key for _, key, _ in shown}
+
+        # Warnings a previous tick could not deliver. A turn that is STILL
+        # stalled is re-derived above and that fresher text supersedes the stored
+        # copy; only a turn that has since ENDED needs the stored one.
+        owed: list[tuple[str, str]] = []
+        for key, record in list(state.items()):
+            pending = record.get("owed")
+            if not pending or key in fresh_keys:
+                continue
+            try:
+                age_min = (now - dt.datetime.fromisoformat(pending["at"])).total_seconds() / 60
+            except (KeyError, TypeError, ValueError):
+                age_min = 0.0
+            if age_min > OWED_MAX_HOURS * 60:
+                record.pop("owed", None)
+                continue
+            owed.append((key, pending["text"]))
+
+        # Forget turns that have finished AND owe nothing. `seen` alone used to
+        # decide this, which is exactly how an undelivered warning for an ended
+        # turn vanished with its record.
+        for key in [k for k, v in state.items() if k not in seen and not v.get("owed")]:
+            del state[key]
+
+        if not shown and not owed:
+            save_state(state)
+            return 0
+
+        out = ["Earlier stall warning (delivery was delayed; it may have resolved since):\n"
+               + text for _, text in owed]
+        out.extend(text for text, _, _ in shown)
+        if held > 0:
+            out.append(f"({held} more stalled turn(s) not listed; still being tracked.)")
+        message = "\n".join(out)
+        print(message)   # durable record in cron\output\, whatever delivery does
+
+        if deliver(message):
+            # The alert budget and the re-alert clock are spent ONLY on a
+            # confirmed send. B-07 spent them only on what was PRINTED; B-08 is
+            # the same rule one layer out - printing is not arriving.
+            stamp = now.isoformat(timespec="seconds")
+            for _, key, record in shown:
+                record["alerts"] += 1
+                record["last_alert"] = stamp
+                record.pop("owed", None)
+                state[key] = record
+            for key, _ in owed:
+                if key in state:
+                    state[key].pop("owed", None)
+            for key in [k for k, v in state.items() if k not in seen and not v.get("owed")]:
+                del state[key]
+            save_state(state)
+            return 0
+
+        stamp = now.isoformat(timespec="seconds")
+        for text, key, record in shown:
+            first_at = (record.get("owed") or {}).get("at", stamp)  # keep the ORIGINAL
+            record["owed"] = {"at": first_at, "text": text}         # clock, refresh the text
+            state[key] = record
+        oldest = _oldest_owed_minutes(state, now)
+        save_state(state)
+        log(f"alert undelivered; owed for {oldest:.0f} min")
+        if oldest >= OWED_ESCALATE_MINUTES:
+            escalate("Dado's stall tripwire has a warning it has been unable to deliver for "
+                     f"{oldest:.0f} min:\n\n{message}")
+        return 0
+
+(d) Wrap the entry point so a crash is not silent under `deliver: local`. Rename `main` to `_run` and add:
+
+    def main() -> int:
+        try:
+            return _run()
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            log(f"tripwire crashed: {detail}")
+            deliver(f"Dado's stall tripwire crashed and checked nothing this tick: {detail}. "
+                    "This is NOT an all-clear on stalled turns.")
+            raise
+
+=== STEP 4 — flip the two cron jobs (ORDER MATTERS) ===
+Do this only AFTER Step 5's tests pass and AFTER the profile copies in Step 6 are in place. Copy first, flip second: between the two you get duplicate messages (harmless); the reverse order gives you a silence window (the exact defect).
+
+    copy "%LOCALAPPDATA%\hermes\profiles\dado\cron\jobs.json" "%TEMP%\dado_jobs_pre_b08.json"
+    hermes -p dado cron edit 7eb0333f5a25 --deliver local
+    hermes -p dado cron edit faaabfa052e9 --deliver local
+
+Verified safe: `tools/cronjob_tools.py` action="update" only writes keys whose argument is not None (`if deliver is not None: updates["deliver"] = ...`), `cron/jobs.py:update_job` merges `{**job, **updates}`, and `hermes_cli/subcommands/cron.py` gives `--no-agent` `default=None` — so nothing else on the job is touched. Diff the record against the backup afterwards anyway.
+
+=== STEP 7 — close the paperwork ===
+Edit `C:\FRPDepot\Dado\30_Memory\backend_backlog.md`: change the B-08 heading at :160 from `### B-08 OPEN` to `### B-08 FIXED (this commit)` with the short "what landed" paragraph the other entries use (the pattern is `Fixed <date>. <what changed>. <tests>.`), keeping the original report below it. Then fix D-08 at :645-649, which currently says B-08 and B-17 are "the two items Rachad reserved for himself" — it should name B-17 only.
+
+### Tests
+
+STYLE NOTE: these suites are stdlib `unittest` with `unittest.mock.patch` and real temp dirs for file-touching code — no pytest fixtures. Match that. Run with the only interpreter:
+  "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" -m pytest C:\FRPDepot\Dado\Tools\watch\test_job_runner.py C:\FRPDepot\Dado\Tools\watch\test_stall_tripwire.py C:\FRPDepot\Dado\Tools\watch\test_watch_delivery.py -q
+
+--- A. C:\FRPDepot\Dado\Tools\watch\test_watch_delivery.py (extend) ---
+New class `SendCleanQueueOptOut` (B-08). These are pure-unit and DO fail against the pre-fix module — the pre-fix `send_clean` takes one argument, so passing `queue_on_failure=False` raises TypeError.
+- `test_queue_is_skipped_when_the_caller_owns_re_emission`: temp UNDELIVERED path, `_try_send` patched to `(1, "Telegram 502")`, `time.sleep` patched. Assert `send_clean(msg, queue_on_failure=False) is False` AND `not queue.exists()`.
+- `test_the_default_still_queues`: same, default arg. Assert the message IS in the queue file. (Regression guard on B-03's contract for the inbox sweep and digest.)
+- `test_a_confirmed_send_returns_true_and_queues_nothing`: `_try_send` → `(0, "")`. Assert True and no queue file, both modes.
+- `test_escalation_shells_the_repo_copy_of_the_urgent_alerter`: patch `reasoner.subprocess.run` to a CompletedProcess(returncode=0), assert `escalate_out_of_band("x","y")` is True and that argv[1] ends with `dado_urgent_alert.py` and `--clear` is NOT in argv.
+- `test_escalation_reports_a_missing_alerter_instead_of_raising`: patch `URGENT_ALERT_PY` to a nonexistent path; assert False, no exception.
+
+--- B. C:\FRPDepot\Dado\Tools\watch\test_job_runner.py (extend) ---
+(1) Keep all 10 existing tests meaningful: add to `WatchAnnouncementTests.setUp`
+      self.sent = []
+      p = patch.object(job_runner, "deliver", side_effect=lambda m: (self.sent.append(m) or True))
+      p.start(); self.addCleanup(p.stop)
+   They assert on stdout, which the fix preserves, so they keep passing — and without this patch they would shell out to the real `hermes send`.
+(2) New class `DeliveryConfirmationTests` (B-08), which imports `dado_inbox_reasoner as reasoner` and does NOT patch `deliver` — it patches the SEND, so it fails cleanly against the pre-fix file instead of erroring on a missing symbol:
+- `test_an_undeliverable_announcement_is_not_recorded_as_announced` — HEADLINE. Job `done/exit 0`; patch `reasoner._try_send` → `(1, "Telegram 502")`, `reasoner.log`, `reasoner.time.sleep`. Assert stdout still contains "finished" (durable record) and `read_job("j1")["reported"] is False`. PRE-FIX: `reported` is True → FAILS.
+- `test_the_same_announcement_is_re_derived_on_the_next_tick` — after the failed tick, flip `_try_send` to `(0, "")`, run again, assert the identical text is sent and `reported` is now True.
+- `test_a_confirmed_send_marks_it_reported_exactly_once` — second tick is silent, `delivery_failures == 0`.
+- `test_a_dropped_stall_warning_is_re_emitted` — `heartbeat_age_minutes` 31, send fails; `stall_reported` stays False; next tick with a working send emits it and sets the flag. PRE-FIX: FAILS (flag set on the first tick, warning gone).
+- `test_a_dropped_death_notice_does_not_clobber_status` — `pid_alive` False, send fails: assert `status` is still "running" (not "died") and `reported` False, so the next tick re-derives the same death notice.
+- `test_consecutive_failures_escalate_out_of_band` — patch `job_runner.escalate`; run 6 failing ticks; assert escalate called on tick 6 and the message carries the pending text.
+- `test_a_crash_in_the_tick_is_reported_not_swallowed` — patch `_watch` to raise; patch `deliver`; assert `cmd_watch` re-raises AND `deliver` was called with text containing "crashed".
+- `test_start_still_works_when_the_reasoner_cannot_be_imported` — patch `job_runner._reasoner` to raise ImportError; assert `cmd_start` returns 0 (the lazy-import property).
+
+--- C. C:\FRPDepot\Dado\Tools\watch\test_stall_tripwire.py (extend) ---
+Add `sys.path.insert(0, str(Path(__file__).resolve().parent))` before the imports, and `import dado_inbox_reasoner as reasoner`.
+(1) `AlertBudgetTests.setUp` gains `patch.object(tw, "deliver", return_value=True)` — its two existing tests assert `alerts > 0`, which now requires a confirmed send. Same for the one-off patch block in `TailWindowTests.test_a_rotated_sibling_is_consulted...`.
+(2) New class `DeliveryConfirmationTests` (B-08), patching `reasoner._try_send` rather than `tw.deliver`:
+- `test_a_dropped_alert_does_not_spend_the_budget` — one 90-min-old open turn, `_try_send` → `(1, "502")`. Assert stdout has the warning, and the state record has `alerts == 0`, `last_alert is None`, and a non-empty `owed`. PRE-FIX: `alerts == 1` → FAILS.
+- `test_a_dropped_alert_for_a_turn_that_then_ENDS_is_still_delivered` — THE HEADLINE, and the case measured live at 21:45 today. Tick 1: stalled turn, send fails. Rewrite the log so the turn now has a `Turn ended:` line. Tick 2 with a working send: assert the sent text contains "Earlier stall warning" and the original "has sent you nothing" body, and that the state record is then gone. PRE-FIX: FAILS — tick 1 spends the budget and tick 2 deletes the record, so nothing is ever sent.
+- `test_a_still_stalled_turn_sends_the_fresh_text_not_the_stored_copy` — tick 1 fails at 25 min; tick 2 (turn still open, later) succeeds: assert exactly ONE body about that session and NO "Earlier stall warning" prefix (supersede, don't duplicate).
+- `test_the_realert_clock_only_starts_on_a_confirmed_send` — after a failed tick, an immediate second tick still emits (REALERT_MINUTES must not gate an alert that never arrived).
+- `test_an_owed_alert_older_than_24h_is_dropped` — hand-write a state record with `owed.at` 30h ago; assert it is neither sent nor retained.
+- `test_an_undelivered_alert_escalates_after_90_minutes` — patch `tw.escalate`; write `owed.at` 100 min ago; assert escalate called once with the message.
+- `test_the_owed_clock_is_not_reset_by_each_failed_tick` — two consecutive failed ticks: assert `owed["at"]` is unchanged while `owed["text"]` refreshes.
+- `test_silence_when_clean_is_unchanged` — no stalled turns: assert stdout empty, `deliver` never called, state `{}`. (The house rule this must not break.)
+
+PROVING THEY FAIL WITHOUT THE FIX: `git stash` the three source files (or copy the current versions aside), run the two headline tests — `test_an_undeliverable_announcement_is_not_recorded_as_announced` and `test_a_dropped_alert_for_a_turn_that_then_ENDS_is_still_delivered` — and record that they FAIL (assertion, not error) against the pre-fix files. The tests that reference new symbols (`deliver`, `escalate`, `owed`, `delivery_failures`) will merely ERROR pre-fix; say so in the commit note rather than claiming they demonstrate the bug — the same honesty B-11 recorded about its own suite.
+
+### Verification
+
+NO GATEWAY RESTART IS NEEDED. `cron/scheduler.py` runs `no_agent` script jobs via `subprocess.run([python_exe, str(path)], ...)` in a fresh process every tick, so an edited script is live on the next tick. (Contrast with this session's two hermes runtime fixes, which are still waiting on a restart.) Script timeout is the 3600s default (`_DEFAULT_SCRIPT_TIMEOUT`, no `cron:` block in dado's config.yaml, `HERMES_CRON_SCRIPT_TIMEOUT` unset), so the worst-case send path (~195s: three 60s attempts plus 5s+10s backoff) has enormous headroom.
+
+1. PRE-FLIGHT, read-only:
+   sha256sum the three repo files and the three profile copies — they must match after Step 6 and before Step 4's flip.
+   "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" C:\FRPDepot\Dado\Tools\watch\job_runner.py status   (proves no import regression on the path Dado uses)
+   "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" C:\FRPDepot\Dado\Tools\watch\dado_urgent_alert.py --self-test   (sends nothing; confirms the escalation channel is configured)
+
+2. LIVE POSITIVE PROOF, one throwaway Telegram message (warn Rachad first):
+   python job_runner.py start --name b08-verify -- "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" -c "raise SystemExit(3)"
+   Within 10 minutes expect: (a) exactly ONE Telegram message "Background job 'b08-verify' FAILED (exit 3)." with NO "Cronjob Response:" header — the header's absence is the proof it came from the script, not the wrapper; (b) a new file under profiles\dado\cron\output\7eb0333f5a25\ containing the same text; (c) the job file in 40_Logs\jobs\ showing `"reported": true, "delivery_failures": 0`; (d) a `sent business message (attempt 1)` line in 40_Logs\dado_inbox_reasoner.log at that minute. Exactly one message — if two arrive, the `deliver` flip did not take.
+
+3. LIVE NEGATIVE PROOF — the actual B-08 property, with zero risk because it only REFRAINS from sending. Start a second throwaway failing job, then before the next tick run:
+   "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" -c "import sys,argparse; sys.path.insert(0,r'%LOCALAPPDATA%\hermes\profiles\dado\scripts'); import dado_inbox_reasoner as r, job_runner as j; r._try_send=lambda m:(1,'forced failure'); r.time.sleep=lambda s:None; j.cmd_watch(argparse.Namespace())"
+   Expect: the announcement printed to your console, NO Telegram message, and the job file still `"reported": false` with `"delivery_failures": 1`. Then let the real cron tick run and confirm the same announcement arrives and `reported` flips to true with `delivery_failures` back to 0. That is the whole fix demonstrated end to end on the live system.
+
+4. TRIPWIRE, silence-when-clean:
+   "%LOCALAPPDATA%\hermes\hermes-agent\venv\Scripts\python.exe" C:\FRPDepot\Dado\Tools\watch\stall_tripwire.py
+   must print nothing and leave 40_Logs\stall_tripwire_state.json as `{}` when no turn is stalled. Repeat the Step-3 style negative drive with `_try_send` forced to fail while a stall is genuinely open (or seed one in a temp copy) and confirm the state record shows `alerts: 0` and a populated `owed`.
+
+5. AFTER 24 HOURS:
+   hermes -p dado cron list  → both jobs `Deliver: local`, `last_status: ok`, no "⚠ Delivery failed" line.
+   Diff profiles\dado\cron\jobs.json against %TEMP%\dado_jobs_pre_b08.json — only the two `deliver` values, plus the normal `last_run_at`/`repeat.completed`/`next_run_at` churn, may differ.
+   40_Logs\undelivered_alerts.txt must still not exist (it does not today) — its appearance would mean the inbox sweep is queuing, which is a different problem.
+   40_Logs\stall_tripwire.log should be empty or absent unless a delivery actually failed.
+   Cross-check every non-silent file in cron\output\7eb0333f5a25\ and \faaabfa052e9\ against Telegram: one message per non-silent output, none missing.
+
+### Risks
+
+MUST NOT CHANGE:
+- Silence when clean. Both scripts stay silent on healthy ticks; the new `deliver()` is only reached when there is already something to say. The tripwire test `test_silence_when_clean_is_unchanged` pins it.
+- DRAFTS ONLY. Nothing here creates a send capability — `send_clean` shells the existing `hermes send` to Rachad's own chat, and `dado_urgent_alert.py` is the existing operational alerter. No mail path is touched.
+- The B-04/B-05/B-06/B-07 fixes already living in these two files. All ten existing `test_job_runner.py` cases and both `AlertBudgetTests` cases must still pass; the only edit to them is a `deliver` patch in setUp.
+- `job_runner start` / `_run` / `status`. The reasoner import is lazy and inside `cmd_watch` only, so a broken import cannot take down the path Dado uses to launch every long job — pinned by `test_start_still_works_when_the_reasoner_cannot_be_imported`. Do NOT "tidy" it into a module-level import.
+- The `print()`. It is now the durable record (cron\output\<job_id>\) and the input to the output-file freshness check in a sibling finding. Removing it because "the script sends now" would delete the audit trail.
+
+WHAT COULD BREAK:
+1. ORDERING. Copy the three scripts to the profile dir BEFORE flipping `deliver`. Reversed, every announcement between the two steps goes nowhere — the exact defect, self-inflicted. Between them you get duplicates, which is the safe direction.
+2. DUPLICATES if the flip is forgotten entirely: hermes delivers stdout AND the script sends. Detectable in one tick (the copy with the "Cronjob Response:" header is hermes').
+3. SCRIPT-CRASH SILENCE — the real trap in this change. With `deliver: local`, `_resolve_single_delivery_target` returns None and hermes delivers NOTHING, including the "Script exited with code 1" summary that reaches Rachad today. That is why Step 2(c)/3(d) add crash wrappers that send their own failure. Skip those and you have traded one silent failure for another.
+4. MESSAGE FORMAT CHANGES (loses the "Cronjob Response: … To stop or manage this job…" wrapper). Cosmetic, both texts self-identify, but Rachad will notice — hence the gate.
+5. WE LOSE THE IN-PROCESS ADAPTER PATH. `send_clean` shells the hermes CLI; hermes' own delivery could try the live adapter first. Honest trade: we gain confirmation, 3 retries, owed-state and an out-of-band escalation, and lose one alternate transport. The empirical case for the CLI path: `40_Logs\dado_inbox_reasoner.log` shows `sent business message (attempt 1)` on every sweep and `undelivered_alerts.txt` has never been created.
+6. THIS DOES NOT SURVIVE A TOTAL HERMES OUTAGE, and should not claim to. If `hermes send` is dead the alert stays owed and escalates via `dado_urgent_alert.py` after ~1h (job-watch: 6 ticks; tripwire: 90 min). A wholly-dead gateway is the gateway watchdog's job, not this one.
+7. `dado_urgent_alert.drop_marker` OVERWRITES the shared Desktop `DADO_NEEDS_ATTENTION.txt` — only on the path where Telegram itself refuses, when both alerts want attention anyway. We never pass `--clear`, so we cannot erase an unread gateway-down marker (the trap recorded in the lane-health notes).
+8. `escalate_out_of_band` invokes `C:\FRPDepot\Dado\Tools\watch\dado_urgent_alert.py` by ABSOLUTE path because that file deliberately is not in the profile scripts dir (same as `dado_lane_health.py` / `dado_heartbeat_check.py`). If the repo is unavailable it logs and returns False, degrading to the retry loop.
+9. `dado_inbox_reasoner.py` is shared with dado-inbox-watch and dado-followup-digest. The `send_clean` change is additive with a default that preserves today's behaviour, and `test_the_default_still_queues` guards it — but this file must be re-synced to the profile in the same pass or the two watchers import an old module with no `queue_on_failure`.
+10. Broken-file notices in `cmd_watch` carry `job_id = None`, so they cannot record a failure count and cannot trigger escalation. They already re-emit every tick, so nothing is lost; noted so nobody re-derives it as a bug.
+11. OUT OF SCOPE, seen in passing, do not fold in: `stall_tripwire.save_state` uses a fixed `.json.tmp` name — the exact collision B-05 fixed in job_runner. Harmless today because hermes skips a job already running, but a manual run alongside a tick could collide. And `dado-conduct-review` (c0f3deffbd33) and `dado-zoho-session-watch` (65fe685baaa1) still use `deliver: telegram:891365639` with the same no-confirmation exposure — B-08 as filed names only these two, so leave them, but they are the obvious follow-up.
+
+HERMES PATCH / FINGERPRINTS: NEITHER is required. Nothing under `%LOCALAPPDATA%\hermes\hermes-agent\` is modified, so there is no patch to write into `C:\AgentTeam\Sync\patches\` and nothing to register in the `$patches` array of `APPLY_HERMES_SAFETY_PATCHES.ps1` — a future `hermes update` cannot revert any of this. The only change inside the hermes install tree is DATA: two `deliver` values in dado's own `profiles\dado\cron\jobs.json`, plus the three profile script copies under `profiles\dado\scripts\`, none of which `hermes update` touches. No dated note in `Aze\30_Memory\fingerprints_notes.md` either: every code change is under `C:\FRPDepot`, outside the guard-fingerprinted set (`C:\AgentTeam\{Masters,_Library,AzeChat,Sync,Aze\scripts}`) — and reaching into AgentTeam here would breach the company wall.
 
 
 ==============================================================================
@@ -37,7 +518,9 @@ account-filter half is not.
 
 **Finding:** Dado's 13 live cron jobs have no mirror, no export path and no drift detection — the SOUL-drift work of 2026-08-11 stopped one file short
 
-**Verdict:** fix-needed  |  **Effort:** medium  |  **Needs hermes patch:** False  |  **Needs fingerprints note:** False
+**Verdict:** fix-needed | **Effort:** medium | **Hermes patch:** False | **Fingerprints note:** False
+
+**Files:** C:\FRPDepot\Dado\Tools\watch\dado_profile_mirror.py (new), C:\FRPDepot\Dado\Tools\watch\test_dado_profile_mirror.py (new), C:\FRPDepot\Dado\Tools\watch\dado_gateway_watchdog.ps1 (edit: $ProfileMirror + step 0c block), C:\FRPDepot\Dado\Tools\watch\test_receipt_format.py (edit: add watch/dado_profile_mirror.py and watch/dado_soul_sync.py to WRITERS), C:\FRPDepot\DadoProfile\cron\jobs.mirror.json (new, generated), C:\FRPDepot\DadoProfile\cron\scripts.mirror.json (new, generated), C:\FRPDepot\DadoProfile\cron\RECREATE.md (new, generated), C:\FRPDepot\Dado\40_Logs\cron_mirror_state.json (new, generated, gitignored)
 
 ### Root cause
 
@@ -631,7 +1114,9 @@ WHAT COULD BREAK
 
 **Finding:** All three GLA sync-ready monitors burned their full 144-run budget without ever alerting, then self-disabled — no ready flag, no error flag, and nothing told Rachad the watch had ended (DADO)
 
-**Verdict:** fix-needed  |  **Effort:** medium  |  **Needs hermes patch:** True  |  **Needs fingerprints note:** True
+**Verdict:** fix-needed | **Effort:** medium | **Hermes patch:** True | **Fingerprints note:** True
+
+**Files:** C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\cron\jobs.py, C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\cron\scheduler.py, C:\Users\TDI-service\AppData\Local\hermes\hermes-agent\tests\cron\test_repeat_budget_exhaustion_speaks.py, C:\AgentTeam\Sync\patches\hermes-cron-budget-exhaustion-speaks-20260812.patch, C:\AgentTeam\Sync\APPLY_HERMES_SAFETY_PATCHES.ps1, the TDI-side fingerprints note, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\cron\jobs.json, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\gla_sync_ready_monitor.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\gla_sync_ready_manway_monitor.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\gla_sync_ready_manway_cover_monitor.py, C:\FRPDepot\Dado\Tools\watch\gla_sync_ready_monitor.py, C:\FRPDepot\Dado\Tools\watch\gla_sync_ready_manway_monitor.py, C:\FRPDepot\Dado\Tools\watch\gla_sync_ready_manway_cover_monitor.py, C:\FRPDepot\Dado\Tools\watch\gla_sync_target_monitor.py, C:\FRPDepot\Dado\20_Working\catalog_shipping_policy\gla_sync_ready_monitors_retired_20260812.md
 
 ### Root cause
 
@@ -676,7 +1161,7 @@ Note the runtime already has the right instinct one function away: `cron/jobs.py
 === NOT bugs (checked and cleared) ===
 - The suggested fix's option "re-arm with `repeat.times: null`" would be actively WRONG here: unbounded polling of an unreachable condition is a job that is silent forever instead of silent for 24h.
 - Profile/repo drift exists but is cosmetic and dissolves with retirement: the profile copies of the two manway wrappers are NOT byte-identical to their repo namesakes (profile 414/433 bytes vs repo 344/357). The profile copies do `sys.path.insert(0, r"C:\FRPDepot\Dado\Tools\watch")` then `from gla_sync_ready_manway_monitor import run_monitor` — a self-named import that resolves to the REPO file, which re-exports `run_monitor` from `gla_sync_target_monitor`. It works, but it means the scheduler's script sandbox (`cron/scheduler.py`, "Blocked: script path resolves outside the scripts directory") is satisfied by a 15-line shim while the real logic is pulled from outside the scripts dir at runtime. `gla_sync_target_monitor.py` is not in the profile scripts dir at all. `gla_sync_ready_monitor.py` IS byte-identical repo vs profile (verified by diff).
-- Blast radius of the runtime fix, measured across both live profiles: the ONLY finite-budget recurring jobs on this box are the three dead GLA monitors (dado) and one paused `a job on the neighbouring profile-resume` (aze, cron, times=52, completed=20, enabled=false, state=paused, deliver=telegram:891365639). The patch therefore adds at most ONE future message on the whole machine.
+- Blast radius of the runtime fix, measured across both live profiles: the ONLY finite-budget recurring jobs on this box are the three dead GLA monitors (dado) and one paused `a job on the neighbouring profile` (aze, cron, times=52, completed=20, enabled=false, state=paused, deliver=telegram:891365639). The patch therefore adds at most ONE future message on the whole machine.
 
 ### Plan
 
@@ -954,7 +1439,7 @@ B5. Capture and register the patch:
       and append `$cronBudgetExhaustionPatch` as the last element of `$patches`
       (after `$cronOneshotLiveRunPatch`).
 
-B6. Dated note in the TDI-side fingerprints note (required — Sync
+B6. Dated note in `the TDI-side fingerprints note` (required — Sync
     is fingerprinted at guard_round.ps1:105). One entry, dated 2026-08-12, naming:
     the two Sync paths touched (patches\hermes-cron-budget-exhaustion-speaks-20260812.patch,
     APPLY_HERMES_SAFETY_PATCHES.ps1), why (recurring-budget exhaustion was silent;
@@ -1138,7 +1623,7 @@ WHAT COULD BREAK
 3. Blast radius today is ONE message, measured not assumed. Across both live
    profiles the only finite-budget recurring jobs are the three dead GLA monitors
    (dado, already terminal — the patch cannot and will not announce them
-   retroactively) and `a job on the neighbouring profile-resume` (f617b7d64efe, cron, times=52,
+   retroactively) and `a job on the neighbouring profile` (f617b7d64efe, cron, times=52,
    completed=20, enabled=false, state=paused, deliver=telegram:891365639). If that
    job is ever resumed and reaches 52 it emits exactly one notice. That is correct
    behaviour, but flag it to whoever owns e10277 so the message is not a surprise.
@@ -1207,7 +1692,9 @@ WHAT MUST NOT CHANGE
 
 **Finding:** dado-stall-tripwire still has no gateway-death / orphaned-turn check — the 2026-08-04 finding was proposed and never built, while the gateway restarted 4 times in the last 24 hours
 
-**Verdict:** fix-needed  |  **Effort:** medium  |  **Needs hermes patch:** False  |  **Needs fingerprints note:** False
+**Verdict:** fix-needed | **Effort:** medium | **Hermes patch:** False | **Fingerprints note:** False
+
+**Files:** C:\FRPDepot\Dado\Tools\watch\stall_tripwire.py, C:\FRPDepot\Dado\Tools\watch\test_stall_tripwire.py, C:\FRPDepot\STOP_DADO.bat, C:\FRPDepot\START_DADO.bat, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\stall_tripwire.py, C:\FRPDepot\Dado\30_Memory\backend_backlog.md, C:\FRPDepot\CLAUDE.md
 
 ### Root cause
 
@@ -1549,7 +2036,9 @@ WHAT MUST NOT CHANGE
 
 **Finding:** zoho-account-filter: "Zoho ignoring the account_id filter is detected but never compensated, so the whole banking review aborts instead of degrading" (+ the DADO CRITICAL partial "dado-daily-banking-review has NEVER produced a single review")
 
-**Verdict:** fix-needed  |  **Effort:** medium  |  **Needs hermes patch:** False  |  **Needs fingerprints note:** False
+**Verdict:** fix-needed | **Effort:** medium | **Hermes patch:** False | **Fingerprints note:** False
+
+**Files:** C:\FRPDepot\Dado\Tools\watch\dado_daily_banking_review.py, C:\FRPDepot\Dado\Tools\watch\test_dado_daily_banking_review.py, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\scripts\dado_daily_banking_review.py, C:\FRPDepot\Dado\30_Memory\fit_profile.md, C:\Users\TDI-service\AppData\Local\hermes\profiles\dado\cron\jobs.json
 
 ### Root cause
 
