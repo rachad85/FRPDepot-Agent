@@ -179,6 +179,43 @@ to send when `PYTEST_CURRENT_TEST` is set. Wiring delivery into these paths made
 a plain pytest run put 14 real messages on Rachad's phone before that guard
 existed.
 
+### GATEWAY-DEATH / ORPHANED-TURN CHECK — BUILT 2026-08-12 (proposed 2026-08-04)
+
+The tripwire could not see a turn killed by a gateway restart. `open_turns()`
+pops a session on TURN_END; a gateway death writes no such line, so the dead
+turn looked OPEN and was described as "still active, ask her what she is doing"
+— an instruction to interrogate an agent with no memory of the request. The
+moment Rachad re-asked (what a user does when ignored) the newer turn overwrote
+the dead one and the evidence was gone.
+
+MEASURED ON THE LIVE LOG while building it — TWO real orphans, neither ever
+reported:
+  - 2026-08-11 12:19:56 Discord, "Please proceed the PO we just received from
+    SCT. Great a new Sales order, attach..." — a business instruction, lost when
+    the gateway restarted at 13:10:55.
+  - 2026-08-11 23:35:04 Telegram, an attachment with no text, lost at 00:21:39.
+
+WHY IT CANNOT CRY WOLF ON A DELIBERATE STOP: the flag alone cannot answer it —
+START_DADO DELETES the flag, the cron does not tick while she is stopped, and
+STOP_DADO ends in Stop-Process -Force so a deliberate stop produces the same
+unclean exit as a crash. So STOP_DADO and START_DADO now append a stamp to
+`40_Logs\gateway_stops.log` (gitignored), and an orphan is silenced iff a stamp
+falls inside [received, died] — which can only happen if the stop occurred
+during the very life that was handling the message.
+
+THREE DECISIONS NOT TO "SIMPLIFY":
+ - A reply clears only messages from its OWN gateway life. Lane-wide looks
+   equivalent; it would let a reply to a RE-ASKED question erase the evidence of
+   the lost one before the next tick.
+ - The boundary prefers gateway_state.json start_time (psutil create_time in
+   CENTISECONDS, /100) over the log line: it survives a rotation and is the
+   EARLIER source, the direction that cannot manufacture a false alarm.
+ - None is a legitimate boundary. No boundary established => the check is inert.
+   It never guesses.
+
+Announced ONCE (ORPHAN_ALERTS = 1); 12-hour lookback. A dead turn no longer
+reports as a stall. Tests: 15 new, 46 in the watch suite.
+
 ### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
 
 Fixed 2026-07-25. `NOISE_LINE` is anchored to line start, and `job id` / `cleaned up` were removed from it entirely — both are ordinary operations English. The ticker branch now only peels allowlisted frame words, so "Pending... payment from SCT" keeps its first word.
