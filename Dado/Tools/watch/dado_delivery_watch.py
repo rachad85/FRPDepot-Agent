@@ -147,6 +147,54 @@ def jobs_findings(jobs: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return out
 
 
+def catch_up_findings() -> list[dict[str, Any]]:
+    """Scheduled occurrences the scheduler PASSED OVER, from catch_up_events.jsonl.
+
+    There is no backfill anywhere in cron: advance_next_runs and mark_job_run
+    both recompute next_run_at from the completion time, so every slot between
+    a missed time and now is simply never run.
+
+    Only events that actually LOST something are reported. The bare
+    catch_up_occurrences counter could not distinguish them - it wrote "1" for a
+    job 333s late on a 600s period (which skips nothing, being inside the next
+    slot) and "1" for a 60s job 103 minutes late (which skips about a hundred).
+    That is exactly why nothing has ever read it. A magnitude of None means the
+    schedule kind could not be counted; that is reported as unknown rather than
+    silently treated as zero.
+    """
+    path = cron_dir() / "catch_up_events.jsonl"
+    out: list[dict[str, Any]] = []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        skipped = event.get("skipped_occurrences")
+        if skipped == 0:
+            continue  # late, but nothing was lost
+        magnitude = (f"{skipped} occurrence(s) skipped" if isinstance(skipped, int)
+                     else "an unknown number of occurrences skipped")
+        if event.get("capped"):
+            magnitude = f"at least {skipped} occurrence(s) skipped"
+        late = event.get("late_seconds")
+        late_text = f", {round(late / 60)} min late" if isinstance(late, (int, float)) else ""
+        out.append({
+            "key": f"catchup:{event.get('job_id')}@{event.get('at')}",
+            "name": str(event.get("job") or event.get("job_id") or "?"),
+            "when": str(event.get("at") or "?"),
+            "detail": f"{magnitude}{late_text} - those runs never happened and "
+                      f"cron does not backfill",
+        })
+    return out
+
+
 def load_state() -> dict[str, Any]:
     try:
         state = json.loads(STATE_FILE.read_text(encoding="utf-8"))
@@ -167,11 +215,22 @@ def save_state(state: dict[str, Any]) -> None:
 
 
 def compose(findings: list[dict[str, Any]]) -> str:
-    head = (
-        f"{len(findings)} cron message(s) never reached you. The jobs themselves "
-        f"ran; the delivery failed, and cron records that separately, so their "
-        f"status still reads ok."
-    )
+    dropped = [f for f in findings if not f["key"].startswith("catchup:")]
+    skipped = [f for f in findings if f["key"].startswith("catchup:")]
+    if dropped and skipped:
+        head = (f"{len(dropped)} cron message(s) never reached you, and "
+                f"{len(skipped)} scheduled run(s) were skipped entirely. Both are "
+                f"invisible in the job status, which still reads ok.")
+    elif skipped:
+        head = (f"{len(skipped)} scheduled cron run(s) were passed over and never "
+                f"happened. Cron does not backfill, so that work was simply not "
+                f"done; the job's status still reads ok.")
+    else:
+        head = (
+            f"{len(dropped)} cron message(s) never reached you. The jobs themselves "
+            f"ran; the delivery failed, and cron records that separately, so their "
+            f"status still reads ok."
+        )
     lines = [
         f"- {f['name']} ({f['when']}): {str(f['detail'])[:200]}"
         for f in findings[:MAX_LINES]
@@ -195,7 +254,7 @@ def main(argv=None) -> int:
 
     seen: set[str] = set()
     findings: list[dict[str, Any]] = []
-    for finding in ledger_findings(names) + jobs_findings(jobs):
+    for finding in ledger_findings(names) + jobs_findings(jobs) + catch_up_findings():
         if finding["key"] in seen:
             continue
         seen.add(finding["key"])

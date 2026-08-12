@@ -205,5 +205,86 @@ class DeliveryWatchTests(unittest.TestCase):
         self.assertNotIn("job24", message)
 
 
+class CatchUpReadingTests(DeliveryWatchTests):
+    """The other half of "the counter is write-only".
+
+    catch_up_occurrences was a bare tally: it wrote "1" for a job 333s late on a
+    600s period (which loses nothing, being inside the next slot) and "1" for a
+    60s job 103 minutes late (which loses about a hundred runs). Nothing could
+    act on that, which is why nothing read it. The runtime now records the
+    magnitude per event; this reads it.
+    """
+
+    def _events(self, *events):
+        (self.cron / "catch_up_events.jsonl").write_text(
+            "\n".join(json.dumps(e) for e in events) + "\n", encoding="utf-8")
+
+    def test_a_skip_that_lost_nothing_is_not_reported(self):
+        """333s late on a 600s period. Alerting on this is how a watch gets muted."""
+        self._jobs([{"id": "a", "name": "tick"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a", "job": "tick",
+                      "skipped_occurrences": 0, "late_seconds": 333})
+        code, runner = self._run()
+        self.assertEqual(code, 0)
+        runner.assert_not_called()
+
+    def test_real_lost_occurrences_are_reported_with_their_magnitude(self):
+        self._jobs([{"id": "a", "name": "dado-job-watch"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a",
+                      "job": "dado-job-watch", "skipped_occurrences": 103,
+                      "late_seconds": 6180})
+        code, runner = self._run()
+        self.assertEqual(code, 1)
+        message = runner.call_args[0][0][-1]
+        self.assertIn("103 occurrence(s) skipped", message)
+        self.assertIn("does not backfill", message)
+
+    def test_an_uncountable_schedule_is_reported_as_unknown_not_zero(self):
+        self._jobs([{"id": "a", "name": "odd"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a", "job": "odd",
+                      "skipped_occurrences": None})
+        code, runner = self._run()
+        self.assertEqual(code, 1)
+        self.assertIn("unknown number", runner.call_args[0][0][-1])
+
+    def test_a_capped_count_says_at_least(self):
+        self._jobs([{"id": "a", "name": "minutely"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a", "job": "minutely",
+                      "skipped_occurrences": 5000, "capped": True})
+        self._run()
+        # re-run to inspect the composed text via a fresh state
+        (self.state).unlink(missing_ok=True)
+        _, runner = self._run()
+        self.assertIn("at least 5000", runner.call_args[0][0][-1])
+
+    def test_the_same_skip_is_reported_once(self):
+        self._jobs([{"id": "a", "name": "tick"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a", "job": "tick",
+                      "skipped_occurrences": 7})
+        self.assertEqual(self._run()[0], 1)
+        code, runner = self._run()
+        self.assertEqual(code, 0)
+        runner.assert_not_called()
+
+    def test_a_malformed_line_does_not_break_the_watch(self):
+        self._jobs([{"id": "a", "name": "tick"}])
+        (self.cron / "catch_up_events.jsonl").write_text(
+            "not json\n" + json.dumps({"at": "t", "job_id": "a", "job": "tick",
+                                       "skipped_occurrences": 4}) + "\n",
+            encoding="utf-8")
+        self.assertEqual(self._run()[0], 1)
+
+    def test_both_kinds_report_together(self):
+        self._jobs([{"id": "a", "name": "tick", "last_delivery_error": "dropped",
+                     "last_run_at": "t"}])
+        self._events({"at": "2026-08-12T10:00:00", "job_id": "a", "job": "tick",
+                      "skipped_occurrences": 3})
+        code, runner = self._run()
+        self.assertEqual(code, 1)
+        message = runner.call_args[0][0][-1]
+        self.assertIn("never reached you", message)
+        self.assertIn("skipped entirely", message)
+
+
 if __name__ == "__main__":
     unittest.main()
