@@ -216,6 +216,52 @@ THREE DECISIONS NOT TO "SIMPLIFY":
 Announced ONCE (ORPHAN_ALERTS = 1); 12-hour lookback. A dead turn no longer
 reports as a stall. Tests: 15 new, 46 in the watch suite.
 
+### CRON / SCRIPT MIRROR + DRIFT DETECTION — BUILT 2026-08-12
+
+Dado's entire schedule existed in ONE file on ONE disk
+(`%LOCALAPPDATA%\hermes\profiles\dado\cron\jobs.json`), with no commit, no
+diff and nothing noticing a deleted, disabled or re-scheduled job. The scripts
+those jobs run live in a THIRD place — the profile `scripts\` dir, outside this
+repo — which is the mechanism behind job_runner.py running three days behind its
+repo fix with every health signal green.
+
+`Dado\Tools\watch\dado_profile_mirror.py`, called from the keep-alive.
+
+A DETECTOR, NOT AN IMPORTER, and the direction of truth is the OPPOSITE of
+dado_soul_sync.py. SOUL.md is authored in the repo, so that one writes
+mirror -> live. Cron is authored LIVE (`hermes -p dado cron create`) and hermes
+rewrites jobs.json under its own lock on every run of every job, so LIVE IS THE
+TRUTH and this only ever writes the repo. An external writer that does not hold
+that lock can silently drop a claim or a completion, and copying a mirror over a
+live schedule is exactly what the neighbouring tree had to build a refusal gate
+against.
+
+ALSO REJECTED: adding "dado" to TDI's EXPORT_HERMES_RUNTIME.ps1. That script
+writes into `C:\AgentTeam\HermesProfiles\` — putting FRP Depot's schedule
+there is a data-wall breach for a convenience. Nothing under C:\AgentTeam is
+touched by this.
+
+Writes `DadoProfile\cron\`: `jobs.mirror.json` (definitions only — runtime
+bookkeeping stripped so it changes when the SCHEDULE changes, not 288x a day),
+`scripts.mirror.json` (sha256 of what is deployed vs its repo original — content
+deliberately not copied, since a second copy in the same repo is the drift this
+exists to catch), and `RECREATE.md` (rebuild lines for a HUMAN).
+
+TWO THINGS IT FOUND IMMEDIATELY:
+ 1. `config.yaml`'s committed mirror is FIVE parsed keys behind live, including
+    the entire `platforms.discord` block — the mirror does not know Dado has a
+    Discord lane. A TEXT diff cannot see this: the two files differ in key order
+    and hand-written comments, so the noise hides the gap. The check is
+    therefore semantic (yaml.safe_load), not textual. NOT auto-corrected — that
+    file is being edited by another session; closing the gap is a separate,
+    deliberate act.
+ 2. A false positive in the FIRST version of the checker, worth recording: two
+    deployed GLA scripts are not stale copies but deliberate LAUNCHER SHIMS that
+    put this repo on sys.path and delegate into it, so the repo file IS the
+    executing code. Reporting them as drift every run is how a gate gets
+    ignored. Launchers are now classified and exempt; 12 real copies are
+    compared by hash.
+
 ### B-09 FIXED (this commit) — `scrub_noise` deletes legitimate business lines
 
 Fixed 2026-07-25. `NOISE_LINE` is anchored to line start, and `job id` / `cleaned up` were removed from it entirely — both are ordinary operations English. The ticker branch now only peels allowlisted frame words, so "Pending... payment from SCT" keeps its first word.

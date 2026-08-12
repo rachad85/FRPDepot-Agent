@@ -1,0 +1,100 @@
+{
+ "conduct_collect.py": {
+  "kind": "copy",
+  "deployed_sha256": "31d19e297aedf01efc61a7cfc4e52c43e674b4da33b057da64ebfa1b793a7c65",
+  "repo_path": "Dado\\Tools\\conduct\\conduct_collect.py",
+  "repo_sha256": "31d19e297aedf01efc61a7cfc4e52c43e674b4da33b057da64ebfa1b793a7c65",
+  "in_sync": true
+ },
+ "conduct_review.py": {
+  "kind": "copy",
+  "deployed_sha256": "f99d01715c8c05182cee5581a362f9a7e37c980f4951e69e4ec50bdf0c60887a",
+  "repo_path": "Dado\\Tools\\conduct\\conduct_review.py",
+  "repo_sha256": "f99d01715c8c05182cee5581a362f9a7e37c980f4951e69e4ec50bdf0c60887a",
+  "in_sync": true
+ },
+ "dado_daily_banking_review.py": {
+  "kind": "copy",
+  "deployed_sha256": "cd5208ac78462689eaef550a12168807dd199c0fdf8d29d640bb45f5c969a217",
+  "repo_path": "Dado\\Tools\\watch\\dado_daily_banking_review.py",
+  "repo_sha256": "cd5208ac78462689eaef550a12168807dd199c0fdf8d29d640bb45f5c969a217",
+  "in_sync": true
+ },
+ "dado_followup_digest.py": {
+  "kind": "copy",
+  "deployed_sha256": "da7bae587beacf3b73542bf62c05a18094d4bf2d0eabb83a04311a0129f893eb",
+  "repo_path": "Dado\\Tools\\watch\\dado_followup_digest.py",
+  "repo_sha256": "da7bae587beacf3b73542bf62c05a18094d4bf2d0eabb83a04311a0129f893eb",
+  "in_sync": true
+ },
+ "dado_inbox_reasoner.py": {
+  "kind": "copy",
+  "deployed_sha256": "3f0a0aa5a47d093cee0a661dea9f83cd64152e237ab0be1a9abd030b739a72ef",
+  "repo_path": "Dado\\Tools\\watch\\dado_inbox_reasoner.py",
+  "repo_sha256": "3f0a0aa5a47d093cee0a661dea9f83cd64152e237ab0be1a9abd030b739a72ef",
+  "in_sync": true
+ },
+ "gla_sync_ready_manway_cover_monitor.py": {
+  "kind": "launcher",
+  "deployed_sha256": "d0adf7e990d54d8faced5b7931c69641032e093a593169611b9b2d2294ad208b",
+  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_manway_cover_monitor.py",
+  "repo_sha256": "3beafd2e6eaef42a524ec48ffc2b37023a671bc0fe1787e109023bf4d5611485",
+  "in_sync": true
+ },
+ "gla_sync_ready_manway_monitor.py": {
+  "kind": "launcher",
+  "deployed_sha256": "c713f16580277e7f22e80fa44901386590f698e50fb5b727e0a93ceb1da31d7f",
+  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_manway_monitor.py",
+  "repo_sha256": "a53c43ad58aa96bfeb0eb75f32f6dce8d744d7321ef176984e1c4a1864b880b9",
+  "in_sync": true
+ },
+ "gla_sync_ready_monitor.py": {
+  "kind": "copy",
+  "deployed_sha256": "de6231cfb3671f7e9f72e366fc5a22fb2780214590ac6519583dac25ffb8caf8",
+  "repo_path": "Dado\\Tools\\watch\\gla_sync_ready_monitor.py",
+  "repo_sha256": "de6231cfb3671f7e9f72e366fc5a22fb2780214590ac6519583dac25ffb8caf8",
+  "in_sync": true
+ },
+ "job_runner.py": {
+  "kind": "copy",
+  "deployed_sha256": "29ff70486e5261a4e0619067cbc6ac0811bfb362ba1ca0d966f8cd3ef2562501",
+  "repo_path": "Dado\\Tools\\watch\\job_runner.py",
+  "repo_sha256": "29ff70486e5261a4e0619067cbc6ac0811bfb362ba1ca0d966f8cd3ef2562501",
+  "in_sync": true
+ },
+ "packing_observation_weekly_reminder.py": {
+  "kind": "copy",
+  "deployed_sha256": "08d013b9a119b8f3eac60603df369873b1426b9d6f4cfd8ef063206709b4c936",
+  "repo_path": "Dado\\Tools\\watch\\packing_observation_weekly_reminder.py",
+  "repo_sha256": "08d013b9a119b8f3eac60603df369873b1426b9d6f4cfd8ef063206709b4c936",
+  "in_sync": true
+ },
+ "packing_order_monitor.py": {
+  "kind": "copy",
+  "deployed_sha256": "e85f83055eb78e8d44e9d04e0021a8d65618cf682022c91be7e49699f98cbb93",
+  "repo_path": "Dado\\Tools\\watch\\packing_order_monitor.py",
+  "repo_sha256": "e85f83055eb78e8d44e9d04e0021a8d65618cf682022c91be7e49699f98cbb93",
+  "in_sync": true
+ },
+ "stall_tripwire.py": {
+  "kind": "copy",
+  "deployed_sha256": "c9ae8f88fd1ff059ad462456d23c78679e11fbf014c8396f37ba0342800539e9",
+  "repo_path": "Dado\\Tools\\watch\\stall_tripwire.py",
+  "repo_sha256": "c9ae8f88fd1ff059ad462456d23c78679e11fbf014c8396f37ba0342800539e9",
+  "in_sync": true
+ },
+ "zoho_reorder_analysis.py": {
+  "kind": "copy",
+  "deployed_sha256": "cad3f8936cadad282e86ff251c2fc96690a13ab5b8ab34a873b74e90f93886dc",
+  "repo_path": "Dado\\Tools\\zoho\\zoho_reorder_analysis.py",
+  "repo_sha256": "cad3f8936cadad282e86ff251c2fc96690a13ab5b8ab34a873b74e90f93886dc",
+  "in_sync": true
+ },
+ "zoho_session_keepalive.py": {
+  "kind": "copy",
+  "deployed_sha256": "6334adbcd6561ec30929f73d7a38ed3d442edb4015d7c291062dd168d275aed5",
+  "repo_path": "Dado\\Tools\\watch\\zoho_session_keepalive.py",
+  "repo_sha256": "6334adbcd6561ec30929f73d7a38ed3d442edb4015d7c291062dd168d275aed5",
+  "in_sync": true
+ }
+}

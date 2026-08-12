@@ -28,6 +28,7 @@ $VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\pyt
 $Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
 $LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
 $DeliveryWatch = Join-Path $Root 'Dado\Tools\watch\dado_delivery_watch.py'
+$ProfileMirror = Join-Path $Root 'Dado\Tools\watch\dado_profile_mirror.py'
 $SoulSync    = Join-Path $Root 'Dado\Tools\watch\dado_soul_sync.py'
 # Rachad asked (2026-08-11) for this cross-check. It is the ONLY thing in this
 # tree that reaches into TDI's, and it reaches for exactly one file.
@@ -174,6 +175,29 @@ if (Test-GatewayUp) {
         } catch {
             # A broken delivery watch must never take down the keep-alive.
             Write-Log "DELIVERY WATCH FAILED: $($_.Exception.Message)"
+        }
+    }
+
+    #    Dado's whole schedule lives in ONE file on ONE disk, and the scripts her
+    #    jobs run live in a THIRD place outside this repo. Nothing committed it,
+    #    diffed it, or noticed when a job was deleted or re-scheduled - and on
+    #    2026-08-08 job_runner.py was fixed in the repo while cron kept executing
+    #    the old deployed copy for three days with every health signal green.
+    #
+    #    This keeps a committed RECORD and reports drift. It is deliberately not
+    #    an importer: cron is authored LIVE and hermes rewrites jobs.json under
+    #    its own lock on every run, so live is the truth and this only ever
+    #    writes the repo. Runtime bookkeeping is stripped, so the record changes
+    #    when the SCHEDULE changes, not 288 times a day.
+    if ((Test-Path $ProfileMirror) -and (Test-Path $VenvPython)) {
+        $mirrorArgs = @($ProfileMirror)
+        if ($WhatIfOnly) { $mirrorArgs += '--check' }   # report only, write nothing
+        try {
+            & $VenvPython @mirrorArgs 2>&1 | Where-Object { $_ } | ForEach-Object {
+                Write-Log "profile-mirror: $_"
+            }
+        } catch {
+            Write-Log "PROFILE MIRROR FAILED: $($_.Exception.Message)"
         }
     }
 
