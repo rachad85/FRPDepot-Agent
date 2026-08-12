@@ -27,6 +27,7 @@ $Hermes      = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\her
 $VenvPython  = Join-Path $env:LOCALAPPDATA 'hermes\hermes-agent\venv\Scripts\python.exe'
 $Alerter     = Join-Path $Root 'Dado\Tools\watch\dado_urgent_alert.py'
 $LaneHealth  = Join-Path $Root 'Dado\Tools\watch\dado_lane_health.py'
+$DeliveryWatch = Join-Path $Root 'Dado\Tools\watch\dado_delivery_watch.py'
 $SoulSync    = Join-Path $Root 'Dado\Tools\watch\dado_soul_sync.py'
 # Rachad asked (2026-08-11) for this cross-check. It is the ONLY thing in this
 # tree that reaches into TDI's, and it reaches for exactly one file.
@@ -144,6 +145,35 @@ if (Test-GatewayUp) {
         } catch {
             # A broken lane checker must never take down the keep-alive itself.
             Write-Log "LANE HEALTH CHECK FAILED: $($_.Exception.Message)"
+        }
+    }
+
+    #    A cron job can also run PERFECTLY and have its message dropped on the
+    #    way out. Cron records the delivery outcome separately from the run
+    #    outcome, so last_status still reads "ok" and every health signal here
+    #    stays green while Rachad is told nothing. Nine of Dado's thirteen jobs
+    #    deliver to him - including dado-job-watch and dado-stall-tripwire, the
+    #    two whose whole purpose is telling him something is wrong.
+    #
+    #    Same placement logic as the lane check above: the thing it watches is
+    #    cron delivery, so it cannot live in cron. Silent when clean, never
+    #    re-sends anything (a dropped message is not ours to re-send), and it
+    #    reports a given failure once - but only after the alerter CONFIRMS the
+    #    send, so a cooldown-suppressed alert leaves the finding pending rather
+    #    than destroying it. That last part is backlog item B-08's defect, and
+    #    this must not reintroduce it.
+    if ((Test-Path $DeliveryWatch) -and (Test-Path $VenvPython)) {
+        # -WhatIfOnly stays a genuine dry run: --dry-run prints findings and
+        # sends nothing, leaving the alert cooldown state untouched.
+        $deliveryArgs = @($DeliveryWatch)
+        if ($WhatIfOnly) { $deliveryArgs += '--dry-run' }
+        try {
+            & $VenvPython @deliveryArgs 2>&1 | Where-Object { $_ } | ForEach-Object {
+                Write-Log "delivery-watch: $_"
+            }
+        } catch {
+            # A broken delivery watch must never take down the keep-alive.
+            Write-Log "DELIVERY WATCH FAILED: $($_.Exception.Message)"
         }
     }
 
