@@ -35,9 +35,10 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -66,6 +67,44 @@ CHAT_LANES: dict[str, str] = {
 # A gateway needs a moment to bring adapters up. Below this age, a missing
 # entry means "still starting", not "broken".
 STARTUP_GRACE_SECONDS = 180
+
+# ---------------------------------------------------------------------------
+# LANE 3: THE MODEL PROVIDER.
+#
+# A connected adapter proves the pipe. It proves nothing about what is at the
+# far end. On 2026-08-10 telegram and discord were both "connected" for
+# thirteen minutes while every turn died on a provider error; assess() returned
+# "healthy" the whole way through, correctly and uselessly.
+#
+# *** DO NOT REBUILD THIS ON gateway.log "response ready". *** The gateway
+# counts an error stub as a completed turn, so that signal shows healthy turns
+# in a row during exactly this failure. The only honest record is the terminal
+# error the conversation loop writes to the PROFILE's own errors.log.
+#
+# PER-PROFILE, deliberately: profiles\dado\logs\errors.log, NOT the shared
+# %LOCALAPPDATA%\hermes\logs\errors.log. The shared file carries the other
+# profile's failures too (it held 18 of this marker at the time of writing,
+# none of them Dado's), and paging Rachad about a neighbour's outage from
+# Dado's bot would be both wrong and unactionable.
+PROVIDER_LOG_NAME = "errors.log"
+PROVIDER_MARKER = "Non-retryable client error"
+PROVIDER_TIMESTAMP = re.compile(r"^(\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2})")
+
+# Measured baseline over 2026-07-22 -> 2026-08-11 (21 days): this marker appears
+# in her errors.log EXACTLY 5 times, all within 13:36:58 - 13:50:18 on
+# 2026-08-10, i.e. the one real outage. Two inside twenty minutes has never
+# happened for any other reason, so the threshold is evidence, not a guess.
+PROVIDER_WINDOW_MINUTES = 20
+PROVIDER_FAILURES_BEFORE_DOWN = 2
+
+# ONE sample, unlike the chat lanes. The two-sample rule exists there because a
+# single bad sample is usually hermes reconnecting on its own. There is no
+# equivalent here: by the time this fires, two turns have ALREADY died in
+# Rachad's chat and he has already been handed two stubs.
+#
+# Only the tail is read - this log reached 345 KB in three weeks and is never
+# rotated by us.
+MAX_PROVIDER_LOG_BYTES = 2_000_000
 
 
 def profile_dir() -> Path:
@@ -221,11 +260,62 @@ def assess() -> dict[str, Any]:
                 "detail": entry.get("error_message") or entry.get("error_code") or "no detail given",
             })
 
+    # LANE 3 - the model provider. Checked even when every chat lane is
+    # connected, because that is exactly the shape of the 2026-08-10 outage.
+    provider_hits = provider_failures()
+    if len(provider_hits) >= PROVIDER_FAILURES_BEFORE_DOWN:
+        down.append({
+            "lane": "model provider",
+            "state": "failing",
+            "detail": f"{len(provider_hits)} non-retryable provider error(s) in the "
+                      f"last {PROVIDER_WINDOW_MINUTES} min "
+                      f"(latest {provider_hits[-1]}) - her chat lanes are connected "
+                      f"but turns are dying at the model",
+        })
+    # Deliberately NOT added to `healthy` when it is fine. `healthy` is the
+    # "Still working: ..." line, which is about the CHAT lanes Rachad can
+    # actually switch to; a healthy provider there is noise. It also keeps the
+    # existing contract exactly - four tests assert the chat-only list.
+
     if down:
         return {"verdict": "lane_down", "down": down, "healthy": healthy, "pending": pending}
     if pending:
         return {"verdict": "awaiting_restart", "down": [], "healthy": healthy, "pending": pending}
     return {"verdict": "healthy", "down": [], "healthy": healthy, "pending": []}
+
+
+def provider_failures(now: datetime | None = None) -> list[str]:
+    """Timestamps of non-retryable provider errors inside the recent window.
+
+    Reads only the tail of the PROFILE's own errors.log. Unparseable or
+    undated lines are ignored rather than guessed at: a false provider alarm
+    would send Rachad chasing a working model.
+    """
+    path = profile_dir() / "logs" / PROVIDER_LOG_NAME
+    try:
+        size = path.stat().st_size
+        with path.open("r", encoding="utf-8", errors="replace") as handle:
+            if size > MAX_PROVIDER_LOG_BYTES:
+                handle.seek(size - MAX_PROVIDER_LOG_BYTES)
+                handle.readline()          # discard the partial line
+            candidates = [line for line in handle if PROVIDER_MARKER in line]
+    except OSError:
+        return []
+
+    moment = now or datetime.now()
+    cutoff = moment - timedelta(minutes=PROVIDER_WINDOW_MINUTES)
+    recent = []
+    for line in candidates:
+        match = PROVIDER_TIMESTAMP.match(line)
+        if not match:
+            continue
+        try:
+            stamp = datetime.fromisoformat(match.group(1).replace(" ", "T"))
+        except ValueError:
+            continue
+        if cutoff <= stamp <= moment:
+            recent.append(match.group(1))
+    return recent
 
 
 def alert_message(down: list[dict[str, Any]], healthy: list[str]) -> str:
@@ -248,6 +338,15 @@ def alert_message(down: list[dict[str, Any]], healthy: list[str]) -> str:
     # another gateway already holds, and recommending one anyway would send
     # Rachad round a loop -- while a restart DOES end whatever turn is running
     # on the surviving lane, which he should know before clicking.
+    provider_down = [item for item in down if item["lane"] == "model provider"]
+    if provider_down:
+        parts.append("The model provider is the problem, not a chat lane. A restart "
+                     "will NOT fix a provider outage or an expired credential, and it "
+                     "would end whatever she is working on. Check the provider status "
+                     "and her Codex sign-in first; the detail line above names the "
+                     "error the turns actually died on.")
+        return "\n".join(parts)
+
     fatal = [item for item in down if item["state"] not in ("missing", "disconnected")]
     if fatal:
         parts.append("Do NOT just restart her -- this looks like a configuration "
