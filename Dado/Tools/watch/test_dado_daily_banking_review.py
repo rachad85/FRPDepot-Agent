@@ -56,24 +56,88 @@ class DailyBankingReviewTests(unittest.TestCase):
     def test_clean_report_is_silent(self):
         self.assertEqual(review.render({"open_lines": [], "open_count": 0}), "")
 
-    def test_account_filter_must_be_honored(self):
-        response = {
-            "transactions": [{
-                "transaction_id": "100",
-                "account_id": "96274000009999999",
-                "date": "2026-08-08",
-                "amount": 100,
-                "currency_code": "CAD",
-                "status": "uncategorized",
-            }],
-            "page_context": {"has_more_page": False},
+    def test_a_foreign_account_row_is_disclosed_not_fatal(self):
+        """The defect that meant this job could never produce a review.
+
+        The old code asked per account and RAISED the moment Zoho answered with
+        a different one, so an empty feed was silent and any row was a hard
+        failure - there was no input that produced a report. Measured across
+        five runs since 2026-08-07: one creation test, one silent, three errors,
+        zero reviews.
+
+        Zoho's filter is no longer sent or trusted. A row belonging to an
+        account we do not configure is DISCLOSED, so it can neither be lost nor
+        mis-attributed.
+        """
+        rows = [{
+            "transaction_id": "100",
+            "account_id": "96274000009999999",
+            "account_name": "Someone else's account",
+            "date": "2026-08-08",
+            "amount": 100,
+            "currency_code": "CAD",
+            "status": "uncategorized",
+        }]
+        reviewed, skipped = review.partition_feed(rows, {})
+
+        self.assertEqual(reviewed, [])
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("not one of the configured", skipped[0]["reason"])
+        self.assertEqual(skipped[0]["account_id"], "96274000009999999")
+
+    def test_attribution_comes_from_the_row_never_from_what_was_asked(self):
+        """The constraint that outranks availability.
+
+        The old code attributed every returned row to the account it had ASKED
+        for. Softening its filter check without restructuring attribution would
+        have reported USD build-up money under "Desjardins CAD" - an
+        availability bug turned into a money-attribution bug.
+        """
+        check = {
+            "96274000001409012": {
+                "logical_account": "USD build-up",
+                "account_id": "96274000001409012",
+                "account_name": "USD Desjardins corporate build-up account",
+                "currency": "USD",
+            }
         }
-        with mock.patch.object(review.banking, "books_ui_get", return_value=response):
-            with self.assertRaisesRegex(review.DailyReviewError, "ignored account filter"):
-                review.fetch_account_lines(
-                    {"books_organization_id": "110002157575"},
-                    "96274000001409019",
-                )
+        rows = [{
+            "transaction_id": "100",
+            "account_id": "96274000001409012",
+            "account_name": "USD Desjardins corporate build-up account",
+            "date": "2026-08-08",
+            "amount": 100,
+            "currency_code": "USD",
+            "status": "uncategorized",
+        }]
+        reviewed, skipped = review.partition_feed(rows, check)
+
+        self.assertEqual(skipped, [])
+        self.assertEqual(reviewed[0]["account_id"], "96274000001409012")
+
+    def test_a_name_that_disagrees_with_zoho_is_not_reviewed(self):
+        """Two sources must agree before money is attributed to an account."""
+        check = {
+            "96274000001409019": {
+                "logical_account": "Desjardins CAD",
+                "account_id": "96274000001409019",
+                "account_name": "Chequing account (C)",
+                "currency": "CAD",
+            }
+        }
+        rows = [{
+            "transaction_id": "100",
+            "account_id": "96274000001409019",
+            "account_name": "Something Else Entirely",
+            "date": "2026-08-08",
+            "amount": 100,
+            "currency_code": "CAD",
+            "status": "uncategorized",
+        }]
+        reviewed, skipped = review.partition_feed(rows, check)
+
+        self.assertEqual(reviewed, [])
+        self.assertIn("feed calls this account", skipped[0]["reason"])
 
     def test_nonempty_render_discloses_zero_writes_and_requires_reply(self):
         line = self.line()

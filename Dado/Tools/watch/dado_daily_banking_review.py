@@ -139,12 +139,27 @@ def projected_line(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def fetch_account_lines(vault: dict[str, Any], account_id: str) -> list[dict[str, Any]]:
+def fetch_feed_rows(vault: dict[str, Any]) -> list[dict[str, Any]]:
+    """Read the WHOLE imported feed once. The account_id filter is never sent.
+
+    MEASURED 2026-08-09 and 2026-08-10: a request carrying
+    account_id=96274000001409019 came back with a row belonging to
+    96274000001409012, and the unfiltered read on 08-10 proved that row was the
+    ONLY line in the whole feed. Zoho's server-side filter on this UI route is
+    not trustworthy, so it is not used at all - every row is attributed
+    client-side from its own account_id. banking.list_uncategorized_ui_transactions
+    has always fetched unfiltered for the same reason.
+
+    THIS IS WHY THE JOB NEVER PRODUCED A REVIEW. The old code asked per account
+    and raised the moment Zoho answered with a different one, so an empty feed
+    was silent and ANY row was a hard failure - there was no input that produced
+    a report. Five runs since 2026-08-07: one creation test, one silent, three
+    errors, zero reviews.
+    """
     organization_id = banking.positive_id(vault["books_organization_id"], "organization_id")
-    found: list[dict[str, Any]] = []
+    rows_out: list[dict[str, Any]] = []
     for page_number in range(1, 51):
         query = urlencode({
-            "account_id": account_id,
             "page": page_number,
             "per_page": 200,
             "response_option": 1,
@@ -155,27 +170,83 @@ def fetch_account_lines(vault: dict[str, Any], account_id: str) -> list[dict[str
         )
         rows = result.get("transactions")
         if not isinstance(rows, list):
-            raise DailyReviewError(f"Zoho omitted imported-feed rows for account {account_id}.")
+            raise DailyReviewError("Zoho omitted its imported-feed rows.")
         for row in rows:
             if not isinstance(row, dict):
                 raise DailyReviewError("Zoho returned an invalid imported-feed row.")
-            line = projected_line(row)
-            if line["account_id"] != account_id:
-                raise DailyReviewError(
-                    f"Zoho ignored account filter {account_id}; returned {line['account_id']}."
-                )
-            found.append(line)
+            rows_out.append(row)
         page_context = result.get("page_context") or {}
         if not isinstance(page_context, dict):
             raise DailyReviewError("Zoho returned invalid imported-feed page context.")
         if not page_context.get("has_more_page"):
             break
     else:
-        raise DailyReviewError(f"Imported feed for {account_id} exceeded 50 pages.")
-    ids = [row["transaction_id"] for row in found]
+        raise DailyReviewError("Imported feed exceeded 50 pages.")
+    return rows_out
+
+
+def partition_feed(
+    rows: list[dict[str, Any]], check_by_id: dict[str, dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Split rows on the row's OWN account_id - never on what was requested.
+
+    A row is reviewed only when its account_id is a configured record AND the
+    feed's own account_name agrees with the name validate_accounts just read
+    from the Books bank-account record. Everything else is DISCLOSED, never
+    dropped and never mis-attributed.
+
+    This is the guard that matters. The old code attributed every returned row
+    to the account it had ASKED for, so softening its filter check without
+    restructuring attribution would have turned an availability bug into a
+    money-attribution bug - USD build-up money reported under "Desjardins CAD".
+    """
+    reviewed: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    for row in rows:
+        feed_name = str(row.get("account_name") or "").strip()
+        try:
+            line = projected_line(row)
+        except (DailyReviewError, banking.BankingToolError) as exc:
+            skipped.append({
+                "reason": f"feed row could not be read ({exc})",
+                "account_id": str(row.get("account_id") or "(none)"),
+                "account_name": feed_name,
+            })
+            continue
+        check = check_by_id.get(line["account_id"])
+        if check is None:
+            skipped.append({
+                "reason": "not one of the configured FRP Depot accounts",
+                "account_id": line["account_id"],
+                "account_name": feed_name,
+            })
+            continue
+        if feed_name and feed_name != check["account_name"]:
+            skipped.append({
+                "reason": (
+                    f"feed calls this account {feed_name!r}, Zoho's bank-account "
+                    f"record calls it {check['account_name']!r}"
+                ),
+                "account_id": line["account_id"],
+                "account_name": feed_name,
+            })
+            continue
+        reviewed.append(line)
+    ids = [line["transaction_id"] for line in reviewed]
     if len(ids) != len(set(ids)):
-        raise DailyReviewError(f"Imported feed for {account_id} returned duplicate transaction IDs.")
-    return found
+        raise DailyReviewError("Imported feed returned duplicate transaction IDs.")
+    return reviewed, skipped
+
+
+def skipped_summary(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    counts: dict[tuple[str, str, str], int] = {}
+    for entry in entries:
+        key = (entry["account_id"], entry["account_name"], entry["reason"])
+        counts[key] = counts.get(key, 0) + 1
+    return [
+        {"account_id": account_id, "account_name": name, "reason": reason, "count": count}
+        for (account_id, name, reason), count in sorted(counts.items())
+    ]
 
 
 def candidates_for(vault: dict[str, Any], transaction_id: str) -> list[dict[str, Any]]:
@@ -239,42 +310,92 @@ def classify(line: dict[str, Any], candidates: list[dict[str, Any]]) -> tuple[st
 
 
 def build_report(access_token: str, vault: dict[str, Any]) -> dict[str, Any]:
+    """One unfiltered read, attributed per row.
+
+    THE DELIBERATE SPLIT: whole-read integrity failures still HARD-FAIL - a
+    non-list, a non-dict row, bad page context, >50 pages, duplicate ids,
+    account drift in validate_accounts - because a read we cannot trust must not
+    become a report. Per-ROW problems degrade and are disclosed instead, because
+    one unreadable line must not cost the other nine their review.
+    """
     checks = validate_accounts(account_rows(access_token, vault))
     check_by_id = {row["account_id"]: row for row in checks}
-    lines: list[dict[str, Any]] = []
-    seen: set[str] = set()
-    for group in LOGICAL_ACCOUNTS:
-        for account_id, _name, _currency in group["records"]:
-            for line in fetch_account_lines(vault, account_id):
-                if line["transaction_id"] in seen:
-                    raise DailyReviewError(
-                        f"Transaction {line['transaction_id']} appeared under multiple configured accounts."
-                    )
-                seen.add(line["transaction_id"])
-                candidate_rows = candidates_for(vault, line["transaction_id"])
-                category, recommendation = classify(line, candidate_rows)
-                line.update({
-                    "logical_account": group["label"],
-                    "account_name": check_by_id[account_id]["account_name"],
-                    "category": category,
-                    "recommendation": recommendation,
-                    "candidates": candidate_rows,
-                })
-                lines.append(line)
+    lines, skipped = partition_feed(fetch_feed_rows(vault), check_by_id)
+    unread_candidates = 0
+    for line in lines:
+        check = check_by_id[line["account_id"]]   # attribution comes from the ROW
+        line["logical_account"] = check["logical_account"]
+        line["account_name"] = check["account_name"]
+        try:
+            candidate_rows = candidates_for(vault, line["transaction_id"])
+        except (DailyReviewError, banking.BankingToolError) as exc:
+            unread_candidates += 1
+            line.update({
+                "category": "not classified",
+                "recommendation": (
+                    f"Zoho match candidates could not be read ({exc}); "
+                    "classify this line by hand."
+                ),
+                "candidates": [],
+                "candidates_read": False,
+            })
+            continue
+        category, recommendation = classify(line, candidate_rows)
+        line.update({
+            "category": category,
+            "recommendation": recommendation,
+            "candidates": candidate_rows,
+            "candidates_read": True,
+        })
+    # If NOTHING could be classified, the read is not trustworthy enough to be a
+    # report at all - the same principle as the whole-read failures above,
+    # applied consistently.
+    if lines and unread_candidates == len(lines):
+        raise DailyReviewError(
+            "Zoho match candidates could not be read for ANY open line; "
+            "the read is not trustworthy enough to report."
+        )
     lines.sort(key=lambda row: (row["date"], row["logical_account"], row["transaction_id"]))
-    return {"accounts_checked": checks, "open_lines": lines, "open_count": len(lines)}
+    return {
+        "accounts_checked": checks,
+        "open_lines": lines,
+        "open_count": len(lines),
+        "not_reviewed": skipped_summary(skipped),
+        "not_reviewed_count": len(skipped),
+        "unread_candidate_count": unread_candidates,
+    }
 
 
 def render(report: dict[str, Any]) -> str:
-    if not report["open_lines"]:
+    # .get() throughout so a report built by older code still renders.
+    not_reviewed = report.get("not_reviewed") or []
+    if not report["open_lines"] and not not_reviewed:
         return ""
     out = [
         "## Daily Zoho banking review",
         "",
         f"Open imported-feed lines: **{report['open_count']}**",
         "Zoho writes: **0**",
-        "",
     ]
+    if not_reviewed:
+        # Disclosed, never dropped: a line this tool could not attribute is
+        # exactly the thing a silent review would hide.
+        out.append(
+            f"NOT REVIEWED: **{report.get('not_reviewed_count', 0)}** imported-feed "
+            "line(s) could not be attributed to a configured account -"
+        )
+        for entry in not_reviewed:
+            name = entry["account_name"] or "(unnamed)"
+            out.append(
+                f"  - {entry['count']} x account {entry['account_id']} "
+                f"({name}): {entry['reason']}"
+            )
+    if report.get("unread_candidate_count"):
+        out.append(
+            f"Match candidates unreadable on **{report['unread_candidate_count']}** "
+            "line(s); those are flagged below for manual classification."
+        )
+    out.append("")
     for index, line in enumerate(report["open_lines"], 1):
         out.extend([
             f"### {index}. {line['logical_account']} — {line['currency']} {line['amount']}",
@@ -294,14 +415,40 @@ def render(report: dict[str, Any]) -> str:
         else:
             out.append("- Zoho best match: none")
         out.extend([f"- Recommendation: {line['recommendation']}", ""])
-    out.append("Reply with the line number you want reviewed and staged. Nothing was committed.")
+    # Do not invite a reply when there is nothing to reply about: a report that
+    # exists only to disclose skipped lines has no line numbers to pick from.
+    if report["open_lines"]:
+        out.append("Reply with the line number you want reviewed and staged. Nothing was committed.")
+    else:
+        out.append("No line was attributable to a configured account. Nothing was committed.")
     return "\n".join(out)
+
+
+ZOHO_SESSION_DISABLED = Path(r"C:\FRPDepot\Dado\40_Logs\zoho_session_disabled.flag")
+def session_is_stopped_on_purpose() -> bool:
+    """A deliberate stop is not a fault and must not speak.
+
+    Same rule the gateway watchdog and the lane-health checker already follow.
+
+    NOTE what is deliberately NOT here: a "is the keepalive happy?" precheck.
+    When the Zoho UI session is genuinely down, the existing hard failure
+    ("Exactly one authenticated Canadian Zoho Books app page must be open") is
+    honest, delivered, and names the real problem - swapping it for a quiet exit
+    would recreate the silent-failure class this whole audit exists to remove.
+    The session going down is the keepalive's problem to fix and report; the
+    root cause of the 2026-08-11 outage was that it restarted the browser on the
+    wrong data centre, which is fixed there, not worked around here.
+    """
+    return ZOHO_SESSION_DISABLED.exists()
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--json", action="store_true", help="Print JSON even when no lines are open.")
     args = parser.parse_args()
+    if session_is_stopped_on_purpose():
+        # Silent, and NOT an error: he stopped the Zoho session himself.
+        return 0
     vault = zoho_tool.load_vault()
     access_token, vault = zoho_tool.refresh_access_token(vault)
     report = build_report(access_token, vault)

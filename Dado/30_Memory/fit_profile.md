@@ -151,7 +151,8 @@ sheet — ask instead.
 - Zoho invoice capability commissioned by Rachad on 2026-08-10: a named approval-gated tool may (1) revise existing invoices without sending them and without changing their status, and (2) create new invoices in **Draft** status only. Every save is staged and requires Rachad's later exact one-word `APPROVED`; sending/emailing, deleting, voiding, marking sent, payments, credits and automatic approval remain unreachable. Build and OAuth permission work are pending; commissioning itself granted no live permission and caused no Zoho write.
 - Zoho invoice REVISION tool status (2026-08-10): **BUILT AND TESTED ONLY — no permission granted, no plan staged, no invoice changed.** `Dado\Tools\zoho\zoho_invoice_revision_tool.py` revises ONE existing invoice with ONE atomic PUT, changing only `customer_id` (to an ALREADY EXISTING customer), `reference_number`, `date`, `due_date`, customer-owned `billing_address_id`/`shipping_address_id`, `notes`, `terms`, and per existing line `quantity`, `rate`, `discount`, `description`, `tax_id`. Every live line is always resent once in order with its line_item_id and item_id, so nothing can be deleted by omission; adding, removing or substituting a line is refused. It has **no mail transport at all**, cannot change the invoice number, status, currency, exchange rate, balance/payments, adjustments, shipping charges or custom fields, and cannot create, delete, void, mark-draft or mark-sent. It refuses any invoice that is not exactly `draft` or `sent` or that carries a payment, credit, write-off, package, shipment or recurring profile. Approval is byte-exact `APPROVED`; one attempt only, and any failure or indeterminate result permanently locks the plan. The OAuth scope `ZohoBooks.invoices.UPDATE` is in the PREPARED list only and is **not live** until Rachad runs PREPARE_DADO_ZOHO_ACCESS.bat, creates the grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat.
 - Zoho DRAFT INVOICE CREATION status (2026-08-10, follow-on to the revision build): **BUILT AND TESTED ONLY — OAuth reauthorization still pending, no plan staged, zero Zoho writes, zero emails, no invoice created.** Part (2) of the commissioned capability is now implemented as the second action, `create_draft_invoice`, of the SAME named tool `Dado\Tools\zoho\zoho_invoice_revision_tool.py` (stage with `stage-create`, commit with the same `commit`). It creates ONE new invoice with ONE `POST /books/v3/invoices` and verifies live that the result is in exactly `draft` status. **Zoho's own auto-numbering assigns the number** — no caller-supplied number and no `ignore_auto_number_generation` exists anywhere in the module. It requires an EXISTING ACTIVE customer whose live name matches what was stated, addresses owned by that customer, and EXISTING ACTIVE Zoho items on every line (no free-text or unlinked lines; no item, customer or tax creation). Quantity, rate, discount, description and tax ID are accepted only with an explicit `source` string per value. Both `date` and `due_date` must be stated so nothing is inferred. The customer's own currency is preserved; currency and exchange rate are not in the payload allowlist. A duplicate item line is refused unless every line for that item carries its own distinct description. An independent Decimal (half-up) calculation of each line total, the discount, tax and grand total is shown before approval and asserted on read-back wherever Zoho's result is deterministic — a **tax group or compound tax is shown as an ESTIMATE and deliberately not asserted**, because Zoho rounds each component separately. Read-back verifies status exactly `draft`, the auto number, customer, currency, addresses, every line's item/order/quantity/rate/discount/description/tax/line-total, the dates, reference, notes, terms, the totals, that `is_emailed` is false, and that no shipping charge or adjustment appeared. If the POST succeeds but the read-back is missing or not draft, it reports an indeterminate failure **with the invoice ID when known and never attempts cleanup, deletion, voiding, a status change or a retry**. Approval is byte-exact `APPROVED`, checked before the lock, the vault, the token and the network; the plan is locked before the POST and permanently after any attempt. OAuth scope `ZohoBooks.invoices.CREATE` was added to the PREPARED list alongside `.UPDATE` and is **not live** until Rachad runs PREPARE_DADO_ZOHO_ACCESS.bat, creates the grant, then REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. There is still no invoice DELETE/ALL/fullaccess scope.
-- INV-000051 revision request (2026-08-10) is CONTEXT, NOT APPROVAL. Ralmax (Josh Caulfield) asked to put the SHM PO on the invoice and forward it to Elaine Iverson. Two blockers, both unresolved: **SHM Marine Constructors JV does not exist as a Zoho contact** (creating it belongs solely to `zoho_customer_quote_tool.py`, never to the revision tool), and the **tax treatment is unresolved** pending delivery/carrier facts — so no tax change may be inferred or staged. The forward itself is a DRAFT-only email action; the revision tool cannot send anything.
+- INV-000051 revision request (fresh live check 2026-08-12) is CONTEXT, NOT APPROVAL. Full Outlook thread confirms: Elaine Iverson requested invoicing to **SHM Marine Constructors JV**; Josh Caulfield confirmed SHM will send its own courier once ready; Rachad's own stated treatment is customer collection FOB Brockville with **Ontario HST 13%** and PO **0000031**. The supplied SHM PO names bill-to SHM Marine Constructors JV, 343A Bay St, Victoria BC V8T1P5, and says all invoices go to elaineiverson@ralmax.com. Live Zoho proves three blockers to the current commissioned invoice tool: (1) invoice 96274000001559012 is now status `overdue`, not exactly `draft` or `sent`; (2) exact customer SHM Marine Constructors JV still does not exist (customer creation belongs solely to `zoho_customer_quote_tool.py`); (3) invoice is linked to SO-00050 / salesorder 96274000001558003 and both lines carry sales-order line links, so the tool refuses changing line tax from GST 5% to ON HST 13% because that would desync the order. Live ON HST is tax ID 96274000000035516 at 13%. No plan was staged and zero Zoho writes/emails occurred. The corrected independent Decimal figures are subtotal CAD 13,020.00 + HST CAD 1,692.60 = total CAD 14,712.60. Any solution now needs Rachad to commission an exact fixed prerequisite/correction extension; do not stage a partial customer/PO-only revision that leaves the wrong tax. The later forwarding remains a DRAFT-only Outlook action and is never performed by the revision tool.
+- INV-000051 correction live outcome (2026-08-12): Rachad separately approved the fixed SHM customer prerequisite and the fixed invoice correction. Plan A created and verified active customer **SHM Marine Constructors JV** (contact `96274000001569002`, billing address `96274000001569004`, primary Elaine Iverson contact person `96274000001569003`); zero email. Plan B issued its one locked PUT, but Zoho rejected it with HTTP 400 / code 4116 because the customer cannot be changed on this quote-derived invoice and instructed creating a new invoice instead. Plan B is permanently `indeterminate` / no-retry. Three fresh read-only rounds proved no invoice or sales-order business change landed: INV-000051 remains Overdue under Ralmax, reference SO-00050, GST 5%, total CAD 13,671.00, and SO-00050 remains unchanged. A replacement Draft invoice requires a separate newly staged plan and new approval; existing-invoice void/delete/credit/restatus remains outside commissioned capability.
 - Troy Dualam Services Inc. (customer ID 96274000000060019) is in Quebec and must use the combined **GST + QST** tax group (14.975%; Zoho tax ID 96274000001071139).
 - Troy Dualam Services Inc. receives an automatic **10% discount** on every FRP Depot order/estimate (Rachad, 2026-07-30).
 - Manufacturer-confirmed pipe construction: Fei wrote on 2025-11-26, **“all pipe sizes adopt filament winding method.”** Her 2025-11-04 attachment, `Filament Wound Pipe Lamination.pdf`, clarifies that this means the **structural roving layer** is filament-wound, while the **inner surface, chopped-strand-mat interior layer, and C-veil + UV outer surface** are hand-laid. Do not describe this as separate hand-laid axial sections. The document covers 1–36 in pipe and cites ASTM D2992 design basis / ASTM D2996 manufacture.
@@ -987,3 +988,124 @@ sheet — ask instead.
   (fail-closed: only the two counts anyone has actually seen are accepted) — but
   if a future run stops on it, that is the reason, and it needs its own measured
   decision from Rachad, not a quiet widening.
+
+## 2026-08-12 — Packing Ring WordPress media-upload tool (BUILT/TESTED ONLY)
+- Rachad answered `Yes` on Discord (2026-08-12) to building a fixed,
+  approval-gated media-upload tool restricted to the six approved Packing Ring
+  image hashes, after reviewing the gallery contact sheet and replying
+  `Looks good! Proceed`. **STATUS: BUILT AND TESTED ONLY; no plan staged; zero
+  uploads; zero website writes; zero products changed; zero emails; the
+  authenticated browser was never contacted.**
+- `Dado\Tools\woocommerce\wordpress_packing_ring_media_tool.py` has exactly two
+  commands, `stage` and `commit --plan --approval`. The six file paths, names,
+  byte sizes, SHA-256 digests, PNG/RGB/1024x1024 identity, upload order, site
+  origin and CDP endpoint are hard-coded; a caller supplies only a plan path and
+  an approval word, so no seventh file, review sheet, ZIP, source photo or
+  arbitrary path is reachable. Approval is byte-exact unpadded uppercase
+  `APPROVED` — never stripped, never case-folded — and is checked before any
+  browser or network operation.
+- The six approved images are `01_hero_three_quarter.png`, `02_top_view.png`,
+  `03_low_side_angle.png`, `04_opposite_face.png`, `05_laminate_macro.png` and
+  `06_edge_profile.png` in
+  `Dado\20_Working\packing_rings\generated_gallery_20260812\`, all `qc: approved`
+  in that folder's manifest and re-verified against disk at build time. They are
+  representative marketing drafts, NOT dimensional evidence: bore, thickness,
+  bolt circle, hole count and hole diameter are not claimed by them and must not
+  be inferred from them. The tool changes no pixels, no filenames and no formats.
+- IT IS NOT ATOMIC AND HAS NO ROLLBACK, deliberately, and every staged plan says
+  so. Six files are six independent WordPress submissions; if upload N fails,
+  uploads 1..N-1 stay live, N+1..6 are never attempted, and the plan locks
+  permanently `indeterminate` with `no_retry: true`. There is no delete, detach,
+  replace, rename, rollback or retry route anywhere in the module — removing a
+  leftover upload is a manual WordPress action or a separately commissioned tool.
+- Uploaded media is UNATTACHED: it is added to no product or variation, is
+  published nowhere, and changes no price, stock, order, customer or setting.
+  There is no REST client, no subprocess import, no credential store, and no
+  cookie/token/nonce/storage/page-dump read. It attaches only to the existing
+  authenticated loopback WordPress browser on CDP 9229 and never launches or
+  signs in to one. Navigation is limited to three admin paths with closed query
+  shapes: `media-new.php?browser-uploader`, `upload.php` (bare, `posted=<id>`, or
+  the bounded `mode=list&paged=<n>`), and `post.php?post=<id>&action=edit`.
+- Both commands hold the shared `ui_browser_lock("wordpress")` named mutex for
+  their whole run, taken BEFORE the plan's permanent attempt lock, so a busy
+  browser is a free refusal that burns no plan and touches nothing.
+- Duplicate preflight, read-only, runs at stage AND again immediately before the
+  attempt lock. BOTH GATES ARE COMPLETE OR THE RUN IS A REFUSAL. The NAME gate
+  covers the whole library and proves completeness against the list table's own
+  item count (unreadable count, unidentifiable row, nameless row, or a short walk
+  fails closed); it refuses an exact basename or a stem match once WordPress's
+  own `-N` suffix is stripped. The HASH gate covers EVERY enumerated image
+  attachment (`.png .jpg .jpeg .gif .webp`) — each opened on its own fixed
+  attachment screen, its one public original URL downloaded with no credentials
+  and redirects refused, its full SHA-256 compared to all six fixed digests — so
+  an identical image stored under an unrelated OLDER filename IS proven absent.
+  *** THERE IS NO SAMPLING PATH IN THE MODULE. *** This was the fix on
+  2026-08-12 after an independent review: the first build hashed only name
+  conflicts plus the newest few rows and admitted in its own plan evidence that
+  an older unrelated filename was unproven. Any row that cannot be identified,
+  proven safe, downloaded within bounds or hashed makes the whole check
+  INCOMPLETE and refuses before any attempt lock exists. The bounds
+  (4,000 rows, 200 pages, 2,000 images, 8 MB per file, 1.5 GB cumulative) are
+  hard ceilings: exceeding one is a refusal, never a partial scan reported clean.
+  Each plan carries the totals that prove it — `library_total`, `enumerated`,
+  `image_rows`, `image_hashes_completed`, `hash_failures: 0`,
+  `enumeration_complete`, `hash_complete`, `complete` — and `load_plan` re-checks
+  that arithmetic plus the exact COMPLETE-gate scope wording, so a plan staged
+  under the old bounded gate is not committable. THE COST IS REAL AND IS NOT A
+  LIMIT: a complete gate downloads every library image once per stage and once
+  per commit. Tool/schema are `2.0.0` / `2` for exactly this reason.
+- Verification per upload: exactly one NEW positive attachment id, its own fixed
+  attachment screen, exactly one public original URL on the exact host with the
+  expected basename and no `-1` suffix, PNG, then a credential-free bounded
+  download whose full SHA-256 equals the fixed local digest — then one fresh
+  read-only pass over all six and a local result manifest mapping each fixed
+  SHA-256 to its attachment id and URL.
+- Tests: `test_wordpress_packing_ring_media_tool.py`, 134 run / 133 passed /
+  1 skipped / 0 failed (the skip only because this account cannot create
+  symlinks — the reparse-point branch it covers is tested deterministically
+  instead). The complete WooCommerce suite: 824 run / 822 passed / 2 skipped /
+  0 failed (that skip plus the PHP-only checkout-guard scenario); no existing
+  test was weakened or deleted. All tests are offline: an adversarial fake
+  WordPress DOM carrying controls the tool must never touch, and a fake urllib
+  opener that the tool's real download guards run against. The complete hash
+  gate is proven there, not asserted: `TestCompleteHashGate` puts the
+  interesting file at the very END of a multi-page library — the OLDEST row,
+  far outside any window the retired gate could have used — and proves matching
+  bytes under an old unrelated filename are caught for all six images, an old
+  unrelated NON-matching image is still fully hashed and its edit screen
+  actually visited, one unhashable/undownloadable/mistyped/over-bound older row
+  fails the whole check closed, and each row/page/image/byte bound refuses
+  instead of sampling.
+- ANY actual upload still needs its own staged plan and Rachad's own fresh exact
+  `APPROVED`. Commissioning the capability is not approval of an upload.
+- *** UNRESOLVED, AND NOT FIXED BY THE 2026-08-12 REPAIR: the original build
+  also wrote to a Hermes profile file outside this tree,
+  `%LOCALAPPDATA%\hermes\profiles\dado\SOUL.md`. *** That was a cross-profile
+  write nobody asked for. The repair pass did NOT read, write, restore, compare
+  or otherwise touch that path — undoing it needs Rachad's own explicit
+  direction, and the build left a `SOUL.md.bak_20260812_pre_packing_ring_media`
+  beside it to restore from if he wants that. Repository documentation
+  (`fit_profile.md`, `CLAUDE.md`, `DadoProfile\SOUL.md`) is the only
+  documentation the repair updated.
+
+## Zoho imported-feed reads (2026-08-12)
+
+This tree does NOT send `account_id` to
+`GET /api/v3/banktransactions/uncategorized`, and does not trust it to have
+filtered. Measured: on 2026-08-09 and 2026-08-10 a request carrying
+`account_id=96274000001409019` returned a row belonging to `96274000001409012`,
+and the unfiltered read on 2026-08-10 22:02 proved that row was the only open
+line in the whole feed. Whether the route ignores the parameter or expects a
+different name was NOT determined - and does not matter, because it failed twice
+and once is enough.
+
+Read the feed ONCE unfiltered and partition client-side on each row's own
+`account_id`, as `list_uncategorized_ui_transactions` already did. Attribution
+must come from the row, never from what was asked for: the old code credited
+every returned row to the account it had requested, so relaxing its filter check
+without restructuring attribution would have reported USD build-up money under
+"Desjardins CAD".
+
+A PROBE RUN ON 2026-08-12 WAS INCONCLUSIVE and is recorded as such: the feed was
+empty, so filtered and unfiltered reads matched trivially and the comparison
+proved nothing. The two production failures remain the evidence.
