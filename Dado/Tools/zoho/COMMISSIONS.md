@@ -852,9 +852,12 @@ Final reconciliation artifact:
 SHA-256 `6381e57b76d2ed0cf91b74a5b63110051c9004a69fc53d8c65aed67fadc2e4b6`.
 2026-08-12: `zoho_historical_client_po_reference_tool.py` commissioned after the
 read-only client-PO audit. Rachad selected "Yes - commission and build the
-reference-only repair tool". BUILT AND TESTED ONLY: zero plans staged, zero Zoho
-writes, zero commit locks, zero emails, zero drafts, no browser, and no record
-changed. The live vault was READ but never rewritten with a new grant.
+reference-only repair tool". STATUS 2026-08-12: the six INVOICE plans were later
+staged, approved together by Rachad's own exact `APPROVED`, committed independently,
+and all six verified. Exactly six invoice PUTs landed; six permanent locks are
+`verified`; zero Sales Orders and zero emails were touched. Sales Orders remain
+deferred because their UPDATE scope conflicts with the SCT PO26330 creation tool as
+described below. The live vault was READ but never rewritten with a new grant.
 WHAT IT REPAIRS: six historical Sales Orders and their linked invoices display an
 INTERNAL quote or order number where the customer's own PO belongs. That field is
 NOT internal — Zoho prints it to the customer, as `Ref# :` on a Sales Order PDF
@@ -893,11 +896,13 @@ while an INVOICE payload resends every live line once, in original order, with i
 own `line_item_id` and `item_id`. Nothing is ever omitted in the hope that Zoho
 preserves it. That directory sits under the gitignored `20_Working`, so integrity
 does not depend on git: a mismatch fails closed at runtime.
-PROTECTED FINGERPRINT: every returned business field byte-for-byte. Exactly three
-things leave it, each then asserted by explicit rule — `reference_number` (the one
-changed field, checked in both directions), `last_modified_time` /
-`last_modified_by_id` (Zoho stamps these on any update, and they are reported in
-the receipt), and the read-only MIRROR of a linked record's reference
+PROTECTED FINGERPRINT: every returned business field byte-for-byte. Four categories
+leave it, each handled by explicit rule — `reference_number` (the one changed field,
+checked in both directions), `last_modified_time` / `last_modified_by_id` (Zoho
+stamps these on any update and they are reported in the receipt), the regenerated
+secure `invoice_url` (three consecutive live GETs proved it changes while all
+business fields remain identical; it is recorded but excluded from equality), and
+the read-only MIRROR of a linked record's reference
 (`salesorder.invoices[].reference_number` and
 `invoice.salesorders[].reference_number`). The mirror is replaced by a sentinel and
 then checked against a CLOSED set — that linked record's own fixed before or
@@ -963,8 +968,9 @@ still-forbidden broader scopes and, where relevant, proves the new scope is
 unreachable from that sibling tool. `zoho_invoice_revision_tool.py` and
 `zoho_sales_order_tool.py` themselves are byte-identical, and the revision tool's
 refusal of paid invoices is intact and asserted by a test here.
-Tests: 104 new (`test_zoho_historical_client_po_reference_tool.py`, 0 skipped),
-1,298 across the whole Zoho suite, all passing with 4 pre-existing environment
+Tests after the live secure-URL regression repair: 107 focused
+(`test_zoho_historical_client_po_reference_tool.py`, 0 skipped), 1,301 across the
+whole Zoho suite, all passing with 4 pre-existing environment
 skips (2 missing cached workbook, 2 symlink privilege). Coverage includes 26
 protected-field mutation classes, 16 re-signed plan mutations and 7 targeted
 weakening mutations (tolerant approval, widened ID set, skipped fingerprint,
@@ -982,3 +988,15 @@ holds the client PO as an attached document named
 `PurchaseOrder4500021643ESTIMATE-08577.pdf`, independently corroborating
 `4500021643`. Build result:
 `Dado\20_Working\historical_client_po_reference_tool_build_result.json`.
+
+LIVE INVOICE OUTCOME 2026-08-12: Rachad approved the six displayed immutable plans
+with exact `APPROVED`. The tool made one PUT per invoice and independently verified
+the live API Reference# plus a fresh rendered PDF caption `P.O.#`: INV-000014 ->
+`104662`; INV-000018 -> `PO5072`; INV-000023 -> `PO26078`; INV-000039 -> `2127`;
+INV-000043 and INV-000045 -> `4500021643`. All six locks are `verified`; every
+protected field, status, currency, total, balance, customer, tax, date, address and
+line identity/order stayed unchanged. The linked Sales Orders were read and proved
+unchanged but were not written. Exactly six Zoho business writes, zero Sales Order
+writes and zero emails. The plans are permanently replay-locked. Commit result:
+`Dado\20_Working\historical_client_po_six_invoice_commit_result_20260813.json`,
+SHA-256 `210dc268e7d069e462256dd19115ed7ce7df6863571f9fda4ff288718ddf013d`.

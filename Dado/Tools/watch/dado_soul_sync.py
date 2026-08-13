@@ -79,6 +79,41 @@ def append_receipt(action: str, evidence: str) -> None:
         pass
 
 
+def refusal_marker() -> Path:
+    """Beside the receipts log, so redirecting that redirects this too."""
+    return RECEIPTS.parent / "soul_sync_refusal_state.txt"
+
+
+def refusal_is_new(fingerprint: str) -> bool:
+    """One receipt per drift EPISODE, not one every five minutes.
+
+    The watchdog calls this every 5 minutes, so an unreconciled drift wrote 225
+    IDENTICAL receipts on 2026-08-12 and buried the day's real business receipts
+    - the same defect already fixed once in the Drive indexer. A CHANGED
+    fingerprint is a different episode and still reports.
+    """
+    marker = refusal_marker()
+    try:
+        if marker.read_text(encoding="utf-8") == fingerprint:
+            return False
+    except OSError:
+        pass
+    try:
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(fingerprint, encoding="utf-8")
+    except OSError:
+        pass  # A marker failure must never silence a real refusal.
+    return True
+
+
+def clear_refusal_marker() -> None:
+    """Drift is gone, so the next one is a new episode and reports again."""
+    try:
+        refusal_marker().unlink()
+    except OSError:
+        pass
+
+
 def write_live(live_path: Path, mirror_bytes: bytes, live_bytes: bytes) -> None:
     """Replace the live file atomically, preserving its own newline convention."""
     newline = "\r\n" if live_bytes.count(b"\r\n") else "\n"
@@ -104,6 +139,7 @@ def sync(mirror_path: Path, live_path: Path, *, dry_run: bool) -> int:
     mirror_bytes = mirror_path.read_bytes()
     live_bytes = live_path.read_bytes()
     if mirror_bytes == live_bytes:
+        clear_refusal_marker()
         return 0
 
     lost = lines_only_in_live(live_bytes, mirror_bytes)
@@ -113,8 +149,9 @@ def sync(mirror_path: Path, live_path: Path, *, dry_run: bool) -> int:
             "mirror does not, so copying would destroy them. Someone edited the live "
             "SOUL.md directly. Reconcile by hand; nothing was changed."
         )
-        print(message)
-        append_receipt("dado_soul_sync_refused_live_has_unmirrored_content", message)
+        print(message)  # Still printed every run: the exit code and log stay honest.
+        if refusal_is_new("\n".join(lost)):
+            append_receipt("dado_soul_sync_refused_live_has_unmirrored_content", message)
         return 1
 
     added = len(normalized_lines(mirror_bytes)) - len(normalized_lines(live_bytes))

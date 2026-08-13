@@ -89,6 +89,16 @@ class SoulSyncTests(unittest.TestCase):
             "dado_soul_sync_refused_live_has_unmirrored_content", self.receipt_actions()
         )
 
+    def test_an_unreconciled_refusal_reports_once_not_every_five_minutes(self) -> None:
+        # 2026-08-12: the watchdog calls this every 5 minutes, and one drift
+        # nobody had reconciled wrote 225 identical receipts, burying the day's
+        # real business receipts.
+        self.mirror.write_text(BASE, encoding="utf-8", newline="\n")
+        self.live.write_text(BASE + "Rule 3: live only.\n", encoding="utf-8", newline="\n")
+        for _ in range(4):
+            self.assertEqual(sync.sync(self.mirror, self.live, dry_run=False), 1)
+        self.assertEqual(len(self.receipt_actions()), 1)
+
     def test_it_refuses_a_changed_rule_rather_than_overwriting_it(self) -> None:
         # A modification is a deletion plus an insertion, so it must refuse too:
         # the tool cannot tell which side is the intended one.
