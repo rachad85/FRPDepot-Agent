@@ -207,6 +207,38 @@ Systems of record:
    Item 9 quantity 1, rate CAD 810.00, 10% discount, unchanged GST+QST, subtotal
    CAD 9,711.57, tax CAD 1,454.31 and total CAD 11,165.88. The only additional
    protected difference was that expected gross subtotal. Zero emails were sent.
+   — and, inside `zoho_customer_quote_tool.py`, the GENERAL in-place ESTIMATE
+   REVISION Rachad commissioned on 2026-08-13:
+   `stage-estimate-revision` / `commit-estimate-revision`. It exists because an
+   ordinary quote change must AMEND THE CUSTOMER'S OWN ESTIMATE, not create a
+   replacement. Unlike the two fixed corrections above it is reusable, and it is
+   still narrow. It may touch ONE existing estimate whose live status is EXACTLY
+   `draft` or `sent` — accepted, declined, invoiced, expired, void, deleted and
+   any unrecognised status are refused before any network call. The editable
+   surface is the header `reference_number`, `date`, `expiry_date`, `notes`,
+   `terms` and, per EXISTING line, `quantity`, `rate`, `discount`, `description`
+   and `tax_id`. The CUSTOMER IS PRESERVED AND CANNOT CHANGE, and so are the
+   estimate number, currency, exchange rate, template, salesperson, shipping
+   charge, adjustment, custom fields, attachments, conversion links and every
+   lifecycle/mail field. NO status field is sent at all. Every live line is
+   resent exactly once in live order with its own line_item_id and item_id, so
+   no line can be added, deleted, omitted, reordered, substituted or duplicated.
+   Every proposed value needs a nonblank explicit source; unstated values are
+   preserved. A percentage discount must be the exact string ("10%"); a nonzero
+   NUMBER is refused because Zoho reads it as a flat CAD amount, and a live bare
+   number whose discount_amount does not prove a percentage refuses the whole
+   revision at staging rather than guessing. Totals are recomputed independently
+   with Decimal half-up; a tax group or a rounding disagreement marks the tax
+   prediction `disclosed_uncertain` and that figure is then NOT asserted — only
+   the deterministic subtotal, line totals and the total identity are. Staging
+   is read-only; commit checks the exact unpadded uppercase `APPROVED` before the
+   vault, token and network, refuses drift for free before locking, locks before
+   ONE atomic PUT, attempts once, and verifies a fresh full read-back including a
+   byte-exact protected fingerprint. Nothing else is reachable: no create,
+   delete, send, mail, accept, decline, status, convert or attachment route, and
+   the tool has no mail transport. The scope stays `ZohoBooks.estimates.UPDATE`
+   and nothing wider. STATUS 2026-08-13: BUILT AND TESTED ONLY — no plan staged,
+   no plan approved, ZERO Zoho writes, ZERO emails.
    — and zoho_sales_order_tool.py (commissioned 2026-08-11 — ONE fixed
    transaction and no second one: create ONE NEW Zoho Books Sales Order in
    exactly Draft status for the EXISTING customer Structural Composites
@@ -380,6 +412,44 @@ Systems of record:
    rates CAD 97.00/CAD 297.00. The lock is `verified`; the plan is permanently
    replay-locked. ZERO duplicate items, ZERO order/invoice changes and ZERO
    emails.)
+   — and zoho_purchase_order_tool.py (commissioned 2026-08-13 — the NEW named
+   tool for PURCHASE ORDERS. It may create ONE NEW Zoho Books Purchase Order in
+   EXACTLY Draft status, ready for Rachad to review and send HIMSELF, and it
+   stops there. Two commands only: `stage-create --input` and
+   `commit --plan --approval`. The complete write surface is one verb and one
+   route, `POST /books/v3/purchaseorders`. There is no PUT, PATCH or DELETE
+   anywhere in the module and no route that could submit, approve, mark-issued,
+   receive, bill, pay, void, cancel, restatus, convert, attach to, template or
+   MAIL a purchase order; there is no browser path and no mail transport.
+   Zoho's own auto-numbering assigns the PO number and a caller cannot supply or
+   override it. Staging is GET-only over five bounded allowlisted read routes.
+   The vendor must ALREADY EXIST, be active and carry contact_type `vendor` with
+   the stated name — A CUSTOMER RECORD IS NEVER TREATED AS A VENDOR BY INFERENCE
+   — and every line must name an EXISTING ACTIVE Zoho item, so there are no
+   free-text lines and no vendor, item or tax can be created. The vendor's own
+   live currency is preserved; currency and exchange rate are never set. The
+   writable fields were PROVEN from a read-only walk of every live FRP Depot
+   purchase order on 2026-08-13, which is why `delivery_date` is written and
+   `expected_delivery_date` is refused; `terms` and line `description` are
+   accepted but every plan states that Zoho's acceptance of them is UNPROVEN and
+   a value Zoho ignores locks the plan rather than being reported as landed. A
+   bounded COMPLETE duplicate walk refuses a non-void purchase order for the same
+   vendor with a matching reference number, is repeated fresh immediately before
+   the write, and never infers a duplicate from a matching total. Approval is
+   exact unpadded uppercase `APPROVED`, checked before the vault and network; the
+   24-hour immutable plan is locked before ONE POST and attempted once, and the
+   created order is verified by a fresh full GET to be exactly `draft`, not
+   emailed, not submitted, not approved, not billed and not received.
+   *** IT IS DELIBERATELY NOT REVERSIBLE FROM HERE. *** There is no delete, void,
+   cancel, rollback, cleanup or retry route, so a created draft REMAINS if it
+   later turns out to be wrong; every plan says so before Rachad approves it.
+   `ZohoBooks.purchaseorders.CREATE` is the only new prepared scope; every
+   purchase-order UPDATE/DELETE/ALL, every Inventory purchase-order write, and
+   every receive/bill/payment scope is deliberately ABSENT, and the tool refuses
+   to run at all if the saved connection ever holds one. STATUS 2026-08-13: BUILT
+   AND TESTED ONLY. The CREATE scope is PREPARED BUT NOT LIVE, so staging refuses
+   today with the exact reauthorization steps. NO plan staged, ZERO purchase
+   orders created, ZERO emails.)
    — and only via their stage-then-commit flow:
    every write is staged as a plan file, shown to Rachad, and committed
    only after Rachad ANSWERS THAT PLAN in his own message with the
