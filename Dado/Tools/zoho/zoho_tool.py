@@ -100,7 +100,10 @@ ALLOWED_WRITE_SCOPES = (
     "ZohoBooks.estimates.UPDATE",
     "ZohoBooks.banking.CREATE",
     "ZohoBooks.banking.UPDATE",
-    # Existing-invoice revision through zoho_invoice_revision_tool.py ONLY.
+    # Existing-invoice revision through zoho_invoice_revision_tool.py ONLY, plus
+    # (2026-08-12) the six fixed historical paid invoices reachable ONLY through
+    # zoho_historical_client_po_reference_tool.py, where it can change exactly
+    # one field, reference_number, one record per approved plan.
     "ZohoBooks.invoices.UPDATE",
     # ONE draft-invoice creation through that same named tool ONLY. There is
     # deliberately no invoice DELETE, ALL or fullaccess scope, and no scope of
@@ -111,11 +114,22 @@ ALLOWED_WRITE_SCOPES = (
     # create_sct_po26330_draft_sales_order_with_attachment: the SCT PO26330
     # draft Sales Order and the upload of the original client PO to the order
     # that create just returned. Zoho's own numbering assigns the order number.
-    # There is deliberately no sales-order UPDATE, DELETE, ALL or fullaccess
-    # scope, no ZohoInventory sales-order write scope, and no scope of any kind
-    # that could confirm, void, restatus, convert, mail or delete an order or
-    # its attachment.
+    # There is deliberately no sales-order DELETE, ALL or fullaccess scope, no
+    # ZohoInventory sales-order write scope, and no scope of any kind that could
+    # confirm, void, restatus, convert, mail or delete an order or its
+    # attachment.
     "ZohoBooks.salesorders.CREATE",
+    # Commissioned 2026-08-12 for zoho_historical_client_po_reference_tool.py
+    # ONLY. Inside that tool it is reachable solely for the six fixed historical
+    # Sales Orders whose visible Reference# still shows an internal quote number
+    # instead of the customer's own PO (SO-00013/16/19/21/40/44), and it can
+    # change exactly one field, reference_number, one record per approved plan.
+    # Zoho's published OpenAPI states PUT /salesorders/{id} requires only
+    # customer_id, so that tool's order payload carries no line at all. No other
+    # module may use this scope, and there is deliberately no sales-order
+    # DELETE/ALL/fullaccess scope and nothing that can restatus, void, convert,
+    # mail or delete an order.
+    "ZohoBooks.salesorders.UPDATE",
     "ZohoInventory.items.CREATE",
     "ZohoInventory.items.UPDATE",
     # ONE fixed backing-ring merge through zoho_backing_ring_stock_tool.py ONLY:
@@ -394,7 +408,8 @@ def command_connect(_: argparse.Namespace) -> None:
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_scope_list(args: argparse.Namespace) -> None:
@@ -459,7 +474,8 @@ def command_reauthorize(_: argparse.Namespace) -> None:
     print("New granular read scopes: INCLUDED")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_check(_: argparse.Namespace) -> None:
@@ -511,7 +527,8 @@ def command_check(_: argparse.Namespace) -> None:
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, sales-order UPDATE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def build_parser() -> argparse.ArgumentParser:

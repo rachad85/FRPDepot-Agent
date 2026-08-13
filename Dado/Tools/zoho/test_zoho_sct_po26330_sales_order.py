@@ -597,7 +597,19 @@ class SurfaceTests(unittest.TestCase):
     def test_only_the_one_create_scope_is_used(self) -> None:
         self.assertEqual(so_tool.CREATE_SCOPE, "ZohoBooks.salesorders.CREATE")
         self.assertIn(so_tool.CREATE_SCOPE, zoho_tool.ALLOWED_WRITE_SCOPES)
+        # *** THIS COMMISSION'S GUARD NOW CONFLICTS WITH A LATER ONE, DELIBERATELY. ***
+        # On 2026-08-12 ZohoBooks.salesorders.UPDATE was commissioned for
+        # zoho_historical_client_po_reference_tool.py, so it IS in the prepared
+        # connector scope list. This module still lists it as forbidden FOR
+        # ITSELF and still refuses to run beside it -- unchanged and deliberate.
+        # The consequence is stated rather than hidden: once Rachad reauthorizes
+        # with the new scope, this SCT PO26330 tool refuses at staging until
+        # Rachad decides how to resolve it. Nothing here weakens either guard.
+        self.assertIn("ZohoBooks.salesorders.UPDATE", so_tool.FORBIDDEN_SALESORDER_SCOPES)
+        self.assertIn("ZohoBooks.salesorders.UPDATE", zoho_tool.SCOPES)
         for forbidden in so_tool.FORBIDDEN_SALESORDER_SCOPES:
+            if forbidden == "ZohoBooks.salesorders.UPDATE":
+                continue
             self.assertNotIn(forbidden, zoho_tool.SCOPES)
         self.assertTrue(all(scope.endswith(".READ") for scope in so_tool.REQUIRED_READ_SCOPES))
 

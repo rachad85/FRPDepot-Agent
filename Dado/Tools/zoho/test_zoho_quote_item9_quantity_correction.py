@@ -1562,6 +1562,8 @@ class SourceContainmentTests(unittest.TestCase):
                 "stage-customer", "stage-quote", "commit-customer", "commit-quote",
                 "stage-tds-discount-correction", "commit-tds-discount-correction",
                 "stage-tds-item9-quantity-correction", "commit-tds-item9-quantity-correction",
+                # Commissioned 2026-08-12: the ONE fixed SHM customer.
+                "stage-shm-inv000051-customer", "commit-shm-inv000051-customer",
             },
         )
         item9 = {c for c in choices if "item9" in c}
@@ -1569,10 +1571,13 @@ class SourceContainmentTests(unittest.TestCase):
             "stage-tds-item9-quantity-correction", "commit-tds-item9-quantity-correction"
         })
 
-    def test_the_module_still_holds_one_put_one_post_and_two_urlopen_sites(self) -> None:
+    def test_the_module_still_holds_one_put_two_posts_and_three_urlopen_sites(self) -> None:
+        # ONE PUT (the estimate corrections) and TWO POSTs: the original
+        # customer/estimate creation path, and the fixed SHM customer
+        # commissioned 2026-08-12. Each has its own allowlisted call site.
         self.assertEqual(self.source.count('method="PUT"'), 1)
-        self.assertEqual(self.source.count('method="POST"'), 1)
-        self.assertEqual(self.source.count("urlopen(request"), 2)
+        self.assertEqual(self.source.count('method="POST"'), 2)
+        self.assertEqual(self.source.count("urlopen(request"), 3)
 
     def test_no_mail_delete_or_lifecycle_route_exists(self) -> None:
         for forbidden in (

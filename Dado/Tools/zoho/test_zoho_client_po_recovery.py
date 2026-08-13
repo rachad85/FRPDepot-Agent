@@ -727,6 +727,17 @@ class TestAttachments(unittest.TestCase):
         self.assertEqual(row["evidence_source_type"], recovery.SOURCE_ATTACHMENT_LINKED)
         self.assertEqual(row["evidence_attachment_name"], "SCT PO 26330.pdf")
 
+    def test_attachment_filename_amount_is_redacted_before_reports(self):
+        record = recovery._evidence_record(
+            recovery.TIER_LINKED,
+            recovery.SOURCE_ATTACHMENT_LINKED,
+            make_message("m1"),
+            {"value": "2127", "excerpt": "PO:2127"},
+            "3304817439 July 162026 $208.75.pdf",
+        )
+        self.assertNotIn("$208.75", record["attachment_name"])
+        self.assertIn(recovery.REDACTION, record["attachment_name"])
+
     def test_frp_generated_attachment_is_not_customer_evidence(self):
         message = make_message("m1", sender=INTERNAL_ADDRESS, recipients=(CUSTOMER_ADDRESS,), has_attachments=True)
         graph = FakeGraph(

@@ -675,3 +675,310 @@ identical; no further Zoho call was made. The commit lock deliberately remains
 `indeterminate` / no-retry as the permanent attempt record. STATUS: LIVE RESULT
 EXACT AND STABLE; CAD 78,816.51 value added, ZERO quantity changes, ZERO item/rate,
 order/invoice/website writes and ZERO emails.
+
+---
+
+## 2026-08-12 — SHM customer prerequisite + INV-000051 fixed correction (PLAN A LANDED; PLAN B REJECTED / NO BUSINESS CHANGE)
+
+Rachad chose **"Yes — build/test the fixed customer + invoice correction flow"** on
+2026-08-12 after being shown all three live blockers. **BUILT AND TESTED ONLY: no
+plan staged, ZERO Zoho writes, ZERO emails, ZERO Outlook drafts, ZERO website
+writes, browser never contacted.** Every future write is a separate immutable plan
+needing Rachad's own later message containing exactly unpadded uppercase `APPROVED`.
+Dado never supplies that word and never infers it.
+
+WHY IT EXISTS: Elaine Iverson asked for INV-000051 to be billed to **SHM Marine
+Constructors JV** against client PO **0000031**, and Rachad ruled the sale is a
+customer collection from Brockville, so it carries **Ontario HST 13%** — not the
+GST 5% on both lines, and not the inconsistent tax printed on the PO. The general
+`invoice_revision` action refuses that record on two counts and **both refusals
+stay exactly as they are**: `ALLOWED_STATUSES` is still exactly `(draft, sent)`
+(this invoice is `overdue`), and it still refuses line changes on a sales-order-linked
+invoice (this one is linked to SO-00050). Tests assert both.
+
+**PLAN A — `zoho_customer_quote_tool.py`, `stage-shm-inv000051-customer` /
+`commit-shm-inv000051-customer`.** ONE `POST /books/v3/contacts`. No business
+parameter is accepted anywhere: the contact name, company, type, sub-type, the
+343A Bay St / Victoria / BC / V8T1P5 / Canada / 250-590-7072 billing address and
+the single primary Elaine Iverson contact are fixed in `SHM_CUSTOMER_PAYLOAD`, and
+the payload is compared byte-for-byte against that constant at the transport.
+No shipping address, website, tax registration, payment term or second contact is
+invented. Duplicate detection walks **every** contact unfiltered and proves
+completeness from Zoho's own `page_context.has_more_page`; a missing or non-boolean
+page context, a mismatched page number, or either ceiling is a REFUSAL, never a
+partial scan reported clean. The walk runs AGAIN fresh at commit, so a customer
+created between staging and approval still stops it. Fresh GET readback proves ID,
+name, company, customer/active state, CAD, every supplied billing field, the
+billing `address_id` and the exact primary contact and email.
+
+**PLAN B — `zoho_invoice_revision_tool.py`, `stage-inv000051-shm-correction` /
+`commit-inv000051-shm-correction`.** ONE `PUT /books/v3/invoices/96274000001559012`.
+Reachable changes are exactly five: `customer_id` → the live exact SHM record,
+`reference_number` `SO-00050` → `0000031`, `billing_address_id` → the address that
+SHM itself owns, and each line's `tax_id` GST `96274000000035512` → ON HST
+`96274000000035516`. Both lines are resent once, in order, carrying their own
+`line_item_id`, `item_id` and `salesorder_item_id`. Independent Decimal half-up
+target, computed per-line AND whole-subtotal and required to agree:
+**13,020.00 + 1,692.60 = 14,712.60**. Staging takes three bounded read-only rounds
+whose canonical fingerprints must agree across invoice, customer, addresses, ON HST
+and the linked order; the rehearsal digest is re-bound to a FRESH read at commit.
+
+*** THE SALES ORDER IS NEVER WRITTEN, AND THE ONE THING THAT DOES MOVE IS
+DISCLOSED. *** There is no sales-order write route, method or scope anywhere, and
+the saved connection holds no sales-order UPDATE scope at all. SO-00050's own
+business fields — customer, lines, quantities, rates, taxes, totals, status,
+invoiced_status, addresses, terms, custom fields — are proven byte-for-byte
+unchanged. BUT the live probe found the order carries a **read-only mirror of this
+invoice** (`salesorder.invoices`) holding the invoice's `reference_number`, `total`
+and `balance`. It necessarily reflects the approved change, so it is excluded from
+the fingerprint and verified by explicit rule instead: identity and status must not
+move, `reference_number` may become `0000031` and `total`/`balance` may become
+`14712.60`, and nothing else may move at all. Every plan carries that disclosure
+verbatim, and validation refuses a plan that drops it.
+
+*** FOUR LIVE FACTS THE READ-ONLY PROBE CHANGED, EACH ONE A BURNED PLAN AVOIDED. ***
+1. The invoice carries a **header-level mirror of the line tax** (`tax_id` /
+   `tax_name` / `tax_percentage`, live: GST / 5.0) that Zoho recomputes the moment
+   a line tax changes. Left inside the byte-exact fingerprint, a CORRECT write
+   would have read as "changed outside the approved fields" and locked the plan
+   `indeterminate` — the exact defect class that locked the 2026-08-11 backing-ring
+   valuation plan. It is exempt and asserted against ON HST 13% instead.
+2. **`is_emailed` is already TRUE** — the invoice was sent. "No email sent" is
+   therefore verified as `is_emailed` UNCHANGED plus `reminders_sent` UNCHANGED,
+   never as `is_emailed == false`, which would have failed on a correct write.
+   `reminders_sent` is deliberately kept INSIDE the fingerprint so a reminder
+   leaving Zoho is caught.
+3. **`billing_address_id` and `shipping_address_id` both read as null on a GET**;
+   the invoice exposes embedded address objects instead. The result is verified
+   against the fixed PO values AND against the SHM customer's own live billing
+   address — not by address ID.
+4. Invoice lines carry **live item stock mirrors** (`available_stock`,
+   `available_for_sale_stock`, `committed_stock`, `stock_on_hand`) on the two
+   backing-ring items Rachad has been adjusting. They move with unrelated inventory
+   activity, so they are excluded from the pre-write drift projection only; a test
+   pins that moving stock does not block staging.
+
+BLANK SHIPPING ADDRESS: staging refuses unless the invoice's shipping address is
+blank AND the SHM customer has none, so Zoho has nothing to copy. It is verified
+blank again after the write. Zoho's exact behaviour on a customer change cannot be
+proven without performing the write; the design refuses fail-closed beforehand and
+locks `indeterminate` / no-retry afterwards rather than papering over a surprise.
+
+*** PLAN A AND PLAN B ARE DELIBERATELY NOT ATOMIC. *** Plan A creates a real
+customer. If Plan B is then never staged, never approved, or fails, that customer
+REMAINS. Neither tool has any delete, deactivate, rename, merge, rollback, cleanup
+or retry route by design — a delete capability is far more dangerous than a spare
+customer record. Both plans, both staged summaries and both risk notes say so, and
+validation refuses a plan whose `risk.atomic_with_invoice_correction` /
+`risk.atomic_with_customer_plan` is not `false`.
+
+TWO DEFECTS FOUND AND FIXED DURING THE BUILD: (a) offline plan validation could not
+detect a hand-edited `put_payload`, since the payload is derived from live state —
+`validate_shm_plan` now re-derives the PUT body from the plan's OWN staged
+before-state plus the recorded customer and address IDs, so a tampered payload is
+refused when the plan is READ, not only later at the fresh preflight (five
+mutations pinned by tests); (b) the stable-state rehearsal was not re-bound at
+commit, so an approved plan could have carried a rehearsal of some other state past
+the write.
+
+FOUR PRE-EXISTING TESTS WERE UPDATED, NONE LOOSENED: they assert the modules' TOTAL
+write surface by exact count or exact set (parser choices, `method=` literals,
+`urlopen` sites), which a new commissioned action necessarily moves. Each was
+retightened to the new exact inventory — no inequality, no subset check, no skip —
+and every forbidden route, verb and mail marker they assert stays asserted. The
+invoice module still holds exactly ONE `urlopen` site: the new transport reuses
+`_perform`.
+
+Tests: the new `test_zoho_inv000051_shm_correction.py` runs 142 / 142 passed;
+existing invoice modules 156 / 156; existing customer-tool dependents 332 run,
+331 passed, 1 expected skip; the complete `test_zoho*.py` discovery suite
+**1,193 run, 1,189 passed, 4 expected skips, 0 failures, 0 errors**; `py_compile`
+clean on all 7 touched modules. A GET-only rehearsal against the live records
+accepted the real INV-000051 unchanged, confirmed ON HST `96274000000035516` Active
+at exactly 13%, confirmed SO-00050 and its 2 lines, derived 14,712.60, and
+confirmed the SHM customer was absent before Plan A. Machine-readable build result:
+`Dado\20_Working\inv000051_shm_correction_build_result.json`.
+
+**LIVE OUTCOME 2026-08-12.** Rachad separately approved Plan A, SHA-256
+`f72d47637f22e751c311d776f21e65b1451a5159e12d21c0e82643b7d2277d0d`.
+Its one POST created and fresh-read verified active customer **SHM Marine
+Constructors JV**, contact ID `96274000001569002`, owned billing address ID
+`96274000001569004`, and primary Elaine Iverson contact-person ID
+`96274000001569003`. The customer plan is verified and permanently replay-locked;
+zero email was sent. The customer remains regardless of the invoice outcome.
+
+Rachad then separately approved Plan B, SHA-256
+`c6b09bab21f52d911e2bf8301e79eb8d6a089fc7610a594ea7974d1884815ca4`.
+The lock was written before its one PUT. Zoho rejected that PUT with HTTP 400,
+code 4116: **"You cannot change the customer name when converting an Quote to a
+recurring invoice. Kindly create a new invoice instead."** The plan is permanently
+locked `indeterminate` / no-retry; no rollback or second attempt was made. Three
+fresh read-only reconciliation rounds then proved stable and byte-exact against
+the staged pre-write projections: **no invoice or sales-order business change
+landed**. INV-000051 remains Overdue under Ralmax, reference SO-00050, GST 5%,
+subtotal CAD 13,020.00, tax CAD 651.00 and total/balance CAD 13,671.00; both lines,
+quantities, rates, descriptions and links remain unchanged. SO-00050 and its invoice
+mirror also remain unchanged. Zero email was sent. Reconciliation artifact:
+`Dado\20_Working\inv000051_failed_put_reconciliation_20260812.json`, SHA-256
+`22f7301475f47c90bf93dade1733d8ab1a7fb94f13259c991546a75c5e5111da`.
+
+Zoho's stated route is a **new invoice**, not another customer-change retry. Any
+replacement Draft invoice is a separate action and needs its own newly staged plan
+and Rachad's own new exact `APPROVED`. The existing Overdue invoice is not voided,
+deleted, credited or restatused by any commissioned tool, and no such action may be
+inferred from either approval above.
+
+**REPLACEMENT DRAFT LIVE OUTCOME 2026-08-12.** After Zoho's code-4116 refusal,
+Rachad separately authorized preparation and then approved Draft-creation plan
+SHA-256 `4d4cbff46c882f8bcf5dede8fd3d0601bd2b5a9169a3431a9fe780f8e9144b43`.
+Its one POST created **INV-000053** (`96274000001569012`). The immediate verifier
+permanently locked the plan `indeterminate` / no-retry because Zoho's invoice GET
+returned no `billing_address_id`, even though its embedded billing-address object
+carried the exact approved address values. No retry, cleanup, delete, void, status
+change or email occurred. Three fresh read-only rounds then proved every approved
+business value exact: status Draft; customer SHM Marine Constructors JV; PO 0000031;
+date/due date 2026-08-10; billing 343A Bay St, Victoria BC V8T1P5, Canada,
+250-590-7072; two fixed item lines at 24 x CAD 97.00 and 36 x CAD 297.00, zero
+discount, preserved descriptions, ON HST 13%; subtotal CAD 13,020.00, tax
+CAD 1,692.60, total/balance CAD 14,712.60; zero shipping/adjustment/payment; and
+`is_emailed` false. INV-000051 and SO-00050 remained unchanged in all three reads.
+The only field varying across three additional full GETs was Zoho's regenerated
+`invoice_url`; after excluding only that non-business secure-payment URL, the full
+business projection hash was stable at
+`5fd318ee708e2a3eaccae525a66a708435e0c03808075e217c22e76e6acf6fdb`.
+The permanent plan lock remains `indeterminate` / no-retry as the attempt record.
+Final reconciliation artifact:
+`Dado\20_Working\shm_replacement_draft_final_reconciliation_20260812.json`,
+SHA-256 `6381e57b76d2ed0cf91b74a5b63110051c9004a69fc53d8c65aed67fadc2e4b6`.
+2026-08-12: `zoho_historical_client_po_reference_tool.py` commissioned after the
+read-only client-PO audit. Rachad selected "Yes - commission and build the
+reference-only repair tool". BUILT AND TESTED ONLY: zero plans staged, zero Zoho
+writes, zero commit locks, zero emails, zero drafts, no browser, and no record
+changed. The live vault was READ but never rewritten with a new grant.
+WHAT IT REPAIRS: six historical Sales Orders and their linked invoices display an
+INTERNAL quote or order number where the customer's own PO belongs. That field is
+NOT internal — Zoho prints it to the customer, as `Ref# :` on a Sales Order PDF
+and `P.O.# :` on an invoice PDF. Proven live read-only on 2026-08-12: SO-00013
+shows `Ref# : QT-000012` and INV-000014 shows `P.O.# : SO-00013`.
+Exactly TWELVE records are writable, one field (`reference_number`), one record
+per immutable 24-hour plan, each needing Rachad's own later byte-exact `APPROVED`:
+SO-00013 `96274000000317001` QT-000012 -> `104662`; INV-000014 `96274000000312107`
+SO-00013 -> `104662`; SO-00016 `96274000000409073` QT-000015 -> `PO5072`;
+INV-000018 `96274000000411047` SO-00016 -> `PO5072`; SO-00019 `96274000000466136`
+QT-000016 -> `PO5079`; SO-00021 `96274000000575001` QT-000017 -> `PO26078`;
+INV-000023 `96274000000579007` SO-00021 -> `PO26078`; SO-00040 `96274000001030001`
+QT-000022 -> `2127`; INV-000039 `96274000001052009` SO-00040 -> `2127`; SO-00044
+`96274000001140080` blank -> `4500021643`; INV-000043 `96274000001140095` and
+INV-000045 `96274000001212003` SO-00044 -> `4500021643`.
+*** THE PREFIXES ARE LOAD-BEARING. *** The recovery tool normalized two of these
+to bare digits (`5079`, `26078`). The externally evidenced spelling wins: the
+customer's own message or attached PO, and for PO5079 the already-correct linked
+invoice. A test asserts `5079` and `26078` are not among the targets.
+INV-000020 `96274000000552009` is a fixed VERIFICATION-ONLY dependency that must
+keep reading `PO5079`; `select_record` refuses it by name, `perform_put` refuses
+it by ID, and it is the evidence for SO-00019's spelling. The 15 ambiguous
+recoveries, 5 no-evidence cases and 18 additional invoice links are unreachable —
+a test walks the real audit and recovery artifacts and refuses every one of the
+40+ non-fixed IDs they contain, as well as INV-000051, INV-000053 and SO-00050.
+*** THE WRITE CONTRACT IS PROVEN FROM ZOHO'S OWN OPENAPI, NOT GUESSED. *** The
+published bundle (`openapi-all.zip`, SHA-256
+`109a2ee32299d8fbc3a65b52475eb1fc9875961f087d115ff7cfcbb7d7039a45`) is pinned file
+by file in `Dado\20_Working\historical_client_po_reference_contract\`
+(`sales-order.yml` `7202417f…e294ea4`, `invoices.yml` `83a757a8…da1828ed`) and
+re-hashed at every stage and commit. It states `PUT /salesorders/{id}` requires
+only `customer_id`, while `PUT /invoices/{id}` requires `customer_id` AND
+`line_items`. So an ORDER payload is exactly `{customer_id, reference_number}` and
+carries NO line at all — omission cannot reach a line because no line is sent —
+while an INVOICE payload resends every live line once, in original order, with its
+own `line_item_id` and `item_id`. Nothing is ever omitted in the hope that Zoho
+preserves it. That directory sits under the gitignored `20_Working`, so integrity
+does not depend on git: a mismatch fails closed at runtime.
+PROTECTED FINGERPRINT: every returned business field byte-for-byte. Exactly three
+things leave it, each then asserted by explicit rule — `reference_number` (the one
+changed field, checked in both directions), `last_modified_time` /
+`last_modified_by_id` (Zoho stamps these on any update, and they are reported in
+the receipt), and the read-only MIRROR of a linked record's reference
+(`salesorder.invoices[].reference_number` and
+`invoice.salesorders[].reference_number`). The mirror is replaced by a sentinel and
+then checked against a CLOSED set — that linked record's own fixed before or
+target, and for INV-000020 exactly `PO5079`. It is never simply excused: without
+this, committing an order plan would make an already-staged invoice plan of the
+same case read as drift.
+STAGING IS GET-ONLY: four artifact hashes, the Canadian API domain, the FRP Depot
+Books organization, the record-type update scope (refused BEFORE any read if it is
+not live, with the exact reauthorization steps — readiness is never faked), a
+THREE-READ stable rehearsal of the record plus every fixed dependency, the exact
+before reference (an already-correct record is reported and NOT staged; a third
+value is drift), and a bounded read-only fetch of the rendered customer document.
+If the caption cannot be read the plan is labelled NOT PROVEN and is never
+committable.
+COMMIT: byte-exact `APPROVED` checked before the vault is even opened; full plan
+re-validation including a re-signed-plan semantic check; a fresh full re-read that
+must match the complete protected fingerprint and the before reference, refusing
+FREE and BEFORE the lock; an exclusive `O_EXCL` lock taken immediately before the
+ONE `PUT`; then a fresh GET proving identity, linkage, the exact target, the
+unchanged fingerprint, unchanged line identity/order, unchanged totals and balance
+and every dependency; then a FRESH rendered PDF that must show the client PO under
+this document type's own caption. THE CAPTION ANCHOR MATTERS: a bare substring
+search would pass if the PO merely appeared in a note, and the old value often
+legitimately appears elsewhere (INV-000014's old reference IS its order number).
+Any failure at any point locks the plan `indeterminate` / `no_retry`; there is no
+retry, rollback or cleanup route. PLANS ARE INDEPENDENT AND NOT ATOMIC AS A BATCH
+— an earlier approved plan that succeeded stays applied if a later one fails, and
+every plan says so.
+CONTAINMENT, proven by AST tests: exactly ONE `urlopen` call site; the only
+constructible verbs are `GET` and `PUT`; exactly 12 writable routes; no
+POST/PATCH/DELETE; no mail/SMTP/Graph/Outlook transport; no browser/CDP/playwright
+path; no attachment, status, lifecycle, payment, credit or conversion route; no
+`subprocess`/`shutil`/`ctypes`/`socket` import; no generic ID, value, endpoint,
+payload, method or module argument; and no batch command. The only selector is a
+fixed `--record-key`. PDF text is read with PyMuPDF (`fitz`); Poppler is never
+invoked.
+SCOPES: `ZohoBooks.invoices.UPDATE` already existed. `ZohoBooks.salesorders.UPDATE`
+was added to the PREPARED list only — NOT YET LIVE (verified live 2026-08-12:
+invoices.UPDATE present, salesorders.UPDATE absent). Rachad must run
+PREPARE_DADO_ZOHO_ACCESS.bat, create the grant, then REAUTHORIZE_DADO_ZOHO.bat and
+CHECK_DADO_ZOHO.bat. No DELETE/ALL/fullaccess, status, send, void, approval,
+payment, package, shipment, conversion, attachment-write, customer-write,
+item-write or Inventory sales-order write scope was added. The three connector
+status lines that claimed sales-order UPDATE was ABSENT were corrected — a stale
+status line is the same false comfort this tree has been bitten by before.
+*** OPEN BLOCKER, RACHAD'S CALL, NOT SILENTLY RESOLVED. ***
+`zoho_sales_order_tool.py` lists `ZohoBooks.salesorders.UPDATE` in its own
+`FORBIDDEN_SALESORDER_SCOPES` and REFUSES TO RUN while the saved connection holds
+it. Once the new scope goes live, that SCT PO26330 tool refuses at staging. The
+brief forbids modifying that module, so its guard was left byte-identical rather
+than quietly relaxed, and
+`test_zoho_sct_po26330_sales_order.py::test_only_the_one_create_scope_is_used` now
+asserts the conflict so it is executable rather than hidden. NOTHING IS BLOCKED
+TODAY: that tool is itself BUILD AND TESTS ONLY with no plan staged, and its own
+CREATE scope is also prepared but not live. Three options: reauthorize and accept
+that it refuses until separately amended; amend its forbidden list under its own
+commission first; or repair the six INVOICES now, since invoices.UPDATE is already
+live, and defer the six orders.
+FIVE PRE-EXISTING TESTS WERE EXTENDED, NOT WEAKENED, because this commission
+superseded them — the same pattern the 2026-08-11 sales-order commission used.
+Each asserted salesorders.UPDATE was absent or uncommissioned; each now pins the
+still-forbidden broader scopes and, where relevant, proves the new scope is
+unreachable from that sibling tool. `zoho_invoice_revision_tool.py` and
+`zoho_sales_order_tool.py` themselves are byte-identical, and the revision tool's
+refusal of paid invoices is intact and asserted by a test here.
+Tests: 104 new (`test_zoho_historical_client_po_reference_tool.py`, 0 skipped),
+1,298 across the whole Zoho suite, all passing with 4 pre-existing environment
+skips (2 missing cached workbook, 2 symlink privilege). Coverage includes 26
+protected-field mutation classes, 16 re-signed plan mutations and 7 targeted
+weakening mutations (tolerant approval, widened ID set, skipped fingerprint,
+skipped rendered check, unlocked PUT, second attempt, payload widening at three
+independent gates), each caught.
+Bounded read-only rehearsal touched 17 Zoho GET endpoints across all thirteen
+records and four rendered PDFs; every ID, number, customer, status, currency and
+linkage matched the scope artifact. Disclosed rather than reported as zero POSTs:
+`refresh_access_token` POSTs to the Zoho accounts token endpoint, which is the
+standard credential refresh for any authenticated read and changes no business
+record. Findings worth keeping: SO-00044/INV-000043/INV-000045 are USD not CAD;
+SO-00044's `shipped_status` is `fulfilled` where the other five are `shipped`
+(both pinned per record); no record carries a system lock; and SO-00044 already
+holds the client PO as an attached document named
+`PurchaseOrder4500021643ESTIMATE-08577.pdf`, independently corroborating
+`4500021643`. Build result:
+`Dado\20_Working\historical_client_po_reference_tool_build_result.json`.

@@ -473,10 +473,10 @@ class CreateScopeTests(unittest.TestCase):
             "ZohoBooks.creditnotes.CREATE",
             "ZohoBooks.customerpayments.CREATE",
             # ZohoBooks.salesorders.CREATE was commissioned on 2026-08-11 for
-            # zoho_sales_order_tool.py, so it is no longer uncommissioned. Every
-            # BROADER sales-order scope is still refused, which is what this
-            # test is for.
-            "ZohoBooks.salesorders.UPDATE",
+            # zoho_sales_order_tool.py and .UPDATE on 2026-08-12 for
+            # zoho_historical_client_po_reference_tool.py, so neither is
+            # uncommissioned any more. Every BROADER sales-order scope is still
+            # refused, which is what this test is for.
             "ZohoBooks.salesorders.DELETE",
             "ZohoBooks.salesorders.ALL",
             "ZohoInventory.salesorders.CREATE",
@@ -1474,12 +1474,24 @@ class CreateNoSendSurfaceTests(unittest.TestCase):
             "billing_address_id", "shipping_address_id", "line_items",
         })
 
-    def test_the_cli_offers_only_stage_stage_create_and_commit(self) -> None:
+    def test_the_cli_offers_only_the_commissioned_stage_and_commit_pairs(self) -> None:
         parser = invoice_tool.build_parser()
         actions = [
             action for action in parser._subparsers._group_actions  # noqa: SLF001
         ]
-        self.assertEqual(sorted(actions[0].choices), ["commit", "stage", "stage-create"])
+        # The two generic actions, plus the fixed INV-000051 SHM correction
+        # commissioned 2026-08-12. There is still no send, void, delete,
+        # status or mail command of any kind.
+        self.assertEqual(
+            sorted(actions[0].choices),
+            [
+                "commit",
+                "commit-inv000051-shm-correction",
+                "stage",
+                "stage-create",
+                "stage-inv000051-shm-correction",
+            ],
+        )
 
 
 if __name__ == "__main__":

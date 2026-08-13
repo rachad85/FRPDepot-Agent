@@ -64,6 +64,15 @@ transport of any kind and exposes no generic write helper.
 Each write is issued exactly once: any failure, timeout or indeterminate
 result permanently locks the plan against retry, and no cleanup, deletion,
 status change or second attempt is ever made.
+
+Commissioned by Rachad on 2026-08-12, one further fixed action:
+- PUT /books/v3/invoices/96274000001559012 (INV-000051) to bill it to SHM
+  Marine Constructors JV against client PO 0000031 at Ontario HST 13%. It
+  changes the customer, the reference number, the billing address and each
+  line's tax_id -- nothing else -- and is pinned to that one invoice. The
+  general revision action above still refuses this record on both of its own
+  counts (status `overdue`, and line edits on a sales-order-linked invoice);
+  neither refusal is relaxed. See SHM_ACTION.
 """
 from __future__ import annotations
 
@@ -77,6 +86,7 @@ from pathlib import Path
 import re
 import secrets
 import sys
+import time
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
@@ -3522,6 +3532,1791 @@ def command_commit(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+# ===========================================================================
+# PLAN B -- the ONE fixed INV-000051 SHM correction
+#
+# Commissioned by Rachad on 2026-08-12. Elaine Iverson asked for INV-000051 to
+# be billed to SHM Marine Constructors JV against client PO 0000031, and Rachad
+# ruled the sale is a customer collection from FRP Depot's Brockville location,
+# so it carries Ontario HST 13% -- not the GST 5% currently on both lines, and
+# not the inconsistent tax printed on the PO itself.
+#
+# The general revision action above REFUSES this invoice on two independent
+# counts, and both refusals stay exactly as they are: it revises only a draft
+# or sent invoice (this one is `overdue`), and it refuses any line change on a
+# sales-order-linked invoice (this one is linked to SO-00050). This action is
+# the ONE narrow, separately-commissioned exception, pinned to that single
+# invoice, that single order and those five field changes.
+#
+# NOT ATOMIC WITH PLAN A. The SHM customer is created by a separate approved
+# plan in zoho_customer_quote_tool.py and REMAINS whether or not this ever runs.
+# ===========================================================================
+
+SHM_ACTION = "inv000051_shm_correction"
+SHM_SCHEMA_VERSION = 1
+SHM_INVOICE_ID = "96274000001559012"
+SHM_INVOICE_NUMBER = "INV-000051"
+SHM_INVOICE_STATUS = "overdue"
+SHM_PUT_PATH = f"/books/v3/invoices/{SHM_INVOICE_ID}"
+SHM_INVOICE_DATE = "2026-08-10"
+SHM_INVOICE_DUE_DATE = "2026-08-10"
+SHM_CURRENCY_CODE = "CAD"
+SHM_EXCHANGE_RATE = Decimal("1")
+
+SHM_OLD_CUSTOMER_ID = "96274000001525001"
+SHM_OLD_CUSTOMER_NAME = "Ralmax Group of Companies"
+SHM_OLD_REFERENCE = "SO-00050"
+SHM_NEW_REFERENCE = "0000031"
+SHM_CUSTOMER_NAME = "SHM Marine Constructors JV"
+SHM_PRIMARY_EMAIL = "elaineiverson@ralmax.com"
+
+SHM_SALESORDER_ID = "96274000001558003"
+SHM_SALESORDER_NUMBER = "SO-00050"
+
+SHM_OLD_TAX_ID = "96274000000035512"
+SHM_OLD_TAX_NAME = "GST"
+SHM_OLD_TAX_PERCENT = Decimal("5")
+SHM_NEW_TAX_ID = "96274000000035516"
+SHM_NEW_TAX_NAME = "ON HST"
+SHM_NEW_TAX_PERCENT = Decimal("13")
+
+# The two existing lines, in their exact live order. Quantity, rate, item and
+# both linkage IDs are fixed here; the correction changes ONLY each line's
+# tax_id. Nothing on a command line can reach any of it.
+SHM_LINES: tuple[dict[str, Any], ...] = (
+    {
+        "line_item_id": "96274000001559019",
+        "item_id": "96274000001518002",
+        "salesorder_item_id": "96274000001558006",
+        "name": 'FRP BACKING RING-4"/150PSI/D411',
+        "description": "4-inch 150 PSI FRP backing ring, DK411",
+        "quantity": Decimal("24"),
+        "rate": Decimal("97.00"),
+    },
+    {
+        "line_item_id": "96274000001559020",
+        "item_id": "96274000001518014",
+        "salesorder_item_id": "96274000001558007",
+        "name": 'FRP BACKING RING-10"/150PSI/D411',
+        "description": "10-inch 150 PSI FRP backing ring, DK411",
+        "quantity": Decimal("36"),
+        "rate": Decimal("297.00"),
+    },
+)
+
+SHM_OLD_SUB_TOTAL = Decimal("13020.00")
+SHM_OLD_TAX_TOTAL = Decimal("651.00")
+SHM_OLD_TOTAL = Decimal("13671.00")
+
+# The exact PO 0000031 bill-to. The SHM customer's own live billing address
+# must carry every one of these values or nothing is staged.
+SHM_PO_BILLING = {
+    "address": "343A Bay St",
+    "city": "Victoria",
+    "state": "BC",
+    "zip": "V8T1P5",
+    "country": "Canada",
+    "phone": "250-590-7072",
+}
+
+SHM_PO_DIR = ROOT / "Dado" / "20_Working" / "invoice_revision_po"
+SHM_SOURCE_FILES: tuple[dict[str, Any], ...] = (
+    {
+        "label": "client_po_pdf",
+        "path": SHM_PO_DIR / "SHM PO#0031_FRP Depots.pdf",
+        "bytes": 112548,
+        "sha256": "623c47693f0552fa267d7a5ace7650772447f2787822c4e0d3119019b9d2e08c",
+    },
+    {
+        "label": "client_po_text",
+        "path": SHM_PO_DIR / "SHM PO#0031_FRP Depots.pdf.txt",
+        "bytes": 1857,
+        "sha256": "cedc078afc6467f9819ee358a744febd0af0114fb032e5eff535bb74d25d2ee8",
+    },
+    {
+        "label": "live_preflight",
+        "path": ROOT / "Dado" / "20_Working" / "invoice_revision_live_preflight_20260812.json",
+        "bytes": 2538,
+        "sha256": "53b62f2623d482c929d6fad53ffc874c955b87a53497439de4b98f270449c671",
+    },
+)
+
+SHM_CONTACT_PER_PAGE = 200
+SHM_CONTACT_MAX_PAGES = 200
+SHM_CONTACT_MAX_ROWS = 40000
+
+SHM_REHEARSAL_OBSERVATIONS = 3
+SHM_REHEARSAL_INTERVAL_SECONDS = Decimal("2")
+SHM_REHEARSAL_MAX_SECONDS = Decimal("120")
+SHM_REHEARSAL_KEYS = frozenset({
+    "observations", "interval_seconds", "max_seconds", "elapsed_seconds",
+    "round_sha256", "observation_sha256", "stable",
+})
+
+# Live item stock, mirrored onto every invoice line by Zoho. It moves whenever
+# anyone adjusts inventory -- and Rachad has been adjusting these exact two
+# backing-ring items -- so it is excluded from the pre-write drift projection.
+# It is NOT an invoice field and nothing here can change it. (Post-write it is
+# moot: line_items leaves the protected fingerprint entirely and every line is
+# verified field by field instead.)
+SHM_LINE_STOCK_KEYS = frozenset({
+    "available_for_sale_stock", "available_stock", "committed_stock",
+    "stock_on_hand", "actual_available_for_sale_stock", "actual_available_stock",
+    "actual_committed_stock",
+})
+# Zoho's own reminder SCHEDULE. `reminders_sent` is deliberately NOT here: it
+# stays inside the fingerprint, so a reminder email leaving Zoho would be caught.
+SHM_REMINDER_SCHEDULE_KEYS = ("next_reminder_date", "next_reminder_date_formatted")
+# The header-level mirror of the line tax. Zoho recomputes all three the moment
+# a line tax changes -- proven live on this record, where they read GST / 5.0
+# while both lines carried GST. They leave the fingerprint and are then asserted
+# explicitly against ON HST 13%.
+SHM_HEADER_TAX_MIRROR_KEYS = ("tax_id", "tax_name", "tax_percentage")
+
+# The sales order's own read-only mirror of this invoice, and its modification
+# stamps. The SO's BUSINESS fields -- customer, lines, quantities, rates, taxes,
+# totals, status, invoiced_status, addresses, terms, custom fields -- all stay
+# inside the byte-for-byte fingerprint.
+SHM_SO_MIRROR_KEY = "invoices"
+SHM_SO_VOLATILE_KEYS = (
+    "salesorder_url", "last_modified_time", "last_modified_by_id", "updated_time",
+)
+
+SHM_RISK_NOTE = (
+    "ONE atomic PUT against the one existing invoice INV-000051. It is attempted "
+    "exactly once: any failure, timeout or indeterminate result permanently locks "
+    "this plan against retry, and no rollback, cleanup, second PUT or follow-up "
+    "write is ever made -- reconcile in Zoho by hand. This action never mails an "
+    "invoice and has no mail transport at all, never changes the invoice number, "
+    "currency, exchange rate or status, never adds, drops, reorders or substitutes "
+    "a line, and never writes the linked sales order. IT IS NOT ATOMIC WITH THE "
+    "SHM CUSTOMER PLAN: that customer is created by a separate approved plan and "
+    "remains in Zoho whether or not this correction ever runs."
+)
+SHM_SALESORDER_NOTE = (
+    "DELIBERATE AND APPROVED: after this PUT the invoice carries SHM Marine "
+    "Constructors JV, client PO 0000031 and Ontario HST 13%, while the linked "
+    "sales order SO-00050 keeps its original Ralmax customer, its QT-000028 "
+    "reference and its GST lines. That divergence is the approved exception, not "
+    "a hidden side effect. There is no sales-order write route, method or scope "
+    "anywhere in this action, and the saved Zoho connection holds no sales-order "
+    "UPDATE scope at all. The order's own read-only mirror of this invoice "
+    "(salesorder.invoices) will show the invoice's new reference number and new "
+    "total, because it mirrors the invoice; every one of the order's own business "
+    "fields is proven byte-for-byte unchanged."
+)
+
+SHM_PLAN_FIELDS = {
+    "schema_version", "tool", "action", "created_utc", "expires_utc", "nonce",
+    "approval_required", "origin", "organization", "risk", "source_evidence",
+    "live_evidence", "sha256",
+}
+SHM_EVIDENCE_FIELDS = {
+    "invoice", "customer", "salesorder", "tax", "changes", "lines", "totals",
+    "dependencies", "rehearsal", "put_endpoint", "put_payload",
+    "unprotected_keys", "salesorder_disclosure", "email_sent",
+}
+SHM_ALLOWED_PUT_KEYS = {
+    "customer_id", "invoice_number", "reference_number", "date", "due_date",
+    "billing_address_id", "line_items",
+}
+
+
+def monotonic_seconds() -> float:
+    return time.monotonic()
+
+
+def pause(seconds: float) -> None:
+    time.sleep(seconds)
+
+
+def shm_source_evidence() -> dict[str, Any]:
+    """The three fixed local sources, by exact byte size and exact digest."""
+    records: dict[str, Any] = {}
+    for entry in SHM_SOURCE_FILES:
+        path = Path(entry["path"])
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise InvoiceRevisionError(f"Source evidence is unreadable: {path}") from exc
+        if size != entry["bytes"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: source {entry['label']} is {size} bytes, not the fixed "
+                f"{entry['bytes']}. Nothing staged."
+            )
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError as exc:
+            raise InvoiceRevisionError(f"Source evidence is unreadable: {path}") from exc
+        if not secrets.compare_digest(digest, str(entry["sha256"])):
+            raise InvoiceRevisionError(
+                f"REFUSED: source {entry['label']} does not match its fixed SHA-256. Nothing staged."
+            )
+        records[str(entry["label"])] = {"path": str(path), "bytes": size, "sha256": digest}
+    return dict(sorted(records.items()))
+
+
+def get_salesorder(access_token: str, vault: dict[str, Any], salesorder_id: str) -> dict[str, Any]:
+    """READ ONLY. There is no sales-order write helper anywhere in this module."""
+    salesorder_id = positive_id(salesorder_id, "salesorder_id")
+    result = zoho_tool.api_get(
+        access_token,
+        str(vault["api_domain"]),
+        f"/books/v3/salesorders/{salesorder_id}?{_org_query(vault)}",
+    )
+    order = result.get("salesorder")
+    if not isinstance(order, dict) or str(order.get("salesorder_id") or "") != salesorder_id:
+        raise InvoiceRevisionError(f"Zoho sales order {salesorder_id} was not found.")
+    return json_copy(order)
+
+
+def shm_normalized_name(value: Any) -> str:
+    return " ".join(str(value if value is not None else "").split()).casefold()
+
+
+def shm_enumerate_contacts(
+    access_token: str, vault: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """EVERY contact in the organization, or a refusal. No sampling path.
+
+    The exact SHM customer is identified against the COMPLETE list, so a second
+    record carrying the same name cannot hide behind a filtered search and be
+    silently picked.
+    """
+    org_id = books_organization_id(vault)
+    rows: list[dict[str, Any]] = []
+    page = 1
+    pages = 0
+    while True:
+        if pages >= SHM_CONTACT_MAX_PAGES:
+            raise InvoiceRevisionError(
+                f"REFUSED: the contact list exceeded the {SHM_CONTACT_MAX_PAGES}-page ceiling, "
+                "so the exact customer could not be proven unique. Nothing staged."
+            )
+        query = urlencode(
+            {"organization_id": org_id, "page": page, "per_page": SHM_CONTACT_PER_PAGE}
+        )
+        result = zoho_tool.api_get(
+            access_token, str(vault["api_domain"]), f"/books/v3/contacts?{query}"
+        )
+        batch = result.get("contacts")
+        if not isinstance(batch, list):
+            raise InvoiceRevisionError(
+                f"REFUSED: Zoho returned no readable contact list on page {page}."
+            )
+        for row in batch:
+            if not isinstance(row, dict):
+                raise InvoiceRevisionError(
+                    f"REFUSED: contact page {page} carries an unreadable row."
+                )
+            rows.append(json_copy(row))
+            if len(rows) > SHM_CONTACT_MAX_ROWS:
+                raise InvoiceRevisionError(
+                    f"REFUSED: the contact list exceeded the {SHM_CONTACT_MAX_ROWS}-row ceiling."
+                )
+        pages += 1
+        context = result.get("page_context")
+        if not isinstance(context, dict):
+            raise InvoiceRevisionError(
+                f"REFUSED: Zoho returned no page context on contact page {page}, so the walk "
+                "cannot be proven complete."
+            )
+        has_more = context.get("has_more_page")
+        if not isinstance(has_more, bool):
+            raise InvoiceRevisionError(
+                f"REFUSED: Zoho did not state has_more_page on contact page {page}."
+            )
+        try:
+            reported_page = int(context.get("page"))
+        except (TypeError, ValueError) as exc:
+            raise InvoiceRevisionError(
+                f"REFUSED: Zoho returned an unreadable page number on contact page {page}."
+            ) from exc
+        if reported_page != page:
+            raise InvoiceRevisionError(
+                f"REFUSED: Zoho answered contact page {reported_page} when page {page} was asked for."
+            )
+        if not has_more:
+            break
+        page += 1
+    return rows, {
+        "pages": pages,
+        "per_page": SHM_CONTACT_PER_PAGE,
+        "enumerated": len(rows),
+        "filtered": False,
+        "complete": True,
+    }
+
+
+def shm_locate_customer(
+    rows: list[dict[str, Any]], totals: dict[str, Any]
+) -> tuple[str, dict[str, Any]]:
+    """Exactly ONE active customer named SHM Marine Constructors JV, or refuse."""
+    target = shm_normalized_name(SHM_CUSTOMER_NAME)
+    matches = [
+        row for row in rows
+        if shm_normalized_name(row.get("contact_name")) == target
+    ]
+    scan = dict(totals)
+    scan.update(
+        {
+            "target_name": SHM_CUSTOMER_NAME,
+            "exact_match_count": len(matches),
+            "exact_match_ids": sorted(str(row.get("contact_id") or "") for row in matches),
+        }
+    )
+    if not matches:
+        raise InvoiceRevisionError(
+            f"REFUSED: no customer named {SHM_CUSTOMER_NAME!r} exists in this organization. "
+            "Stage and commit the SHM customer plan in zoho_customer_quote_tool.py first. "
+            "Nothing staged."
+        )
+    if len(matches) > 1:
+        raise InvoiceRevisionError(
+            f"REFUSED: {len(matches)} customers carry the exact name {SHM_CUSTOMER_NAME!r} "
+            f"({', '.join(scan['exact_match_ids'])}). This correction will not guess which one. "
+            "Nothing staged."
+        )
+    return positive_id(matches[0].get("contact_id"), "SHM customer contact_id"), scan
+
+
+def shm_blank_address(address: Any) -> bool:
+    if address in (None, {}):
+        return True
+    if not isinstance(address, dict):
+        return False
+    return not any(
+        str(value or "").strip()
+        for key, value in address.items()
+        if key != "address_id"
+    )
+
+
+def shm_customer_evidence(
+    contact: dict[str, Any], addresses: list[dict[str, Any]], scan: dict[str, Any]
+) -> dict[str, Any]:
+    """The exact SHM record, its own billing address, and its Elaine contact."""
+    customer_id = positive_id(contact.get("contact_id"), "SHM customer contact_id")
+    if shm_normalized_name(contact.get("contact_name")) != shm_normalized_name(SHM_CUSTOMER_NAME):
+        raise InvoiceRevisionError(
+            f"REFUSED: customer {customer_id} is not {SHM_CUSTOMER_NAME!r}."
+        )
+    if str(contact.get("contact_type") or "") != "customer":
+        raise InvoiceRevisionError(f"REFUSED: contact {customer_id} is not a customer record.")
+    if str(contact.get("status") or "") != "active":
+        raise InvoiceRevisionError(
+            f"REFUSED: customer {customer_id} is "
+            f"{str(contact.get('status') or 'unknown')!r}, not active."
+        )
+    currency = str(contact.get("currency_code") or "")
+    if currency != SHM_CURRENCY_CODE:
+        raise InvoiceRevisionError(
+            f"REFUSED: customer {customer_id} bills in {currency or 'an unknown currency'}, not "
+            f"{SHM_CURRENCY_CODE}. This correction never changes an invoice's currency."
+        )
+    billing = contact.get("billing_address")
+    if not isinstance(billing, dict):
+        raise InvoiceRevisionError(f"REFUSED: customer {customer_id} has no billing address.")
+    for key, want in sorted(SHM_PO_BILLING.items()):
+        actual = billing.get(key)
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"REFUSED: customer {customer_id} billing {key} is {actual!r}, not the client PO "
+                f"value {want!r}. Nothing staged."
+            )
+    billing_address_id = positive_id(
+        billing.get("address_id"), "SHM customer billing address_id"
+    )
+    index = address_index(addresses, contact)
+    owned = owned_address(
+        billing_address_id, index, customer_id, "the SHM billing address"
+    )
+    if not shm_blank_address(contact.get("shipping_address")):
+        raise InvoiceRevisionError(
+            f"REFUSED: customer {customer_id} carries a shipping address. This correction "
+            "requires the invoice's shipping address to stay blank, and Zoho copies the "
+            "customer's. Nothing staged."
+        )
+    persons = contact.get("contact_persons")
+    if not isinstance(persons, list) or not persons:
+        raise InvoiceRevisionError(f"REFUSED: customer {customer_id} has no contact person.")
+    primary = [
+        person for person in persons
+        if isinstance(person, dict) and person.get("is_primary_contact") is True
+    ]
+    if len(primary) != 1:
+        raise InvoiceRevisionError(
+            f"REFUSED: customer {customer_id} does not have exactly one primary contact."
+        )
+    email = str(primary[0].get("email") or "")
+    if email.casefold() != SHM_PRIMARY_EMAIL.casefold():
+        raise InvoiceRevisionError(
+            f"REFUSED: the SHM primary contact email is {email!r}, not the verified "
+            f"{SHM_PRIMARY_EMAIL!r}. Nothing staged."
+        )
+    return {
+        "customer_id": customer_id,
+        "customer_name": str(contact.get("contact_name") or ""),
+        "company_name": str(contact.get("company_name") or ""),
+        "status": str(contact.get("status") or ""),
+        "contact_type": str(contact.get("contact_type") or ""),
+        "currency_code": currency,
+        "billing_address_id": billing_address_id,
+        "billing_address": json_copy(owned),
+        "contact_billing_address": json_copy(billing),
+        "shipping_address_blank": True,
+        "primary_contact_person_id": str(primary[0].get("contact_person_id") or ""),
+        "primary_contact_email": email,
+        "duplicate_scan": json_copy(scan),
+    }
+
+
+def shm_tax_evidence(taxes: list[dict[str, Any]]) -> dict[str, Any]:
+    """The ON HST record, proven active at exactly 13%."""
+    index = tax_index(taxes)
+    record = index.get(SHM_NEW_TAX_ID)
+    if record is None:
+        raise InvoiceRevisionError(
+            f"REFUSED: tax {SHM_NEW_TAX_ID} ({SHM_NEW_TAX_NAME}) does not exist in this "
+            "organization. Nothing staged."
+        )
+    name = str(record.get("tax_name") or "")
+    if name != SHM_NEW_TAX_NAME:
+        raise InvoiceRevisionError(
+            f"REFUSED: tax {SHM_NEW_TAX_ID} is named {name!r}, not {SHM_NEW_TAX_NAME!r}."
+        )
+    percentage = live_number(record.get("tax_percentage"), "ON HST tax_percentage")
+    if percentage != SHM_NEW_TAX_PERCENT:
+        raise InvoiceRevisionError(
+            f"REFUSED: {SHM_NEW_TAX_NAME} is {percentage}%, not exactly "
+            f"{SHM_NEW_TAX_PERCENT}%. Nothing staged."
+        )
+    status = str(record.get("status") or "")
+    if status.casefold() != "active":
+        raise InvoiceRevisionError(
+            f"REFUSED: {SHM_NEW_TAX_NAME} is {status or 'unknown'}, not Active."
+        )
+    return {
+        "tax_id": SHM_NEW_TAX_ID,
+        "tax_name": name,
+        "tax_percentage": format(percentage, "f"),
+        "status": status,
+        "record": json_copy(record),
+    }
+
+
+def shm_dependency_state(invoice: dict[str, Any]) -> dict[str, Any]:
+    """The overdue-only precondition set for this ONE invoice.
+
+    Deliberately separate from dependency_state(): the general action still
+    refuses every status outside draft/sent, and nothing here relaxes it. This
+    one accepts `overdue` and ONLY `overdue`, because that is the derived
+    current state of this exact already-sent invoice and it must stay that way.
+    """
+    status = clean_text(invoice.get("status"), "invoice status", 32)
+    if status != SHM_INVOICE_STATUS:
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice status is {status!r}. This correction is commissioned for "
+            f"{SHM_INVOICE_NUMBER} at exactly {SHM_INVOICE_STATUS!r}, and it preserves that "
+            "status unchanged. It cannot void an invoice, mark it draft, sent or paid."
+        )
+    total = live_number(invoice.get("total"), "invoice total")
+    balance = live_number(invoice.get("balance"), "invoice balance")
+    payment_made = _zero(invoice.get("payment_made"), "invoice payment_made")
+    credits_applied = _zero(invoice.get("credits_applied"), "invoice credits_applied")
+    write_off = _zero(invoice.get("write_off_amount"), "invoice write_off_amount")
+    for label, amount in (
+        ("payments", payment_made),
+        ("applied credits", credits_applied),
+        ("a write-off", write_off),
+    ):
+        if amount != 0:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice carries {amount} in {label}. This correction is unsafe."
+            )
+    if balance != total:
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice balance {balance} does not equal its total {total}."
+        )
+    dependent_lists = {}
+    for key in ("payments", "credits", "creditnotes", "applied_credits", "packages", "shipments"):
+        value = invoice.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, list):
+            raise InvoiceRevisionError(f"REFUSED: invoice field {key} has an unexpected shape.")
+        if value:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice has {len(value)} linked {key} record(s)."
+            )
+        dependent_lists[key] = 0
+    if str(invoice.get("recurring_invoice_id") or "").strip():
+        raise InvoiceRevisionError(
+            "REFUSED: this invoice belongs to a recurring profile."
+        )
+    shipped = str(invoice.get("shipping_status") or invoice.get("shipped_status") or "").strip()
+    if shipped and shipped.casefold() not in ("", "not_shipped", "pending"):
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice shipping status is {shipped!r}; packages or shipments exist."
+        )
+    return {
+        "status": status,
+        "total": money_text(total),
+        "balance": money_text(balance),
+        "payment_made": money_text(payment_made),
+        "credits_applied": money_text(credits_applied),
+        "write_off_amount": money_text(write_off),
+        "empty_dependent_lists": dict(sorted(dependent_lists.items())),
+        "recurring_invoice_id": "",
+        "shipping_status": shipped,
+        "reminders_sent": int(live_number(invoice.get("reminders_sent") or 0, "reminders_sent")),
+        "is_emailed": invoice.get("is_emailed"),
+    }
+
+
+def shm_invoice_state(invoice: dict[str, Any]) -> dict[str, Any]:
+    """The pre-write drift projection: everything that must hold still."""
+    if not isinstance(invoice, dict):
+        raise InvoiceRevisionError("Invoice state must be an object.")
+    exempt = set(VOLATILE_FIELDS) | set(DUE_DERIVED_FIELDS) | set(SHM_REMINDER_SCHEDULE_KEYS)
+    state: dict[str, Any] = {}
+    for key, value in invoice.items():
+        if key in exempt:
+            continue
+        if key == "line_items":
+            lines = []
+            for line in value if isinstance(value, list) else []:
+                if not isinstance(line, dict):
+                    raise InvoiceRevisionError("Live invoice line is not an object.")
+                lines.append(
+                    {
+                        name: json_copy(item)
+                        for name, item in line.items()
+                        if name not in SHM_LINE_STOCK_KEYS
+                    }
+                )
+            state[key] = lines
+            continue
+        state[key] = json_copy(value)
+    return state
+
+
+def shm_salesorder_protected(order: dict[str, Any]) -> dict[str, Any]:
+    """Every business field of SO-00050. Excludes only its invoice mirror."""
+    if not isinstance(order, dict):
+        raise InvoiceRevisionError("Sales order state must be an object.")
+    exempt = set(SHM_SO_VOLATILE_KEYS) | {SHM_SO_MIRROR_KEY}
+    return {key: json_copy(value) for key, value in order.items() if key not in exempt}
+
+
+def shm_salesorder_mirror(order: dict[str, Any]) -> list[dict[str, Any]]:
+    mirror = order.get(SHM_SO_MIRROR_KEY)
+    if not isinstance(mirror, list):
+        raise InvoiceRevisionError(
+            "REFUSED: the linked sales order carries no readable invoice mirror."
+        )
+    return [json_copy(entry) for entry in mirror]
+
+
+def validate_shm_salesorder(order: dict[str, Any]) -> dict[str, Any]:
+    """The fixed identity and every business fact of the linked order."""
+    order_id = positive_id(order.get("salesorder_id"), "salesorder_id")
+    if order_id != SHM_SALESORDER_ID:
+        raise InvoiceRevisionError(
+            f"REFUSED: the linked sales order is {order_id}, not the fixed {SHM_SALESORDER_ID}."
+        )
+    number = str(order.get("salesorder_number") or "")
+    if number != SHM_SALESORDER_NUMBER:
+        raise InvoiceRevisionError(
+            f"REFUSED: the linked sales order is {number!r}, not {SHM_SALESORDER_NUMBER!r}."
+        )
+    customer_id = str(order.get("customer_id") or "")
+    if customer_id != SHM_OLD_CUSTOMER_ID:
+        raise InvoiceRevisionError(
+            f"REFUSED: sales order {number} belongs to customer {customer_id}, not the expected "
+            f"{SHM_OLD_CUSTOMER_ID}."
+        )
+    lines = order.get("line_items")
+    if not isinstance(lines, list) or len(lines) != len(SHM_LINES):
+        raise InvoiceRevisionError(
+            f"REFUSED: sales order {number} does not carry the expected {len(SHM_LINES)} lines."
+        )
+    for index, (line, fixed) in enumerate(zip(lines, SHM_LINES), start=1):
+        if not isinstance(line, dict):
+            raise InvoiceRevisionError(f"REFUSED: sales order line {index} is not an object.")
+        if str(line.get("line_item_id") or "") != fixed["salesorder_item_id"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: sales order line {index} is not the expected linked line "
+                f"{fixed['salesorder_item_id']}."
+            )
+        if str(line.get("item_id") or "") != fixed["item_id"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: sales order line {index} names item {line.get('item_id')!r}, not "
+                f"{fixed['item_id']!r}."
+            )
+        if live_number(line.get("quantity"), f"sales order line {index} quantity") != fixed["quantity"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: sales order line {index} quantity is not {fixed['quantity']}."
+            )
+        if live_number(line.get("rate"), f"sales order line {index} rate") != fixed["rate"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: sales order line {index} rate is not {fixed['rate']}."
+            )
+        if str(line.get("tax_id") or "") != SHM_OLD_TAX_ID:
+            raise InvoiceRevisionError(
+                f"REFUSED: sales order line {index} does not carry the expected historical tax "
+                f"{SHM_OLD_TAX_ID}. This correction never touches the order."
+            )
+    protected = shm_salesorder_protected(order)
+    mirror = shm_salesorder_mirror(order)
+    entries = [
+        entry for entry in mirror
+        if isinstance(entry, dict) and str(entry.get("invoice_id") or "") == SHM_INVOICE_ID
+    ]
+    if len(entries) != 1:
+        raise InvoiceRevisionError(
+            f"REFUSED: sales order {number} does not mirror {SHM_INVOICE_NUMBER} exactly once."
+        )
+    return {
+        "salesorder_id": order_id,
+        "salesorder_number": number,
+        "customer_id": customer_id,
+        "status": str(order.get("status") or ""),
+        "invoiced_status": str(order.get("invoiced_status") or ""),
+        "order_status": str(order.get("order_status") or ""),
+        "line_count": len(lines),
+        "protected_state": protected,
+        "protected_state_sha256": digest_for(protected),
+        "invoice_mirror": mirror,
+        "invoice_mirror_sha256": digest_for(mirror),
+        "write_route_exists": False,
+    }
+
+
+def validate_shm_live_invoice(invoice: dict[str, Any]) -> list[dict[str, Any]]:
+    """Refuse unless the invoice begins at EXACTLY the commissioned state."""
+    invoice_id = positive_id(invoice.get("invoice_id"), "invoice_id")
+    if invoice_id != SHM_INVOICE_ID:
+        raise InvoiceRevisionError(
+            f"REFUSED: this correction is commissioned for invoice {SHM_INVOICE_ID} and nothing "
+            f"else; {invoice_id} is not it."
+        )
+    if str(invoice.get("invoice_number") or "") != SHM_INVOICE_NUMBER:
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice {invoice_id} is not {SHM_INVOICE_NUMBER}."
+        )
+    for field, want in (
+        ("customer_id", SHM_OLD_CUSTOMER_ID),
+        ("reference_number", SHM_OLD_REFERENCE),
+        ("date", SHM_INVOICE_DATE),
+        ("due_date", SHM_INVOICE_DUE_DATE),
+        ("currency_code", SHM_CURRENCY_CODE),
+        ("salesorder_id", SHM_SALESORDER_ID),
+        ("salesorder_number", SHM_SALESORDER_NUMBER),
+    ):
+        actual = str(invoice.get(field) or "")
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice {field} is {actual!r}, not the expected starting value "
+                f"{want!r}. Nothing staged."
+            )
+    if shm_normalized_name(invoice.get("customer_name")) != shm_normalized_name(
+        SHM_OLD_CUSTOMER_NAME
+    ):
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice customer is {invoice.get('customer_name')!r}, not the expected "
+            f"{SHM_OLD_CUSTOMER_NAME!r}."
+        )
+    if live_number(invoice.get("exchange_rate"), "exchange_rate") != SHM_EXCHANGE_RATE:
+        raise InvoiceRevisionError("REFUSED: the invoice exchange rate is not exactly 1.")
+    if not shm_blank_address(invoice.get("shipping_address")):
+        raise InvoiceRevisionError(
+            "REFUSED: the invoice already carries a shipping address. This correction requires it "
+            "to be blank before and after. Nothing staged."
+        )
+    for field, want in (
+        ("sub_total", SHM_OLD_SUB_TOTAL),
+        ("tax_total", SHM_OLD_TAX_TOTAL),
+        ("total", SHM_OLD_TOTAL),
+        ("balance", SHM_OLD_TOTAL),
+    ):
+        actual = live_number(invoice.get(field), f"invoice {field}")
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice {field} is {actual}, not the expected starting {want}."
+            )
+    lines = live_lines(invoice)
+    if len(lines) != len(SHM_LINES):
+        raise InvoiceRevisionError(
+            f"REFUSED: invoice carries {len(lines)} lines, not the fixed {len(SHM_LINES)}."
+        )
+    for index, (line, fixed) in enumerate(zip(lines, SHM_LINES), start=1):
+        for field in ("line_item_id", "item_id", "salesorder_item_id"):
+            actual = str(line.get(field) or "")
+            if actual != fixed[field]:
+                raise InvoiceRevisionError(
+                    f"REFUSED: invoice line {index} {field} is {actual!r}, not the fixed "
+                    f"{fixed[field]!r}. Nothing staged."
+                )
+        if str(line.get("name") or "") != fixed["name"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} item is {line.get('name')!r}, not "
+                f"{fixed['name']!r}."
+            )
+        if str(line.get("description") or "") != fixed["description"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} description is {line.get('description')!r}, not "
+                f"{fixed['description']!r}."
+            )
+        if live_number(line.get("quantity"), f"line {index} quantity") != fixed["quantity"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} quantity is not the fixed {fixed['quantity']}."
+            )
+        if live_number(line.get("rate"), f"line {index} rate") != fixed["rate"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} rate is not the fixed {fixed['rate']}."
+            )
+        if _zero(line.get("discount"), f"line {index} discount") != 0:
+            raise InvoiceRevisionError(f"REFUSED: invoice line {index} carries a discount.")
+        if str(line.get("tax_id") or "") != SHM_OLD_TAX_ID:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} tax is {line.get('tax_id')!r}, not the expected "
+                f"starting {SHM_OLD_TAX_NAME} {SHM_OLD_TAX_ID!r}."
+            )
+        if live_number(
+            line.get("tax_percentage"), f"line {index} tax_percentage"
+        ) != SHM_OLD_TAX_PERCENT:
+            raise InvoiceRevisionError(
+                f"REFUSED: invoice line {index} is not at the expected starting "
+                f"{SHM_OLD_TAX_PERCENT}%."
+            )
+    return lines
+
+
+def shm_expected_totals() -> dict[str, str]:
+    """Independent Decimal half-up derivation. Per-line AND whole-subtotal."""
+    subtotal = Decimal("0")
+    per_line: list[Decimal] = []
+    line_tax_total = Decimal("0")
+    for fixed in SHM_LINES:
+        gross = (fixed["quantity"] * fixed["rate"]).quantize(CENT, rounding=ROUND_HALF_UP)
+        per_line.append(gross)
+        subtotal += gross
+        line_tax_total += (gross * SHM_NEW_TAX_PERCENT / Decimal(100)).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+    subtotal = subtotal.quantize(CENT, rounding=ROUND_HALF_UP)
+    whole_tax = (subtotal * SHM_NEW_TAX_PERCENT / Decimal(100)).quantize(
+        CENT, rounding=ROUND_HALF_UP
+    )
+    if line_tax_total != whole_tax:
+        raise InvoiceRevisionError(
+            f"REFUSED: the per-line tax {line_tax_total} and the whole-subtotal tax {whole_tax} "
+            "disagree, so the corrected total is not deterministic. Nothing staged."
+        )
+    if subtotal != SHM_OLD_SUB_TOTAL:
+        raise InvoiceRevisionError(
+            f"REFUSED: the derived subtotal {subtotal} is not the fixed {SHM_OLD_SUB_TOTAL}."
+        )
+    total = (subtotal + whole_tax).quantize(CENT, rounding=ROUND_HALF_UP)
+    return {
+        "sub_total": money_text(subtotal),
+        "line_totals": [money_text(value) for value in per_line],
+        "tax_percentage": format(SHM_NEW_TAX_PERCENT, "f"),
+        "tax_total": money_text(whole_tax),
+        "tax_total_per_line_sum": money_text(line_tax_total),
+        "total": money_text(total),
+        "balance": money_text(total),
+        "discount_total": money_text(Decimal("0")),
+        "shipping_charge": money_text(Decimal("0")),
+        "adjustment": money_text(Decimal("0")),
+    }
+
+
+def shm_put_payload(
+    invoice: dict[str, Any],
+    lines: list[dict[str, Any]],
+    customer_id: str,
+    billing_address_id: str,
+) -> dict[str, Any]:
+    """The complete PUT body. Both lines resent in order; only tax_id moves.
+
+    shipping_address_id is deliberately ABSENT: there is no shipping address to
+    point at, the SHM customer has none for Zoho to copy, and the read-back
+    proves the invoice's stays blank.
+    """
+    payload_lines: list[dict[str, Any]] = []
+    for line, fixed in zip(lines, SHM_LINES):
+        entry: dict[str, Any] = {}
+        for key in LINE_PUT_KEYS:
+            if key in line:
+                entry[key] = json_copy(line[key])
+        entry["line_item_id"] = fixed["line_item_id"]
+        entry["item_id"] = fixed["item_id"]
+        entry["salesorder_item_id"] = fixed["salesorder_item_id"]
+        entry["tax_id"] = SHM_NEW_TAX_ID
+        payload_lines.append(entry)
+    return {
+        "customer_id": customer_id,
+        "invoice_number": SHM_INVOICE_NUMBER,
+        "reference_number": SHM_NEW_REFERENCE,
+        "date": SHM_INVOICE_DATE,
+        "due_date": SHM_INVOICE_DUE_DATE,
+        "billing_address_id": billing_address_id,
+        "line_items": payload_lines,
+    }
+
+
+def shm_unprotected_keys() -> list[str]:
+    """Exactly which invoice keys leave the byte-exact fingerprint, and why.
+
+    Every one of them is then verified by an explicit rule below, so nothing is
+    merely excused. reminders_sent is deliberately NOT here: it stays inside the
+    fingerprint, so a reminder email leaving Zoho would be caught.
+    """
+    keys = set(VOLATILE_FIELDS)
+    keys.update(CUSTOMER_LINKED_FIELDS)
+    keys.add("reference_number")
+    keys.update(DERIVED_TOTAL_FIELDS)
+    keys.update(GROSS_SUBTOTAL_FIELDS)
+    keys.update(BCY_TOTAL_FIELDS)
+    keys.update(DUE_DERIVED_FIELDS)
+    keys.update(SHM_REMINDER_SCHEDULE_KEYS)
+    keys.update(SHM_HEADER_TAX_MIRROR_KEYS)
+    keys.add("line_items")
+    return sorted(keys)
+
+
+def shm_round_state(
+    invoice: dict[str, Any],
+    contact: dict[str, Any],
+    addresses: list[dict[str, Any]],
+    taxes: list[dict[str, Any]],
+    order: dict[str, Any],
+) -> dict[str, Any]:
+    """One canonical fingerprint over everything the commit depends on."""
+    return {
+        "invoice": shm_invoice_state(invoice),
+        "contact": json_copy(contact),
+        "addresses": json_copy(addresses),
+        "tax": json_copy(tax_index(taxes).get(SHM_NEW_TAX_ID)),
+        "salesorder_protected": shm_salesorder_protected(order),
+        "salesorder_mirror": shm_salesorder_mirror(order),
+    }
+
+
+def shm_read_round(
+    access_token: str, vault: dict[str, Any], customer_id: str
+) -> tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    invoice = get_invoice(access_token, vault, SHM_INVOICE_ID)
+    contact = get_customer(access_token, vault, customer_id)
+    addresses = get_customer_addresses(access_token, vault, customer_id)
+    taxes = get_taxes(access_token, vault)
+    order = get_salesorder(access_token, vault, SHM_SALESORDER_ID)
+    return invoice, contact, addresses, taxes, order
+
+
+def rehearse_shm_stable_state(
+    access_token: str, vault: dict[str, Any], customer_id: str
+) -> tuple[
+    tuple[dict[str, Any], dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]],
+    dict[str, Any],
+]:
+    """Three bounded read-only rounds whose canonical fingerprints must agree."""
+    started = monotonic_seconds()
+    rounds: list[tuple[Any, ...]] = []
+    digests: list[str] = []
+    elapsed = Decimal("0")
+    for index in range(SHM_REHEARSAL_OBSERVATIONS):
+        if index:
+            pause(float(SHM_REHEARSAL_INTERVAL_SECONDS))
+        observation = shm_read_round(access_token, vault, customer_id)
+        rounds.append(observation)
+        digests.append(digest_for(shm_round_state(*observation)))
+        elapsed = Decimal(str(round(monotonic_seconds() - started, 3)))
+        if elapsed < 0 or elapsed > SHM_REHEARSAL_MAX_SECONDS:
+            raise InvoiceRevisionError(
+                f"The read-only stable-state rehearsal did not finish inside its fixed "
+                f"{SHM_REHEARSAL_MAX_SECONDS}-second window. Nothing staged."
+            )
+    baseline = shm_round_state(*rounds[0])
+    for position, observation in enumerate(rounds[1:], start=2):
+        current = shm_round_state(*observation)
+        if current != baseline:
+            moved = sorted(
+                key for key in set(current) | set(baseline)
+                if current.get(key) != baseline.get(key)
+            )
+            raise InvoiceRevisionError(
+                f"The live state is not stable: round {position} moved {', '.join(moved) or 'unknown'} "
+                "while nothing was written. Nothing staged."
+            )
+    return rounds[0], {
+        "observations": SHM_REHEARSAL_OBSERVATIONS,
+        "interval_seconds": format(SHM_REHEARSAL_INTERVAL_SECONDS, "f"),
+        "max_seconds": format(SHM_REHEARSAL_MAX_SECONDS, "f"),
+        "elapsed_seconds": format(elapsed, "f"),
+        "round_sha256": digest_for(baseline),
+        "observation_sha256": digests,
+        "stable": True,
+    }
+
+
+def validate_shm_rehearsal(evidence: Any, baseline_digest: str | None) -> None:
+    """Closed schema and fixed window always; bound to a live digest when given.
+
+    `baseline_digest` is None when only the plan file is in hand (the raw round
+    state is not stored, so there is nothing yet to bind to). Stage binds it to
+    the state it just read, and commit re-binds it to a FRESH read -- so an
+    approved plan cannot carry a rehearsal of some other state past the write.
+    """
+    if not isinstance(evidence, dict) or set(evidence) != set(SHM_REHEARSAL_KEYS):
+        raise InvoiceRevisionError(
+            "Plan stable-state rehearsal evidence is not the exact closed schema."
+        )
+    if evidence["stable"] is not True:
+        raise InvoiceRevisionError("Plan stable-state rehearsal did not record a stable state.")
+    if isinstance(evidence["observations"], bool) or (
+        evidence["observations"] != SHM_REHEARSAL_OBSERVATIONS
+    ):
+        raise InvoiceRevisionError(
+            f"Plan stable-state rehearsal must record exactly {SHM_REHEARSAL_OBSERVATIONS} rounds."
+        )
+    if evidence["interval_seconds"] != format(SHM_REHEARSAL_INTERVAL_SECONDS, "f") or (
+        evidence["max_seconds"] != format(SHM_REHEARSAL_MAX_SECONDS, "f")
+    ):
+        raise InvoiceRevisionError("Plan stable-state rehearsal does not use the fixed window.")
+    elapsed = live_number(evidence["elapsed_seconds"], "rehearsal elapsed_seconds")
+    if elapsed < 0 or elapsed > SHM_REHEARSAL_MAX_SECONDS:
+        raise InvoiceRevisionError("Plan stable-state rehearsal window is invalid.")
+    digests = evidence["observation_sha256"]
+    if not isinstance(digests, list) or len(digests) != SHM_REHEARSAL_OBSERVATIONS:
+        raise InvoiceRevisionError(
+            "Plan stable-state rehearsal does not carry one digest per round."
+        )
+    stated = str(evidence["round_sha256"] or "")
+    if not HEX_64_RE.fullmatch(stated):
+        raise InvoiceRevisionError("Plan stable-state rehearsal digest is invalid.")
+    if baseline_digest is not None and not secrets.compare_digest(stated, baseline_digest):
+        raise InvoiceRevisionError(
+            "Plan stable-state rehearsal is not bound to the live state read now."
+        )
+    for index, digest in enumerate(digests):
+        if not isinstance(digest, str) or not HEX_64_RE.fullmatch(digest) or (
+            not secrets.compare_digest(digest, stated)
+        ):
+            raise InvoiceRevisionError(
+                f"Plan stable-state rehearsal round {index + 1} does not match the staged state."
+            )
+
+
+def build_shm_correction(
+    invoice: dict[str, Any],
+    contact: dict[str, Any],
+    addresses: list[dict[str, Any]],
+    taxes: list[dict[str, Any]],
+    order: dict[str, Any],
+    scan: dict[str, Any],
+    rehearsal: dict[str, Any],
+) -> dict[str, Any]:
+    """The whole projection, derived from the live state alone.
+
+    Commit re-runs this over a FRESH live read and refuses unless the result is
+    byte-identical to the reviewed plan, so no figure, endpoint, payload key or
+    fingerprint in a plan file can be tampered with.
+    """
+    lines = validate_shm_live_invoice(invoice)
+    dependencies = shm_dependency_state(invoice)
+    customer = shm_customer_evidence(contact, addresses, scan)
+    tax = shm_tax_evidence(taxes)
+    salesorder = validate_shm_salesorder(order)
+    totals = shm_expected_totals()
+    payload = shm_put_payload(
+        invoice, lines, customer["customer_id"], customer["billing_address_id"]
+    )
+    exempt = shm_unprotected_keys()
+    protected = protected_state(invoice, exempt)
+    before = shm_invoice_state(invoice)
+    return {
+        "invoice": {
+            "invoice_id": SHM_INVOICE_ID,
+            "invoice_number": SHM_INVOICE_NUMBER,
+            "status": SHM_INVOICE_STATUS,
+            "date": SHM_INVOICE_DATE,
+            "due_date": SHM_INVOICE_DUE_DATE,
+            "currency_code": SHM_CURRENCY_CODE,
+            "exchange_rate": format(SHM_EXCHANGE_RATE, "f"),
+            "is_emailed": invoice.get("is_emailed"),
+            "reminders_sent": dependencies["reminders_sent"],
+            "shipping_address_blank": True,
+            "before_state": before,
+            "before_state_sha256": digest_for(before),
+            "protected_state": protected,
+            "protected_state_sha256": digest_for(protected),
+        },
+        "customer": customer,
+        "salesorder": salesorder,
+        "tax": tax,
+        "changes": {
+            "customer_id": {"old": SHM_OLD_CUSTOMER_ID, "new": customer["customer_id"]},
+            "customer_name": {"old": SHM_OLD_CUSTOMER_NAME, "new": SHM_CUSTOMER_NAME},
+            "reference_number": {"old": SHM_OLD_REFERENCE, "new": SHM_NEW_REFERENCE},
+            "billing_address_id": {"old": None, "new": customer["billing_address_id"]},
+            "line_1_tax_id": {"old": SHM_OLD_TAX_ID, "new": SHM_NEW_TAX_ID},
+            "line_2_tax_id": {"old": SHM_OLD_TAX_ID, "new": SHM_NEW_TAX_ID},
+        },
+        "lines": [
+            {
+                "line_item_id": fixed["line_item_id"],
+                "item_id": fixed["item_id"],
+                "salesorder_item_id": fixed["salesorder_item_id"],
+                "name": fixed["name"],
+                "description": fixed["description"],
+                "quantity": format(fixed["quantity"], "f"),
+                "rate": money_text(fixed["rate"]),
+                "discount": money_text(Decimal("0")),
+                "old_tax_id": SHM_OLD_TAX_ID,
+                "new_tax_id": SHM_NEW_TAX_ID,
+                "old_tax_percentage": format(SHM_OLD_TAX_PERCENT, "f"),
+                "new_tax_percentage": format(SHM_NEW_TAX_PERCENT, "f"),
+                "line_total": totals["line_totals"][index],
+            }
+            for index, fixed in enumerate(SHM_LINES)
+        ],
+        "totals": {
+            "before": {
+                "sub_total": money_text(SHM_OLD_SUB_TOTAL),
+                "tax_total": money_text(SHM_OLD_TAX_TOTAL),
+                "total": money_text(SHM_OLD_TOTAL),
+            },
+            "after": totals,
+        },
+        "dependencies": dependencies,
+        "rehearsal": rehearsal,
+        "put_endpoint": f"PUT {SHM_PUT_PATH}",
+        "put_payload": payload,
+        "unprotected_keys": exempt,
+        "salesorder_disclosure": SHM_SALESORDER_NOTE,
+        "email_sent": False,
+    }
+
+
+def stage_shm_plan(
+    organization: dict[str, str], sources: dict[str, Any], evidence: dict[str, Any]
+) -> Path:
+    created = utc_now()
+    core = {
+        "schema_version": SHM_SCHEMA_VERSION,
+        "tool": TOOL_NAME,
+        "action": SHM_ACTION,
+        "created_utc": created.isoformat(),
+        "expires_utc": (created + timedelta(hours=PLAN_LIFETIME_HOURS)).isoformat(),
+        "nonce": secrets.token_hex(16),
+        "approval_required": APPROVAL_WORD,
+        "origin": origin_record(),
+        "organization": json_copy(organization),
+        "risk": {
+            "atomic": True,
+            "single_put": True,
+            "email_sent": False,
+            "atomic_with_customer_plan": False,
+            "salesorder_written": False,
+            "note": SHM_RISK_NOTE,
+        },
+        "source_evidence": sources,
+        "live_evidence": evidence,
+    }
+    plan = dict(core)
+    plan["sha256"] = digest_for(core)
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = created.strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_{SHM_ACTION}_{plan['sha256'][:8]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    zoho_tool.append_receipt(
+        f"zoho_books_{SHM_ACTION}_plan_staged",
+        f"invoice={SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID}); plan={path}; sha256={plan['sha256']}; "
+        f"write_attempted=false; email_sent=false",
+    )
+    return path
+
+
+def command_stage_shm_correction(args: argparse.Namespace) -> None:
+    sources = shm_source_evidence()
+    vault = zoho_tool.load_vault()
+    zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    organization = verified_organization(access_token, vault)
+    rows, totals = shm_enumerate_contacts(access_token, vault)
+    customer_id, scan = shm_locate_customer(rows, totals)
+    observation, rehearsal = rehearse_shm_stable_state(access_token, vault, customer_id)
+    evidence = build_shm_correction(*observation, scan, rehearsal)
+    validate_shm_rehearsal(rehearsal, digest_for(shm_round_state(*observation)))
+    path = stage_shm_plan(organization, sources, evidence)
+    zoho_tool.save_vault(vault)
+    print_shm_correction_summary(read_json_object(path, "Plan"), path)
+
+
+def print_shm_correction_summary(plan: dict[str, Any], path: Path) -> None:
+    evidence = plan["live_evidence"]
+    print(
+        json.dumps(
+            {
+                "status": "STAGED_AWAITING_RACHADS_APPROVAL",
+                "action": SHM_ACTION,
+                "plan": str(path),
+                "plan_sha256": plan["sha256"],
+                "expires_utc": plan["expires_utc"],
+                "invoice": f"{SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID})",
+                "invoice_status_preserved": SHM_INVOICE_STATUS,
+                "changes": evidence["changes"],
+                "totals_before": evidence["totals"]["before"],
+                "totals_after": {
+                    "sub_total": evidence["totals"]["after"]["sub_total"],
+                    "tax": f"{SHM_NEW_TAX_NAME} {SHM_NEW_TAX_PERCENT}%",
+                    "tax_total": evidence["totals"]["after"]["tax_total"],
+                    "total": evidence["totals"]["after"]["total"],
+                    "balance": evidence["totals"]["after"]["balance"],
+                },
+                "lines_preserved": len(evidence["lines"]),
+                "linked_sales_order": (
+                    f"{evidence['salesorder']['salesorder_number']} "
+                    f"({evidence['salesorder']['salesorder_id']}) -- NOT written"
+                ),
+                "salesorder_disclosure": evidence["salesorder_disclosure"],
+                "shipping_address": "blank before and after",
+                "put_endpoint": evidence["put_endpoint"],
+                "email_sent": False,
+                "atomic_with_customer_plan": False,
+                "approval_required": APPROVAL_WORD,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def validate_shm_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    closed_fields(plan, SHM_PLAN_FIELDS, "Plan")
+    if (
+        plan.get("tool") != TOOL_NAME
+        or plan.get("action") != SHM_ACTION
+        or plan.get("schema_version") != SHM_SCHEMA_VERSION
+        or plan.get("approval_required") != APPROVAL_WORD
+    ):
+        raise InvoiceRevisionError("The plan belongs to a different tool, action or schema version.")
+    if not NONCE_RE.fullmatch(str(plan.get("nonce") or "")):
+        raise InvoiceRevisionError("Plan nonce is invalid.")
+    require_origin(plan.get("origin"))
+    created = parse_time(plan.get("created_utc"), "creation time")
+    expires = parse_time(plan.get("expires_utc"), "expiry")
+    if expires - created != timedelta(hours=PLAN_LIFETIME_HOURS):
+        raise InvoiceRevisionError("Plan must have exactly a 24-hour lifetime.")
+    now = utc_now()
+    if created > now + timedelta(minutes=5):
+        raise InvoiceRevisionError("Plan creation time is in the future.")
+    if now >= expires:
+        raise InvoiceRevisionError("Plan expired. Stage a new plan for review.")
+    risk = plan.get("risk")
+    if not isinstance(risk, dict) or (
+        risk.get("atomic") is not True
+        or risk.get("single_put") is not True
+        or risk.get("email_sent") is not False
+        or risk.get("atomic_with_customer_plan") is not False
+        or risk.get("salesorder_written") is not False
+        or risk.get("note") != SHM_RISK_NOTE
+    ):
+        raise InvoiceRevisionError(
+            "Plan must disclose the exact single-atomic-PUT risk, that it is NOT atomic with the "
+            "SHM customer plan, and that it never writes the sales order."
+        )
+    organization = plan.get("organization")
+    if not isinstance(organization, dict):
+        raise InvoiceRevisionError("Plan organization is invalid.")
+    closed_fields(organization, ORGANIZATION_FIELDS, "Plan organization")
+    if plan.get("source_evidence") != shm_source_evidence():
+        raise InvoiceRevisionError(
+            "Plan source evidence is not the three fixed local sources at their fixed digests."
+        )
+    evidence = plan.get("live_evidence")
+    if not isinstance(evidence, dict):
+        raise InvoiceRevisionError("Plan live evidence is invalid.")
+    closed_fields(evidence, SHM_EVIDENCE_FIELDS, "Plan live evidence")
+    invoice_row = evidence.get("invoice")
+    if not isinstance(invoice_row, dict):
+        raise InvoiceRevisionError("Plan invoice evidence is invalid.")
+    before = invoice_row.get("before_state")
+    if not isinstance(before, dict) or not secrets.compare_digest(
+        str(invoice_row.get("before_state_sha256") or ""), digest_for(before)
+    ):
+        raise InvoiceRevisionError("Plan before-state evidence hash is invalid.")
+    if evidence["put_endpoint"] != f"PUT {SHM_PUT_PATH}":
+        raise InvoiceRevisionError("Plan endpoint is not the one commissioned invoice route.")
+    if evidence["salesorder_disclosure"] != SHM_SALESORDER_NOTE:
+        raise InvoiceRevisionError("Plan does not carry the exact sales-order disclosure.")
+    if evidence["unprotected_keys"] != shm_unprotected_keys():
+        raise InvoiceRevisionError("Plan fingerprint exemptions are not the commissioned set.")
+    customer = evidence.get("customer")
+    if not isinstance(customer, dict):
+        raise InvoiceRevisionError("Plan customer evidence is invalid.")
+    # Re-derive the PUT body OFFLINE from the plan's own staged before-state, so
+    # a hand-edited payload is refused when the plan is read -- not only later,
+    # when the fresh preflight would catch it.
+    rebuilt = shm_put_payload(
+        before,
+        validate_shm_live_invoice(before),
+        positive_id(customer.get("customer_id"), "plan customer_id"),
+        positive_id(customer.get("billing_address_id"), "plan billing_address_id"),
+    )
+    if rebuilt != evidence["put_payload"]:
+        raise InvoiceRevisionError(
+            "Plan payload is not the canonical projection of its own staged invoice state."
+        )
+    if evidence["email_sent"] is not False:
+        raise InvoiceRevisionError("Plan must record that no email is sent.")
+    if evidence["totals"]["after"] != shm_expected_totals():
+        raise InvoiceRevisionError(
+            "Plan totals are not the independent Decimal derivation of the approved correction."
+        )
+    validate_shm_rehearsal(evidence.get("rehearsal"), None)
+    return evidence
+
+
+def load_shm_plan(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    plan = read_json_object(path, "Plan")
+    saved = str(plan.get("sha256") or "")
+    core = dict(plan)
+    core.pop("sha256", None)
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise InvoiceRevisionError("Plan hash check failed. The plan changed after review.")
+    evidence = validate_shm_plan(plan)
+    return plan, evidence
+
+
+def require_shm_put_allowed(
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+) -> None:
+    """The complete write allowlist for the INV-000051 correction.
+
+    Only PUT. Only the ONE commissioned invoice. Only the commissioned keys,
+    with both lines present in order carrying their own line_item_id, item_id
+    and salesorder_item_id, every non-tax field identical to the reviewed plan,
+    and exactly two tax changes. Pure validation -- it touches nothing. Commit
+    runs it once BEFORE the replay lock (so a bad payload is a free refusal, not
+    a burned plan) and the transport runs it again as its own gate.
+    """
+    if method != "PUT":
+        raise InvoiceRevisionError(
+            "REFUSED: the INV-000051 correction is a PUT and nothing else."
+        )
+    match = INVOICE_PATH_RE.fullmatch(str(path))
+    if not match or match.group(1) != SHM_INVOICE_ID:
+        raise InvoiceRevisionError(
+            f"REFUSED: the INV-000051 correction targets {SHM_PUT_PATH} and nothing else. "
+            "Creation, deletion, voiding, status, mail, reminder, payment, credit-note, "
+            "write-off, attachment, template, sales-order and every bulk route are unreachable."
+        )
+    if not isinstance(payload, dict) or not isinstance(expected_payload, dict):
+        raise InvoiceRevisionError("REFUSED: the invoice PUT payload must be an object.")
+    extra = sorted(set(payload) - SHM_ALLOWED_PUT_KEYS)
+    if extra:
+        raise InvoiceRevisionError(
+            "REFUSED: the invoice PUT payload names uncommissioned field(s): " + ", ".join(extra)
+        )
+    if set(payload) != SHM_ALLOWED_PUT_KEYS:
+        raise InvoiceRevisionError(
+            "REFUSED: the invoice PUT payload is not the exact commissioned key set."
+        )
+    if str(payload.get("invoice_number") or "") != SHM_INVOICE_NUMBER:
+        raise InvoiceRevisionError("REFUSED: the PUT does not preserve the invoice number.")
+    if str(payload.get("reference_number") or "") != SHM_NEW_REFERENCE:
+        raise InvoiceRevisionError(
+            f"REFUSED: the PUT reference number must be the exact client PO {SHM_NEW_REFERENCE!r}."
+        )
+    for field, want in (("date", SHM_INVOICE_DATE), ("due_date", SHM_INVOICE_DUE_DATE)):
+        if str(payload.get(field) or "") != want:
+            raise InvoiceRevisionError(f"REFUSED: the PUT does not preserve the invoice {field}.")
+    customer_id = positive_id(payload.get("customer_id"), "payload customer_id")
+    if customer_id == SHM_OLD_CUSTOMER_ID:
+        raise InvoiceRevisionError(
+            "REFUSED: the PUT still names the old Ralmax customer."
+        )
+    positive_id(payload.get("billing_address_id"), "payload billing_address_id")
+    lines = payload.get("line_items")
+    expected_lines = expected_payload.get("line_items")
+    if not isinstance(lines, list) or len(lines) != len(SHM_LINES):
+        raise InvoiceRevisionError(
+            f"REFUSED: the invoice PUT must carry the complete {len(SHM_LINES)}-line list."
+        )
+    if not isinstance(expected_lines, list) or len(expected_lines) != len(SHM_LINES):
+        raise InvoiceRevisionError("REFUSED: the reviewed plan payload is not the commissioned shape.")
+    seen: set[str] = set()
+    changed = 0
+    for index, (line, reviewed, fixed) in enumerate(
+        zip(lines, expected_lines, SHM_LINES), start=1
+    ):
+        if not isinstance(line, dict) or not isinstance(reviewed, dict):
+            raise InvoiceRevisionError("REFUSED: every PUT line must be an object.")
+        unknown = sorted(set(line) - set(LINE_PUT_KEYS))
+        if unknown:
+            raise InvoiceRevisionError(
+                "REFUSED: a PUT line names uncommissioned field(s): " + ", ".join(unknown)
+            )
+        line_item_id = positive_id(line.get("line_item_id"), f"PUT line {index} line_item_id")
+        if line_item_id in seen:
+            raise InvoiceRevisionError("REFUSED: the invoice PUT repeats a line_item_id.")
+        seen.add(line_item_id)
+        # Order and identity are pinned line by line against BOTH the fixed
+        # commission and the reviewed plan, so a line cannot be reordered,
+        # substituted or silently swapped.
+        if line_item_id != fixed["line_item_id"] or line_item_id != str(
+            reviewed.get("line_item_id") or ""
+        ):
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} is not the commissioned line in the commissioned order."
+            )
+        for key in ("item_id", "salesorder_item_id"):
+            if str(line.get(key) or "") != fixed[key]:
+                raise InvoiceRevisionError(
+                    f"REFUSED: PUT line {index} {key} is not the commissioned {fixed[key]!r}. "
+                    "The sales-order linkage must be resent exactly."
+                )
+        if str(line.get("tax_id") or "") != SHM_NEW_TAX_ID:
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} tax must be {SHM_NEW_TAX_NAME} {SHM_NEW_TAX_ID!r}."
+            )
+        changed += 1
+        if live_number(line.get("quantity"), f"PUT line {index} quantity") != fixed["quantity"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} quantity is not the preserved {fixed['quantity']}."
+            )
+        if live_number(line.get("rate"), f"PUT line {index} rate") != fixed["rate"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} rate is not the preserved {fixed['rate']}."
+            )
+        if _zero(line.get("discount"), f"PUT line {index} discount") != 0:
+            raise InvoiceRevisionError(f"REFUSED: PUT line {index} carries a discount.")
+        if str(line.get("description") or "") != fixed["description"]:
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} description is not the preserved text."
+            )
+        if set(line) != set(reviewed):
+            raise InvoiceRevisionError(
+                f"REFUSED: PUT line {index} does not carry the reviewed field set."
+            )
+        for key in line:
+            if line[key] != reviewed[key]:
+                raise InvoiceRevisionError(
+                    f"REFUSED: PUT line {index} {key} does not match the reviewed plan."
+                )
+    if changed != len(SHM_LINES):
+        raise InvoiceRevisionError(
+            "REFUSED: the invoice PUT must carry both commissioned lines exactly once."
+        )
+    for key in SHM_ALLOWED_PUT_KEYS:
+        if key == "line_items":
+            continue
+        if payload.get(key) != expected_payload.get(key):
+            raise InvoiceRevisionError(
+                f"REFUSED: the invoice PUT {key} does not match the reviewed plan."
+            )
+    if not ID_RE.fullmatch(str(organization_id)):
+        raise InvoiceRevisionError("REFUSED: the organization ID is invalid.")
+
+
+def oauth_shm_correction_write_allowed(
+    access_token: str,
+    api_domain: str,
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+) -> dict[str, Any]:
+    """The ONE write path for the INV-000051 correction, gated by its allowlist."""
+    require_shm_put_allowed(method, path, organization_id, payload, expected_payload)
+    query = urlencode({"organization_id": organization_id})
+    request = Request(
+        api_domain.rstrip("/") + path + "?" + query,
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Authorization": f"Zoho-oauthtoken {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="PUT",
+    )
+    return _perform(request, "PUT")
+
+
+def verify_shm_invoice(after: Any, evidence: dict[str, Any], label: str) -> None:
+    """Every reachable change proven, and every preserved field proven preserved."""
+    if not isinstance(after, dict):
+        raise InvoiceRevisionError(f"{label} returned no invoice record.")
+    invoice_row = evidence["invoice"]
+    customer = evidence["customer"]
+    totals = evidence["totals"]["after"]
+    for key, want in (
+        ("invoice_id", SHM_INVOICE_ID),
+        ("invoice_number", SHM_INVOICE_NUMBER),
+        ("status", SHM_INVOICE_STATUS),
+        ("date", SHM_INVOICE_DATE),
+        ("due_date", SHM_INVOICE_DUE_DATE),
+        ("currency_code", SHM_CURRENCY_CODE),
+        ("salesorder_id", SHM_SALESORDER_ID),
+        ("salesorder_number", SHM_SALESORDER_NUMBER),
+        ("customer_id", customer["customer_id"]),
+        ("reference_number", SHM_NEW_REFERENCE),
+    ):
+        actual = str(after.get(key) if after.get(key) is not None else "")
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"{label} {key} is {actual!r}, not the approved {want!r}. Stop and reconcile."
+            )
+    if shm_normalized_name(after.get("customer_name")) != shm_normalized_name(SHM_CUSTOMER_NAME):
+        raise InvoiceRevisionError(
+            f"{label} customer is {after.get('customer_name')!r}, not {SHM_CUSTOMER_NAME!r}."
+        )
+    if live_number(after.get("exchange_rate"), f"{label} exchange_rate") != SHM_EXCHANGE_RATE:
+        raise InvoiceRevisionError(f"{label} exchange rate moved. Stop and reconcile.")
+    if after.get("is_emailed") != invoice_row["is_emailed"]:
+        raise InvoiceRevisionError(
+            f"{label} is_emailed moved from {invoice_row['is_emailed']!r} to "
+            f"{after.get('is_emailed')!r}. Stop and reconcile."
+        )
+    if int(live_number(after.get("reminders_sent") or 0, f"{label} reminders_sent")) != (
+        invoice_row["reminders_sent"]
+    ):
+        raise InvoiceRevisionError(
+            f"{label} reminders_sent moved, so Zoho mailed a reminder. Stop and reconcile."
+        )
+    if not shm_blank_address(after.get("shipping_address")):
+        raise InvoiceRevisionError(
+            f"{label} now carries a shipping address; it must stay blank. Stop and reconcile."
+        )
+    billing = after.get("billing_address")
+    if not isinstance(billing, dict):
+        raise InvoiceRevisionError(f"{label} carries no billing address. Stop and reconcile.")
+    for key, want in sorted(SHM_PO_BILLING.items()):
+        if billing.get(key) != want:
+            raise InvoiceRevisionError(
+                f"{label} billing {key} is {billing.get(key)!r}, not the client PO value "
+                f"{want!r}. Stop and reconcile."
+            )
+    owner_billing = customer["contact_billing_address"]
+    for key, value in sorted(billing.items()):
+        if key == "address_id" or key not in owner_billing:
+            continue
+        if value != owner_billing[key]:
+            raise InvoiceRevisionError(
+                f"{label} billing {key} is {value!r}, not the SHM customer's own "
+                f"{owner_billing[key]!r}. Stop and reconcile."
+            )
+    for key, want in (
+        ("tax_id", SHM_NEW_TAX_ID),
+        ("tax_name", SHM_NEW_TAX_NAME),
+    ):
+        actual = str(after.get(key) if after.get(key) is not None else "")
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"{label} header {key} is {actual!r}, not {want!r}. Stop and reconcile."
+            )
+    if live_number(
+        after.get("tax_percentage"), f"{label} header tax_percentage"
+    ) != SHM_NEW_TAX_PERCENT:
+        raise InvoiceRevisionError(
+            f"{label} header tax percentage is not {SHM_NEW_TAX_PERCENT}%. Stop and reconcile."
+        )
+    lines = after.get("line_items")
+    if not isinstance(lines, list) or len(lines) != len(SHM_LINES):
+        raise InvoiceRevisionError(
+            f"{label} carries {len(lines) if isinstance(lines, list) else 'no'} lines, not the "
+            f"preserved {len(SHM_LINES)}. Stop and reconcile."
+        )
+    for index, (line, fixed, staged) in enumerate(
+        zip(lines, SHM_LINES, evidence["lines"]), start=1
+    ):
+        if not isinstance(line, dict):
+            raise InvoiceRevisionError(f"{label} line {index} is not an object.")
+        for key in ("line_item_id", "item_id", "salesorder_item_id"):
+            if str(line.get(key) or "") != fixed[key]:
+                raise InvoiceRevisionError(
+                    f"{label} line {index} {key} is {line.get(key)!r}, not the preserved "
+                    f"{fixed[key]!r}. Stop and reconcile."
+                )
+        if str(line.get("name") or "") != fixed["name"]:
+            raise InvoiceRevisionError(f"{label} line {index} item name moved.")
+        if str(line.get("description") or "") != fixed["description"]:
+            raise InvoiceRevisionError(f"{label} line {index} description moved.")
+        if live_number(line.get("quantity"), f"{label} line {index} quantity") != fixed["quantity"]:
+            raise InvoiceRevisionError(f"{label} line {index} quantity moved.")
+        if live_number(line.get("rate"), f"{label} line {index} rate") != fixed["rate"]:
+            raise InvoiceRevisionError(f"{label} line {index} rate moved.")
+        if _zero(line.get("discount"), f"{label} line {index} discount") != 0:
+            raise InvoiceRevisionError(f"{label} line {index} gained a discount.")
+        if str(line.get("tax_id") or "") != SHM_NEW_TAX_ID:
+            raise InvoiceRevisionError(
+                f"{label} line {index} tax is {line.get('tax_id')!r}, not the approved "
+                f"{SHM_NEW_TAX_ID!r}. Stop and reconcile."
+            )
+        if live_number(
+            line.get("tax_percentage"), f"{label} line {index} tax_percentage"
+        ) != SHM_NEW_TAX_PERCENT:
+            raise InvoiceRevisionError(
+                f"{label} line {index} is not at {SHM_NEW_TAX_PERCENT}%. Stop and reconcile."
+            )
+        item_total = live_number(line.get("item_total"), f"{label} line {index} item_total")
+        if money_text(item_total) != staged["line_total"]:
+            raise InvoiceRevisionError(
+                f"{label} line {index} total is {money_text(item_total)}, not the approved "
+                f"{staged['line_total']}. Stop and reconcile."
+            )
+    for field, want in (
+        ("sub_total", totals["sub_total"]),
+        ("tax_total", totals["tax_total"]),
+        ("total", totals["total"]),
+        ("balance", totals["balance"]),
+        ("discount_total", totals["discount_total"]),
+        ("shipping_charge", totals["shipping_charge"]),
+        ("adjustment", totals["adjustment"]),
+    ):
+        actual = money_text(live_number(after.get(field), f"{label} {field}"))
+        if actual != want:
+            raise InvoiceRevisionError(
+                f"{label} {field} is {actual}, not the approved {want}. Stop and reconcile."
+            )
+    taxes = after.get("taxes")
+    if not isinstance(taxes, list) or len(taxes) != 1:
+        raise InvoiceRevisionError(
+            f"{label} does not carry exactly one tax row. Stop and reconcile."
+        )
+    row = taxes[0]
+    if not isinstance(row, dict) or str(row.get("tax_name") or "") != SHM_NEW_TAX_NAME:
+        raise InvoiceRevisionError(
+            f"{label} tax row is not {SHM_NEW_TAX_NAME}. Stop and reconcile."
+        )
+    if money_text(live_number(row.get("tax_amount"), f"{label} tax row")) != totals["tax_total"]:
+        raise InvoiceRevisionError(
+            f"{label} {SHM_NEW_TAX_NAME} amount is not the approved {totals['tax_total']}."
+        )
+    shm_dependency_state(after)
+    verify_protected_unchanged(after, invoice_row, evidence["unprotected_keys"])
+
+
+def verify_shm_salesorder_unchanged(order: dict[str, Any], evidence: dict[str, Any]) -> None:
+    """Every business field of SO-00050, byte-for-byte, plus its invoice mirror."""
+    staged = evidence["salesorder"]
+    protected = shm_salesorder_protected(order)
+    if protected != staged["protected_state"] or not secrets.compare_digest(
+        digest_for(protected), str(staged["protected_state_sha256"])
+    ):
+        moved = sorted(
+            key for key in set(protected) | set(staged["protected_state"])
+            if protected.get(key) != staged["protected_state"].get(key)
+        )
+        raise InvoiceRevisionError(
+            f"The linked sales order {staged['salesorder_number']} changed in field(s) that must "
+            f"never move: {', '.join(moved) or 'structure'}. Nothing in this tool can write a "
+            "sales order. Stop and reconcile."
+        )
+    mirror = shm_salesorder_mirror(order)
+    before = staged["invoice_mirror"]
+    if len(mirror) != len(before):
+        raise InvoiceRevisionError(
+            "The linked sales order's invoice mirror changed length. Stop and reconcile."
+        )
+    totals = evidence["totals"]["after"]
+    for index, (entry, was) in enumerate(zip(mirror, before), start=1):
+        if not isinstance(entry, dict) or not isinstance(was, dict):
+            raise InvoiceRevisionError("The sales-order invoice mirror is unreadable.")
+        if set(entry) != set(was):
+            raise InvoiceRevisionError(
+                f"Sales-order invoice mirror entry {index} changed its field set. Stop and reconcile."
+            )
+        is_target = str(entry.get("invoice_id") or "") == SHM_INVOICE_ID
+        for key, value in sorted(entry.items()):
+            if value == was.get(key):
+                continue
+            if not is_target:
+                raise InvoiceRevisionError(
+                    f"Sales-order invoice mirror entry {index} {key} moved on an invoice this "
+                    "correction never touched. Stop and reconcile."
+                )
+            if key == "reference_number" and str(value) == SHM_NEW_REFERENCE:
+                continue
+            if key in ("total", "balance") and money_text(
+                live_number(value, f"mirror {key}")
+            ) == totals["total"]:
+                continue
+            raise InvoiceRevisionError(
+                f"The sales order's mirror of {SHM_INVOICE_NUMBER} moved {key} to {value!r}, "
+                "which is not the approved consequence of this correction. Stop and reconcile."
+            )
+
+
+def command_commit_shm_correction(args: argparse.Namespace) -> None:
+    plan_path = contained_plan(args.plan)
+    plan, evidence = load_shm_plan(plan_path)
+    # Approval is checked before the lock, the vault, the token and the network.
+    require_rachad_approval(args.approval)
+    lock = lock_path(plan["sha256"])
+    if lock.exists():
+        raise InvoiceRevisionError(
+            "REFUSED: this plan has already entered commit and cannot be replayed. "
+            "No Zoho call was made."
+        )
+    customer_id = evidence["customer"]["customer_id"]
+    try:
+        vault = zoho_tool.load_vault()
+        scopes = [str(scope) for scope in vault.get("scopes") or []]
+        zoho_tool.validate_scopes(scopes)
+        if UPDATE_SCOPE not in scopes:
+            raise InvoiceRevisionError(
+                f"Saved Zoho connection lacks {UPDATE_SCOPE}. No PUT was issued."
+            )
+        access_token, vault = zoho_tool.refresh_access_token(vault)
+        organization = verified_organization(access_token, vault)
+        if organization != plan["organization"]:
+            raise InvoiceRevisionError(
+                "REFUSED: the live FRP Depot Books organization does not match the plan."
+            )
+        org_id = organization["organization_id"]
+        # A FRESH complete preflight, re-derived from live reads and compared to
+        # the reviewed plan as a whole -- not merely spot-checked.
+        rows, totals = shm_enumerate_contacts(access_token, vault)
+        fresh_customer_id, scan = shm_locate_customer(rows, totals)
+        if fresh_customer_id != customer_id:
+            raise InvoiceRevisionError(
+                f"REFUSED: the live {SHM_CUSTOMER_NAME} customer is now {fresh_customer_id}, not "
+                f"the approved {customer_id}. No PUT was issued."
+            )
+        observation = shm_read_round(access_token, vault, customer_id)
+        # The rehearsal digest is re-bound to what is live RIGHT NOW, so an
+        # approved plan cannot carry a rehearsal of some other state past this.
+        validate_shm_rehearsal(
+            evidence["rehearsal"], digest_for(shm_round_state(*observation))
+        )
+        fresh = build_shm_correction(*observation, scan, evidence["rehearsal"])
+        if fresh != evidence:
+            moved = sorted(
+                key for key in set(fresh) | set(evidence)
+                if fresh.get(key) != evidence.get(key)
+            )
+            raise InvoiceRevisionError(
+                f"{SHM_INVOICE_NUMBER} or its dependencies changed after review "
+                f"({', '.join(moved) or 'unknown'}). No PUT was issued and this plan is not "
+                "locked; stage a new plan."
+            )
+        # The write allowlist runs here too, so a payload it would reject is a
+        # free refusal rather than a permanently burned plan.
+        require_shm_put_allowed(
+            "PUT", SHM_PUT_PATH, org_id, evidence["put_payload"], fresh["put_payload"]
+        )
+    except Exception as exc:
+        zoho_tool.append_receipt(
+            f"zoho_books_{SHM_ACTION}_refused_before_lock",
+            f"invoice={SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID}); plan={plan_path}; "
+            f"sha256={plan['sha256']}; write_attempted=false; locked=false; email_sent=false",
+        )
+        raise InvoiceRevisionError(
+            "The INV-000051 correction was refused BEFORE any write and BEFORE the replay lock. "
+            f"No PUT was issued and no email was sent. Reason: {exc}"
+        ) from exc
+    write_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "action": SHM_ACTION,
+        "status": "in_flight",
+        "invoice_id": SHM_INVOICE_ID,
+        "started_utc": utc_now().isoformat(),
+    }, exclusive=True)
+    write_attempted = False
+    try:
+        write_attempted = True
+        oauth_shm_correction_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "PUT",
+            SHM_PUT_PATH,
+            org_id,
+            evidence["put_payload"],
+            fresh["put_payload"],
+        )
+        verified = get_invoice(access_token, vault, SHM_INVOICE_ID)
+        verify_shm_invoice(verified, evidence, "Fresh read-back")
+        verify_shm_salesorder_unchanged(
+            get_salesorder(access_token, vault, SHM_SALESORDER_ID), evidence
+        )
+        zoho_tool.save_vault(vault)
+    except Exception as exc:
+        write_lock(lock, {
+            "plan_sha256": plan["sha256"],
+            "action": SHM_ACTION,
+            "status": "indeterminate",
+            "invoice_id": SHM_INVOICE_ID,
+            "write_attempted": write_attempted,
+            "plan_locked_indeterminate": True,
+            "updated_utc": utc_now().isoformat(),
+            "reason": str(exc)[:2000],
+            "no_retry": True,
+        })
+        zoho_tool.append_receipt(
+            f"zoho_books_{SHM_ACTION}_indeterminate_no_retry",
+            f"invoice={SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID}); "
+            f"write_attempted={str(write_attempted).lower()}; plan={plan_path}; "
+            f"sha256={plan['sha256']}; email_sent=false",
+        )
+        raise InvoiceRevisionError(
+            "The INV-000051 correction is indeterminate and this plan is permanently locked "
+            "against retry. A PUT was ISSUED -- the live invoice state is unconfirmed. No email "
+            "was sent; this tool has no mail transport. No rollback, cleanup or second attempt "
+            f"was made. Reason: {exc} Read the live invoice and sales order in Zoho and reconcile "
+            "before staging anything new."
+        ) from exc
+    write_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "action": SHM_ACTION,
+        "status": "committed_verified",
+        "invoice_id": SHM_INVOICE_ID,
+        "updated_utc": utc_now().isoformat(),
+        "no_retry": True,
+    })
+    totals = evidence["totals"]["after"]
+    zoho_tool.append_receipt(
+        f"zoho_books_{SHM_ACTION}_committed_verified",
+        f"invoice={SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID}); customer={customer_id}; "
+        f"reference={SHM_NEW_REFERENCE}; tax={SHM_NEW_TAX_NAME}; total={totals['total']}; "
+        f"salesorder_unchanged={SHM_SALESORDER_NUMBER}; plan={plan_path}; "
+        f"sha256={plan['sha256']}; email_sent=false",
+    )
+    print(json.dumps({
+        "status": "COMMITTED_AND_VERIFIED",
+        "action": SHM_ACTION,
+        "invoice_id": SHM_INVOICE_ID,
+        "invoice_number": SHM_INVOICE_NUMBER,
+        "invoice_status_preserved": SHM_INVOICE_STATUS,
+        "customer_id": customer_id,
+        "customer_name": SHM_CUSTOMER_NAME,
+        "reference_number": SHM_NEW_REFERENCE,
+        "tax": f"{SHM_NEW_TAX_NAME} {SHM_NEW_TAX_PERCENT}%",
+        "sub_total": totals["sub_total"],
+        "tax_total": totals["tax_total"],
+        "total": totals["total"],
+        "balance": totals["balance"],
+        "lines_preserved": len(SHM_LINES),
+        "shipping_address_blank": True,
+        "salesorder_unchanged": f"{SHM_SALESORDER_NUMBER} ({SHM_SALESORDER_ID})",
+        "plan": str(plan_path),
+        "plan_sha256": plan["sha256"],
+        "email_sent": False,
+        "atomic": True,
+        "atomic_with_customer_plan": False,
+        "replay_locked": True,
+    }, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=TOOL_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -3535,6 +5330,14 @@ def build_parser() -> argparse.ArgumentParser:
     commit.add_argument("--plan", required=True)
     commit.add_argument("--approval", required=True)
     commit.set_defaults(func=command_commit)
+    # No --invoice-id and no business argument of any kind: the invoice, the
+    # customer name, the client PO, the tax and both lines are fixed in code.
+    stage_shm = commands.add_parser("stage-inv000051-shm-correction")
+    stage_shm.set_defaults(func=command_stage_shm_correction)
+    commit_shm = commands.add_parser("commit-inv000051-shm-correction")
+    commit_shm.add_argument("--plan", required=True)
+    commit_shm.add_argument("--approval", required=True)
+    commit_shm.set_defaults(func=command_commit_shm_correction)
     return parser
 
 

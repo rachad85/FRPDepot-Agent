@@ -657,8 +657,10 @@ class TransportTests(CorrectionTestCase):
     def test_the_source_has_no_delete_patch_or_mail_route(self) -> None:
         source = Path(draft.__file__).read_text(encoding="utf-8")
         self.assertEqual(source.count('method="PUT"'), 1)
-        self.assertEqual(source.count('method="POST"'), 1)
-        self.assertEqual(source.count("urlopen(request"), 2)
+        # Two POSTs: the original customer/estimate creation path, and the fixed
+        # SHM customer commissioned 2026-08-12.
+        self.assertEqual(source.count('method="POST"'), 2)
+        self.assertEqual(source.count("urlopen(request"), 3)
         for forbidden in (
             'method="DELETE"', 'method="PATCH"', 'method="GET"',
             "/books/v3/estimates/email", "/status/", "markassent", "markassent", "approve\"",

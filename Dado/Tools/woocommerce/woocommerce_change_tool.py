@@ -39,7 +39,13 @@ PRODUCT_FIELDS = {
     "name", "type", "sku", "description", "short_description", "regular_price",
     "categories", "attributes", "images",
 }
-VARIATION_FIELDS = {"sku", "description", "regular_price", "attributes"}
+VARIATION_STOCK_PUBLICATION_FIELDS = {
+    "status", "manage_stock", "stock_quantity", "stock_status", "backorders",
+}
+VARIATION_FIELDS = {
+    "sku", "description", "regular_price", "attributes",
+    *VARIATION_STOCK_PUBLICATION_FIELDS,
+}
 DECIMAL_RE = re.compile(r"^[0-9]+(?:\.[0-9]+)?$")
 UNSAFE_HTML_RE = re.compile(
     r"(?is)<\s*(?:script|iframe|object|embed|form|style|svg|math)\b|"
@@ -266,6 +272,17 @@ def clean_changes(action: str, raw: Any) -> dict[str, Any]:
     extra = sorted(set(raw) - allowed)
     if extra:
         raise ChangeError("Unsupported change field(s): " + ", ".join(extra))
+    lifecycle_fields = set(raw) & VARIATION_STOCK_PUBLICATION_FIELDS
+    if lifecycle_fields:
+        if action != "variation_update":
+            raise ChangeError(
+                "Stock/publication fields are allowed only when updating an existing variation."
+            )
+        if lifecycle_fields != VARIATION_STOCK_PUBLICATION_FIELDS:
+            raise ChangeError(
+                "Variation publication requires the complete fixed bundle: status, manage_stock, "
+                "stock_quantity, stock_status, and backorders."
+            )
     output: dict[str, Any] = {}
     for field, value in raw.items():
         if field == "name":
@@ -281,6 +298,26 @@ def clean_changes(action: str, raw: Any) -> dict[str, Any]:
             output[field] = clean_text(value, field)
         elif field == "regular_price":
             output[field] = clean_decimal(value, field)
+        elif field == "status":
+            if value != "publish":
+                raise ChangeError("Variation publication status must be exactly publish.")
+            output[field] = "publish"
+        elif field == "manage_stock":
+            if value is not True:
+                raise ChangeError("Variation publication manage_stock must be exactly true.")
+            output[field] = True
+        elif field == "stock_quantity":
+            if type(value) is not int or value != 0:
+                raise ChangeError("Variation publication stock_quantity must be integer zero.")
+            output[field] = 0
+        elif field == "stock_status":
+            if value != "outofstock":
+                raise ChangeError("Variation publication stock_status must be exactly outofstock.")
+            output[field] = "outofstock"
+        elif field == "backorders":
+            if value != "no":
+                raise ChangeError("Variation publication backorders must be exactly no.")
+            output[field] = "no"
         elif field == "categories":
             output[field] = clean_categories(value)
         elif field == "attributes":
@@ -378,6 +415,48 @@ def _project_response(value: Any, template: Any) -> Any:
 def selected_state(record: dict[str, Any], template: dict[str, Any]) -> dict[str, Any]:
     return {field: _project_response(record.get(field), desired)
             for field, desired in sorted(template.items())}
+
+
+TABLE_TAG_WHITESPACE_RE = re.compile(
+    r"(?i)(</?(?:table|thead|tbody|tr|th|td)\b[^>]*>)[ \t\r\n]+"
+    r"(?=</?(?:table|thead|tbody|tr|th|td)\b[^>]*>)"
+)
+
+
+def normalize_table_tag_whitespace(value: str) -> str:
+    """Ignore only WordPress-added whitespace between table structure tags."""
+    return TABLE_TAG_WHITESPACE_RE.sub(r"\1", value)
+
+
+def description_readback_matches(live: str, approved: str) -> bool:
+    """Accept only proven, content-preserving WordPress serialization changes."""
+    normalized_live = normalize_table_tag_whitespace(live)
+    normalized_approved = normalize_table_tag_whitespace(approved)
+    if normalized_live == normalized_approved:
+        return True
+    # WooCommerce wraps a plain-text variation description in one paragraph.
+    # Keep this deliberately narrow: the approved value must contain no markup,
+    # and the live value must be that exact text inside exactly one <p> element.
+    return (
+        "<" not in normalized_approved
+        and ">" not in normalized_approved
+        and normalized_live.strip() == f"<p>{normalized_approved}</p>"
+    )
+
+
+def approved_readback_matches(after: dict[str, Any], payload: dict[str, Any]) -> bool:
+    if set(after) != set(payload):
+        return False
+    for field, approved in payload.items():
+        live = after.get(field)
+        if field in {"description", "short_description"}:
+            if not isinstance(live, str) or not isinstance(approved, str):
+                return False
+            if not description_readback_matches(live, approved):
+                return False
+        elif live != approved:
+            return False
+    return True
 
 
 def safe_resource_fingerprint(record: dict[str, Any], action: str) -> str:
@@ -535,14 +614,22 @@ def load_plan(path: str) -> dict[str, Any]:
     validate_write_route(method, endpoint)
     if plan.get("method") != method or plan.get("endpoint") != endpoint:
         raise ChangeError("Plan method or endpoint is not the internally constructed allowlisted route.")
-    # Re-run closed payload/source validation and immutable-draft injection.
-    caller_changes = {k: v for k, v in dict(plan.get("payload") or {}).items() if k != "status"}
+    # Re-run closed payload/source validation. Only create actions inject Draft
+    # status automatically; an update's status is an explicitly approved field.
+    raw_payload = dict(plan.get("payload") or {})
+    caller_changes = (
+        {k: v for k, v in raw_payload.items() if k != "status"}
+        if action.endswith("create") else raw_payload
+    )
     validated_changes = clean_changes(action, caller_changes)
     expected_payload = payload_for(action, validated_changes)
     if expected_payload != plan.get("payload"):
         raise ChangeError("Plan payload failed the current allowlist validation.")
     raw_sources = dict(plan.get("sources") or {})
-    caller_sources = {k: v for k, v in raw_sources.items() if k != "status"}
+    caller_sources = (
+        {k: v for k, v in raw_sources.items() if k != "status"}
+        if action.endswith("create") else raw_sources
+    )
     if verify_sources(validated_changes, caller_sources, action) != raw_sources:
         raise ChangeError("Plan field sources failed validation.")
     plan["sha256"] = saved
@@ -593,7 +680,7 @@ def command_commit(args: argparse.Namespace) -> None:
                            else f"/products/{parent_id}/variations/{result_id}")
         readback, _ = wc.api_get(verify_endpoint, vault=vault)
         after = selected_state(readback, plan["payload"])
-        if after != plan["payload"]:
+        if not approved_readback_matches(after, plan["payload"]):
             raise ChangeError("Live readback did not match every approved field.")
         if "images" in plan["payload"]:
             assert_image_gallery_exact(readback, plan["payload"]["images"], require_alt_match=True)

@@ -13,6 +13,9 @@ Allowed service writes:
 - PUT  /books/v3/estimates/96274000001559037 (QT-000029) to change exactly one
   field: the quantity of line item_order 9 from 4 to 1, at the customer's
   written request. Commissioned by Rachad on 2026-08-11. See ITEM9_TARGET.
+- POST /books/v3/contacts for the ONE fixed customer "SHM Marine Constructors
+  JV", the record Elaine Iverson asked INV-000051 to be billed to. No field is
+  caller-supplied. Commissioned by Rachad on 2026-08-12. See SHM_CUSTOMER_PAYLOAD.
 
 Forbidden: sending/emailing, marking sent/accepted/declined, deletes, any other
 estimate update, Inventory writes, and any unapproved numeric value.
@@ -3231,6 +3234,794 @@ def command_commit_item9_quantity_correction(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+# ===========================================================================
+# PLAN A -- the ONE fixed SHM Marine Constructors JV customer
+#
+# Commissioned by Rachad on 2026-08-12 as the prerequisite for the INV-000051
+# correction in zoho_invoice_revision_tool.py. Elaine Iverson asked for that
+# invoice to be billed to SHM Marine Constructors JV, and the live read proved
+# no such customer exists in FRP Depot's Books organization.
+#
+# The action takes NO business parameter. The contact name, company name, type,
+# billing address, phone and the single primary contact are fixed in code, so
+# no command line, plan file or environment value can redirect this to another
+# customer or change one character of the record it creates.
+#
+# *** PLAN A AND PLAN B ARE DELIBERATELY NOT ATOMIC. *** This creates a real
+# customer in Zoho. If the INV-000051 correction is then never staged, never
+# approved, or fails, that customer REMAINS. There is no delete, deactivate,
+# rename, merge, cleanup or retry route here by design -- a delete capability
+# is far more dangerous than a spare customer record.
+# ===========================================================================
+
+SHM_KIND = "shm_inv000051_customer"
+SHM_SCHEMA_VERSION = 1
+SHM_PLAN_LIFETIME_HOURS = 24
+CONTACTS_CREATE_SCOPE = "ZohoBooks.contacts.CREATE"
+CONTACTS_COLLECTION_PATH = "/books/v3/contacts"
+CONTACTS_COLLECTION_RE = re.compile(r"^/books/v3/contacts$")
+SHM_CONTACT_NAME = "SHM Marine Constructors JV"
+SHM_EXPECTED_CURRENCY = "CAD"
+
+# The complete POST body. Nothing is computed, defaulted or read from input.
+# Deliberately absent: shipping address (the client collects, so there is none
+# to invent), website, tax registration, payment terms, fax, currency
+# conversion, custom fields and every contact person other than Elaine.
+SHM_CUSTOMER_PAYLOAD: dict[str, Any] = {
+    "contact_name": SHM_CONTACT_NAME,
+    "company_name": SHM_CONTACT_NAME,
+    "contact_type": "customer",
+    "customer_sub_type": "business",
+    "billing_address": {
+        "address": "343A Bay St",
+        "city": "Victoria",
+        "state": "BC",
+        "zip": "V8T1P5",
+        "country": "Canada",
+        "phone": "250-590-7072",
+    },
+    "contact_persons": [
+        {
+            "first_name": "Elaine",
+            "last_name": "Iverson",
+            "email": "elaineiverson@ralmax.com",
+            "is_primary_contact": True,
+        }
+    ],
+}
+SHM_BILLING_SUPPLIED_KEYS = ("address", "city", "state", "zip", "country", "phone")
+
+SHM_PO_DIR = WORKING_DIR / "invoice_revision_po"
+# Byte size AND digest, both fixed. A re-extracted, re-saved or re-downloaded
+# source file is a different file and refuses before any network call.
+SHM_SOURCE_FILES: tuple[dict[str, Any], ...] = (
+    {
+        "label": "client_po_pdf",
+        "path": SHM_PO_DIR / "SHM PO#0031_FRP Depots.pdf",
+        "bytes": 112548,
+        "sha256": "623c47693f0552fa267d7a5ace7650772447f2787822c4e0d3119019b9d2e08c",
+    },
+    {
+        "label": "client_po_text",
+        "path": SHM_PO_DIR / "SHM PO#0031_FRP Depots.pdf.txt",
+        "bytes": 1857,
+        "sha256": "cedc078afc6467f9819ee358a744febd0af0114fb032e5eff535bb74d25d2ee8",
+    },
+    {
+        "label": "live_preflight",
+        "path": WORKING_DIR / "invoice_revision_live_preflight_20260812.json",
+        "bytes": 2538,
+        "sha256": "53b62f2623d482c929d6fad53ffc874c955b87a53497439de4b98f270449c671",
+    },
+)
+
+# Duplicate detection walks the WHOLE contact list, unfiltered. A name search
+# would only ever prove something about the rows the search matched, and the
+# name Zoho stores may differ from the name searched by whitespace, case or a
+# trailing character. These bounds are REFUSALS when exceeded, never a partial
+# scan reported clean.
+SHM_CONTACT_PER_PAGE = 200
+SHM_CONTACT_MAX_PAGES = 200
+SHM_CONTACT_MAX_ROWS = 40000
+
+SHM_RISK_NOTE = (
+    "ONE atomic POST that creates ONE new active customer in FRP Depot's Zoho "
+    "Books organization. It is attempted exactly once: any failure, timeout or "
+    "indeterminate result permanently locks this plan against retry, and no "
+    "cleanup, deletion, deactivation, rename or second attempt is ever made -- "
+    "reconcile in Zoho by hand. THIS PLAN IS NOT ATOMIC WITH THE INV-000051 "
+    "CORRECTION: the customer created here REMAINS in Zoho even if that "
+    "correction is never staged, never approved, or fails. This tool has no "
+    "mail transport and sends nothing; it cannot reach an estimate, an invoice, "
+    "a sales order, an attachment or the website."
+)
+SHM_DEFAULTS_NOTE = (
+    "Zoho returns its own read-only defaults on a new contact (portal flags, "
+    "payment terms, timestamps, an empty shipping address, a derived "
+    "country_code and state_code). They are recorded in the receipt and are "
+    "accepted only as defaults: every field this plan actually supplies is "
+    "verified byte-exact against a fresh read, and any supplied field that "
+    "differs is an indeterminate result, not a default."
+)
+SHM_PLAN_FIELDS = {
+    "tool", "kind", "schema_version", "created_utc", "expires_utc", "nonce",
+    "approval_required", "books_organization_id", "risk", "source_evidence",
+    "live_evidence", "sha256",
+}
+SHM_EVIDENCE_FIELDS = {
+    "organization", "duplicate_scan", "post_endpoint", "post_payload",
+    "zoho_defaults_policy", "email_sent",
+}
+
+
+def shm_source_evidence() -> dict[str, Any]:
+    """The three fixed local sources, by exact byte size and exact digest."""
+    records: dict[str, Any] = {}
+    for entry in SHM_SOURCE_FILES:
+        path = Path(entry["path"])
+        try:
+            size = path.stat().st_size
+        except OSError as exc:
+            raise DraftToolError(f"Source evidence is unreadable: {path}") from exc
+        if size != entry["bytes"]:
+            raise DraftToolError(
+                f"REFUSED: source {entry['label']} is {size} bytes, not the fixed "
+                f"{entry['bytes']}. Nothing staged."
+            )
+        digest = file_digest(path)
+        if not secrets.compare_digest(digest, str(entry["sha256"])):
+            raise DraftToolError(
+                f"REFUSED: source {entry['label']} does not match its fixed SHA-256. Nothing staged."
+            )
+        records[str(entry["label"])] = {
+            "path": str(path),
+            "bytes": size,
+            "sha256": digest,
+        }
+    return dict(sorted(records.items()))
+
+
+def normalized_contact_name(value: Any) -> str:
+    return " ".join(str(value if value is not None else "").split()).casefold()
+
+
+def enumerate_all_contacts(
+    access_token: str, vault: dict[str, Any]
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """EVERY contact in the organization, or a refusal. No sampling path.
+
+    Zoho's own page_context.has_more_page is the termination proof; if it is
+    absent or not a boolean the walk cannot be shown to be complete, so it
+    refuses rather than returning what it happened to see.
+    """
+    org_id = books_organization_id(vault)
+    rows: list[dict[str, Any]] = []
+    page = 1
+    pages = 0
+    while True:
+        if pages >= SHM_CONTACT_MAX_PAGES:
+            raise DraftToolError(
+                f"REFUSED: the contact list exceeded the {SHM_CONTACT_MAX_PAGES}-page ceiling, "
+                "so a complete duplicate check could not be proven. Nothing staged."
+            )
+        query = urlencode(
+            {
+                "organization_id": org_id,
+                "page": page,
+                "per_page": SHM_CONTACT_PER_PAGE,
+            }
+        )
+        result = zoho_tool.api_get(
+            access_token, str(vault["api_domain"]), f"/books/v3/contacts?{query}"
+        )
+        batch = result.get("contacts")
+        if not isinstance(batch, list):
+            raise DraftToolError(
+                f"REFUSED: Zoho returned no readable contact list on page {page}. "
+                "A complete duplicate check is not possible. Nothing staged."
+            )
+        for row in batch:
+            if not isinstance(row, dict):
+                raise DraftToolError(
+                    f"REFUSED: contact page {page} carries an unreadable row. Nothing staged."
+                )
+            rows.append(json_copy(row))
+            if len(rows) > SHM_CONTACT_MAX_ROWS:
+                raise DraftToolError(
+                    f"REFUSED: the contact list exceeded the {SHM_CONTACT_MAX_ROWS}-row ceiling, "
+                    "so a complete duplicate check could not be proven. Nothing staged."
+                )
+        pages += 1
+        context = result.get("page_context")
+        if not isinstance(context, dict):
+            raise DraftToolError(
+                f"REFUSED: Zoho returned no page context on contact page {page}, so the walk "
+                "cannot be proven complete. Nothing staged."
+            )
+        has_more = context.get("has_more_page")
+        if not isinstance(has_more, bool):
+            raise DraftToolError(
+                f"REFUSED: Zoho did not state has_more_page on contact page {page}, so the walk "
+                "cannot be proven complete. Nothing staged."
+            )
+        try:
+            reported_page = int(context.get("page"))
+        except (TypeError, ValueError) as exc:
+            raise DraftToolError(
+                f"REFUSED: Zoho returned an unreadable page number on contact page {page}."
+            ) from exc
+        if reported_page != page:
+            raise DraftToolError(
+                f"REFUSED: Zoho answered contact page {reported_page} when page {page} was asked "
+                "for. The walk cannot be proven complete. Nothing staged."
+            )
+        if not has_more:
+            break
+        page += 1
+    return rows, {
+        "pages": pages,
+        "per_page": SHM_CONTACT_PER_PAGE,
+        "enumerated": len(rows),
+        "filtered": False,
+        "complete": True,
+    }
+
+
+def scan_contacts_for_shm(
+    rows: list[dict[str, Any]], totals: dict[str, Any]
+) -> dict[str, Any]:
+    """Exact duplicates refuse. Near matches are disclosed and NEVER substituted."""
+    target = normalized_contact_name(SHM_CONTACT_NAME)
+    exact: list[dict[str, Any]] = []
+    near: list[dict[str, Any]] = []
+    for row in rows:
+        contact_id = str(row.get("contact_id") or "")
+        names = {
+            field: str(row.get(field) or "")
+            for field in ("contact_name", "company_name")
+        }
+        matched = sorted(
+            field for field, value in names.items()
+            if normalized_contact_name(value) == target
+        )
+        record = {
+            "contact_id": contact_id,
+            "contact_name": names["contact_name"],
+            "company_name": names["company_name"],
+            "status": str(row.get("status") or ""),
+            "contact_type": str(row.get("contact_type") or ""),
+        }
+        if matched:
+            exact.append(dict(record, matched_fields=matched))
+            continue
+        if any("shm marine" in normalized_contact_name(value) for value in names.values()):
+            near.append(record)
+    scan = dict(totals)
+    scan.update(
+        {
+            "target_name": SHM_CONTACT_NAME,
+            "exact_matches": exact,
+            "exact_match_count": len(exact),
+            "near_matches": sorted(near, key=lambda item: item["contact_id"]),
+            "near_match_count": len(near),
+        }
+    )
+    return scan
+
+
+def require_no_shm_duplicate(scan: dict[str, Any]) -> None:
+    if scan.get("complete") is not True:
+        raise DraftToolError(
+            "REFUSED: the duplicate check is not complete, so a duplicate cannot be ruled out."
+        )
+    matches = scan.get("exact_matches") or []
+    if matches:
+        listed = ", ".join(
+            f"{item.get('contact_name')!r} ({item.get('contact_id')})" for item in matches
+        )
+        raise DraftToolError(
+            f"REFUSED: a customer already carries the exact name {SHM_CONTACT_NAME!r}: {listed}. "
+            "No duplicate was created. Plan A is unnecessary -- the INV-000051 correction may use "
+            "that existing record only if every field it requires matches live."
+        )
+
+
+def shm_organization_record(access_token: str, vault: dict[str, Any]) -> dict[str, str]:
+    org_id = books_organization_id(vault)
+    result = zoho_tool.api_get(
+        access_token, str(vault["api_domain"]), "/books/v3/organizations"
+    )
+    organizations = result.get("organizations")
+    if not isinstance(organizations, list) or not organizations:
+        raise DraftToolError("Zoho returned no Books organizations.")
+    frp = zoho_tool.frp_organization(organizations)
+    if str(frp.get("organization_id") or "") != org_id:
+        raise DraftToolError(
+            "REFUSED: the live FRP Depot Books organization does not match the saved connection."
+        )
+    currency = str(frp.get("currency_code") or "")
+    if currency != SHM_EXPECTED_CURRENCY:
+        raise DraftToolError(
+            f"REFUSED: the organization bills in {currency or 'an unknown currency'}, not "
+            f"{SHM_EXPECTED_CURRENCY}. A new customer would not inherit the currency this "
+            "invoice correction requires. Nothing staged."
+        )
+    return {
+        "organization_id": org_id,
+        "name": str(frp.get("name") or frp.get("organization_name") or ""),
+        "currency_code": currency,
+    }
+
+
+def build_shm_customer(
+    organization: dict[str, str], scan: dict[str, Any]
+) -> dict[str, Any]:
+    """The whole projection, derived from fixed constants and the live scan."""
+    return {
+        "organization": json_copy(organization),
+        "duplicate_scan": json_copy(scan),
+        "post_endpoint": f"POST {CONTACTS_COLLECTION_PATH}",
+        "post_payload": json_copy(SHM_CUSTOMER_PAYLOAD),
+        "zoho_defaults_policy": SHM_DEFAULTS_NOTE,
+        "email_sent": False,
+    }
+
+
+def stage_shm_plan(
+    organization: dict[str, str], sources: dict[str, Any], evidence: dict[str, Any]
+) -> Path:
+    created = utc_now()
+    core = {
+        "tool": TOOL_NAME,
+        "kind": SHM_KIND,
+        "schema_version": SHM_SCHEMA_VERSION,
+        "created_utc": created.isoformat(),
+        "expires_utc": (created + timedelta(hours=SHM_PLAN_LIFETIME_HOURS)).isoformat(),
+        "nonce": secrets.token_hex(16),
+        "approval_required": APPROVAL_WORD,
+        "books_organization_id": organization["organization_id"],
+        "risk": {
+            "atomic": True,
+            "single_post": True,
+            "email_sent": False,
+            "atomic_with_invoice_correction": False,
+            "note": SHM_RISK_NOTE,
+        },
+        "source_evidence": sources,
+        "live_evidence": evidence,
+    }
+    plan = dict(core)
+    plan["sha256"] = digest_for(core)
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = created.strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_{SHM_KIND}_{plan['sha256'][:8]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    zoho_tool.append_receipt(
+        "zoho_shm_inv000051_customer_plan_staged",
+        f"plan={path}; sha256={plan['sha256']}; enumerated="
+        f"{evidence['duplicate_scan']['enumerated']}; exact_matches=0; write_attempted=false",
+    )
+    return path
+
+
+def command_stage_shm_inv000051_customer(args: argparse.Namespace) -> None:
+    sources = shm_source_evidence()
+    vault = zoho_tool.load_vault()
+    zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    organization = shm_organization_record(access_token, vault)
+    rows, totals = enumerate_all_contacts(access_token, vault)
+    scan = scan_contacts_for_shm(rows, totals)
+    require_no_shm_duplicate(scan)
+    evidence = build_shm_customer(organization, scan)
+    path = stage_shm_plan(organization, sources, evidence)
+    zoho_tool.save_vault(vault)
+    print_shm_summary(read_json(str(path)), path)
+
+
+def print_shm_summary(plan: dict[str, Any], path: Path) -> None:
+    payload = plan["live_evidence"]["post_payload"]
+    scan = plan["live_evidence"]["duplicate_scan"]
+    person = payload["contact_persons"][0]
+    print(
+        json.dumps(
+            {
+                "status": "STAGED_AWAITING_RACHADS_APPROVAL",
+                "kind": SHM_KIND,
+                "plan": str(path),
+                "plan_sha256": plan["sha256"],
+                "expires_utc": plan["expires_utc"],
+                "creates": "ONE new Zoho Books customer",
+                "contact_name": payload["contact_name"],
+                "company_name": payload["company_name"],
+                "billing_address": payload["billing_address"],
+                "primary_contact": f"{person['first_name']} {person['last_name']} <{person['email']}>",
+                "duplicate_check": {
+                    "contacts_enumerated": scan["enumerated"],
+                    "pages": scan["pages"],
+                    "complete": scan["complete"],
+                    "exact_matches": scan["exact_match_count"],
+                    "near_matches": scan["near_match_count"],
+                },
+                "post_endpoint": plan["live_evidence"]["post_endpoint"],
+                "email_sent": False,
+                "atomic_with_invoice_correction": False,
+                "not_atomic_warning": (
+                    "This customer REMAINS in Zoho even if the INV-000051 correction is never "
+                    "staged, never approved, or fails. There is no delete or undo route."
+                ),
+                "approval_required": APPROVAL_WORD,
+            },
+            ensure_ascii=False,
+            indent=2,
+        )
+    )
+
+
+def validate_shm_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    reject_extra(plan, SHM_PLAN_FIELDS, "SHM customer plan")
+    if (
+        plan.get("tool") != TOOL_NAME
+        or plan.get("kind") != SHM_KIND
+        or plan.get("schema_version") != SHM_SCHEMA_VERSION
+        or plan.get("approval_required") != APPROVAL_WORD
+    ):
+        raise DraftToolError("The plan belongs to a different tool, action or schema version.")
+    if not NONCE_RE.fullmatch(str(plan.get("nonce") or "")):
+        raise DraftToolError("Plan nonce is invalid.")
+    created = parse_plan_time(plan.get("created_utc"), "creation time")
+    expires = parse_plan_time(plan.get("expires_utc"), "expiry")
+    if expires - created != timedelta(hours=SHM_PLAN_LIFETIME_HOURS):
+        raise DraftToolError("Plan must have exactly a 24-hour lifetime.")
+    now = utc_now()
+    if created > now + timedelta(minutes=5):
+        raise DraftToolError("Plan creation time is in the future.")
+    if now >= expires:
+        raise DraftToolError("Plan expired. Stage a new plan for review.")
+    risk = plan.get("risk")
+    if not isinstance(risk, dict) or (
+        risk.get("atomic") is not True
+        or risk.get("single_post") is not True
+        or risk.get("email_sent") is not False
+        or risk.get("atomic_with_invoice_correction") is not False
+        or risk.get("note") != SHM_RISK_NOTE
+    ):
+        raise DraftToolError(
+            "Plan must disclose the exact single-atomic-POST risk and that it is NOT atomic "
+            "with the INV-000051 correction."
+        )
+    if not ID_RE.fullmatch(str(plan.get("books_organization_id") or "")):
+        raise DraftToolError("Plan organization ID is invalid.")
+    sources = plan.get("source_evidence")
+    if sources != shm_source_evidence():
+        raise DraftToolError(
+            "Plan source evidence is not the three fixed local sources at their fixed digests."
+        )
+    evidence = plan.get("live_evidence")
+    if not isinstance(evidence, dict):
+        raise DraftToolError("Plan live evidence is invalid.")
+    reject_extra(evidence, SHM_EVIDENCE_FIELDS, "SHM customer evidence")
+    organization = evidence.get("organization")
+    scan = evidence.get("duplicate_scan")
+    if not isinstance(organization, dict) or not isinstance(scan, dict):
+        raise DraftToolError("Plan live evidence is invalid.")
+    if str(organization.get("organization_id") or "") != str(plan["books_organization_id"]):
+        raise DraftToolError("Plan organization evidence does not match the plan organization.")
+    if organization.get("currency_code") != SHM_EXPECTED_CURRENCY:
+        raise DraftToolError("Plan organization evidence is not the CAD organization.")
+    # Re-derive EVERYTHING from the staged scan. A tampered endpoint, payload or
+    # disclosure cannot survive this.
+    if build_shm_customer(organization, scan) != evidence:
+        raise DraftToolError(
+            "Plan evidence is not the canonical projection of the staged live state."
+        )
+    if evidence["post_payload"] != SHM_CUSTOMER_PAYLOAD:
+        raise DraftToolError(
+            "REFUSED: the plan payload is not the ONE fixed SHM Marine Constructors JV record."
+        )
+    if evidence["post_endpoint"] != f"POST {CONTACTS_COLLECTION_PATH}":
+        raise DraftToolError("Plan endpoint is not the one commissioned contact route.")
+    require_no_shm_duplicate(scan)
+    return evidence
+
+
+def load_shm_plan(path: Path) -> tuple[dict[str, Any], dict[str, Any]]:
+    plan = read_json(str(path))
+    saved = str(plan.get("sha256") or "")
+    core = dict(plan)
+    core.pop("sha256", None)
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise DraftToolError("Plan hash check failed. The plan changed after review.")
+    evidence = validate_shm_plan(plan)
+    return plan, evidence
+
+
+def require_shm_post_allowed(
+    method: str, path: str, organization_id: str, payload: dict[str, Any]
+) -> None:
+    """The complete write allowlist for Plan A.
+
+    Only POST. Only the one contact collection route -- no ID-suffixed route, no
+    delete, no deactivate, no merge, no portal invite, no estimate, invoice,
+    sales-order or mail route exists here or anywhere in this action. Only the
+    ONE fixed payload, compared byte-for-byte against the constant.
+    """
+    if method != "POST":
+        raise DraftToolError("REFUSED: the SHM customer creation is a POST and nothing else.")
+    if not CONTACTS_COLLECTION_RE.fullmatch(str(path)):
+        raise DraftToolError(
+            "REFUSED: the SHM customer creation targets the one exact contact collection route. "
+            "Deletion, deactivation, merging, portal invitation, estimates, invoices, sales "
+            "orders, attachments, mail and every bulk route are unreachable."
+        )
+    if payload != SHM_CUSTOMER_PAYLOAD:
+        raise DraftToolError(
+            "REFUSED: the contact POST payload is not the ONE fixed SHM Marine Constructors JV "
+            "record. No field of this action is caller-supplied."
+        )
+    if not ID_RE.fullmatch(str(organization_id)):
+        raise DraftToolError("REFUSED: the organization ID is invalid.")
+
+
+def oauth_shm_customer_write_allowed(
+    access_token: str,
+    api_domain: str,
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    """The ONE write path for Plan A, gated by its own allowlist."""
+    require_shm_post_allowed(method, path, organization_id, payload)
+    request = Request(
+        api_domain.rstrip("/") + path + "?" + urlencode({"organization_id": organization_id}),
+        data=json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8"),
+        headers={
+            "Authorization": f"Zoho-oauthtoken {access_token}",
+            "Accept": "application/json",
+            "Content-Type": "application/json",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=60) as response:
+            raw = response.read().decode("utf-8")
+    except HTTPError as exc:
+        detail = exc.read().decode("utf-8", errors="replace")
+        raise DraftToolError(
+            f"Zoho customer creation failed with HTTP {exc.code}: {detail}"
+        ) from exc
+    except URLError as exc:
+        raise DraftToolError(
+            f"Zoho customer creation outcome is indeterminate: {exc.reason}"
+        ) from exc
+    try:
+        result = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise DraftToolError(
+            "Zoho customer creation returned invalid JSON; the outcome is indeterminate."
+        ) from exc
+    if not isinstance(result, dict) or result.get("code") != 0:
+        message = result.get("message") if isinstance(result, dict) else "invalid response"
+        raise DraftToolError(
+            "Zoho customer creation returned an invalid or unknown result: " + str(message)
+        )
+    return result
+
+
+def get_contact(access_token: str, vault: dict[str, Any], contact_id: str) -> dict[str, Any]:
+    query = urlencode({"organization_id": books_organization_id(vault)})
+    result = zoho_tool.api_get(
+        access_token, str(vault["api_domain"]), f"/books/v3/contacts/{contact_id}?{query}"
+    )
+    contact = result.get("contact")
+    if not isinstance(contact, dict) or str(contact.get("contact_id") or "") != str(contact_id):
+        raise DraftToolError(f"Zoho contact {contact_id} was not found.")
+    return json_copy(contact)
+
+
+def verify_shm_contact(after: Any, label: str) -> dict[str, Any]:
+    """Every field this plan supplied, proven byte-exact against a fresh read."""
+    if not isinstance(after, dict):
+        raise DraftToolError(f"{label} returned no contact record.")
+    contact_id = str(after.get("contact_id") or "")
+    if not ID_RE.fullmatch(contact_id):
+        raise DraftToolError(f"{label} carries no usable customer ID.")
+    for key in ("contact_name", "company_name", "contact_type", "customer_sub_type"):
+        want = SHM_CUSTOMER_PAYLOAD[key]
+        actual = after.get(key)
+        if actual != want:
+            raise DraftToolError(
+                f"{label} {key} is {actual!r}, not the approved {want!r}. Stop and reconcile."
+            )
+    status = str(after.get("status") or "")
+    if status != "active":
+        raise DraftToolError(f"{label} status is {status!r}, not active. Stop and reconcile.")
+    currency = str(after.get("currency_code") or "")
+    if currency != SHM_EXPECTED_CURRENCY:
+        raise DraftToolError(
+            f"{label} bills in {currency!r}, not {SHM_EXPECTED_CURRENCY}. Stop and reconcile."
+        )
+    billing = after.get("billing_address")
+    if not isinstance(billing, dict):
+        raise DraftToolError(f"{label} carries no billing address. Stop and reconcile.")
+    for key in SHM_BILLING_SUPPLIED_KEYS:
+        want = SHM_CUSTOMER_PAYLOAD["billing_address"][key]
+        actual = billing.get(key)
+        if actual != want:
+            raise DraftToolError(
+                f"{label} billing {key} is {actual!r}, not the approved {want!r}. "
+                "Stop and reconcile."
+            )
+    billing_address_id = str(billing.get("address_id") or "")
+    if not ID_RE.fullmatch(billing_address_id):
+        raise DraftToolError(
+            f"{label} billing address carries no usable address ID. Stop and reconcile."
+        )
+    persons = after.get("contact_persons")
+    if not isinstance(persons, list) or len(persons) != 1:
+        raise DraftToolError(
+            f"{label} carries {len(persons) if isinstance(persons, list) else 'no'} contact "
+            "person(s), not the one approved Elaine Iverson record. Stop and reconcile."
+        )
+    person = persons[0]
+    want_person = SHM_CUSTOMER_PAYLOAD["contact_persons"][0]
+    if not isinstance(person, dict):
+        raise DraftToolError(f"{label} contact person is not a record. Stop and reconcile.")
+    for key in ("first_name", "last_name"):
+        if person.get(key) != want_person[key]:
+            raise DraftToolError(
+                f"{label} contact person {key} is {person.get(key)!r}, not the approved "
+                f"{want_person[key]!r}. Stop and reconcile."
+            )
+    if str(person.get("email") or "").casefold() != str(want_person["email"]).casefold():
+        raise DraftToolError(
+            f"{label} contact person email is {person.get('email')!r}, not the approved "
+            f"{want_person['email']!r}. Stop and reconcile."
+        )
+    if person.get("is_primary_contact") is not True:
+        raise DraftToolError(f"{label} contact person is not primary. Stop and reconcile.")
+    supplied = set(SHM_CUSTOMER_PAYLOAD)
+    return {
+        "contact_id": contact_id,
+        "billing_address_id": billing_address_id,
+        "contact_person_id": str(person.get("contact_person_id") or ""),
+        "zoho_default_keys": sorted(key for key in after if key not in supplied),
+        "shipping_address_blank": not any(
+            str(value or "").strip()
+            for key, value in (after.get("shipping_address") or {}).items()
+            if key not in ("address_id",)
+        ),
+    }
+
+
+def command_commit_shm_inv000051_customer(args: argparse.Namespace) -> None:
+    plan_path = contained_correction_plan(args.plan)
+    plan, evidence = load_shm_plan(plan_path)
+    # Approval is checked before the lock, the vault, the token and the network.
+    require_exact_approval(args.approval)
+    lock = correction_lock_path(plan["sha256"])
+    if lock.exists():
+        raise DraftToolError(
+            "REFUSED: this plan has already entered commit and cannot be replayed. "
+            "No Zoho call was made."
+        )
+    try:
+        vault = zoho_tool.load_vault()
+        scopes = [str(scope) for scope in vault.get("scopes") or []]
+        zoho_tool.validate_scopes(scopes)
+        if CONTACTS_CREATE_SCOPE not in scopes:
+            raise DraftToolError(
+                f"Saved Zoho connection lacks {CONTACTS_CREATE_SCOPE}. No POST was issued."
+            )
+        access_token, vault = zoho_tool.refresh_access_token(vault)
+        organization = shm_organization_record(access_token, vault)
+        if organization != evidence["organization"]:
+            raise DraftToolError(
+                "REFUSED: the live FRP Depot Books organization does not match the plan."
+            )
+        organization_id = organization["organization_id"]
+        # A FRESH complete duplicate walk, not the staged one: a customer created
+        # between staging and approval must still stop this.
+        rows, totals = enumerate_all_contacts(access_token, vault)
+        require_no_shm_duplicate(scan_contacts_for_shm(rows, totals))
+        # The write allowlist runs here too, so a payload it would reject is a
+        # free refusal rather than a permanently burned plan.
+        require_shm_post_allowed(
+            "POST", CONTACTS_COLLECTION_PATH, organization_id, evidence["post_payload"]
+        )
+    except Exception as exc:
+        zoho_tool.append_receipt(
+            "zoho_shm_inv000051_customer_refused_before_lock",
+            f"plan={plan_path}; sha256={plan['sha256']}; write_attempted=false; locked=false; "
+            "email_sent=false",
+        )
+        raise DraftToolError(
+            "The SHM customer creation was refused BEFORE any write and BEFORE the replay lock. "
+            f"No POST was issued and no email was sent. Reason: {exc}"
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": SHM_KIND,
+        "status": "in_flight",
+        "started_utc": utc_now().isoformat(),
+    }, exclusive=True)
+    write_attempted = False
+    contact_id = ""
+    try:
+        write_attempted = True
+        result = oauth_shm_customer_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "POST",
+            CONTACTS_COLLECTION_PATH,
+            organization_id,
+            evidence["post_payload"],
+        )
+        created = result.get("contact")
+        verify_shm_contact(created, "POST response")
+        contact_id = str(created.get("contact_id") or "")
+        verified = verify_shm_contact(
+            get_contact(access_token, vault, contact_id), "Fresh read-back"
+        )
+        if verified["contact_id"] != contact_id:
+            raise DraftToolError("The fresh read-back returned a different customer ID.")
+        zoho_tool.save_vault(vault)
+    except Exception as exc:
+        write_correction_lock(lock, {
+            "plan_sha256": plan["sha256"],
+            "kind": SHM_KIND,
+            "status": "indeterminate",
+            "contact_id": contact_id,
+            "write_attempted": write_attempted,
+            "plan_locked_indeterminate": True,
+            "updated_utc": utc_now().isoformat(),
+            "reason": str(exc)[:2000],
+            "no_retry": True,
+        })
+        zoho_tool.append_receipt(
+            "zoho_shm_inv000051_customer_indeterminate_no_retry",
+            f"contact_id={contact_id or 'unknown'}; write_attempted={str(write_attempted).lower()}; "
+            f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
+        )
+        raise DraftToolError(
+            "The SHM customer creation is indeterminate and this plan is permanently locked "
+            "against retry. A POST was ISSUED -- the live customer list is unconfirmed. No "
+            "email was sent; this tool has no mail transport. No deletion, deactivation or "
+            f"second attempt was made. Reason: {exc} Read the customer list in Zoho and "
+            "reconcile before staging anything new."
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": SHM_KIND,
+        "status": "committed_verified",
+        "contact_id": contact_id,
+        "updated_utc": utc_now().isoformat(),
+        "no_retry": True,
+    })
+    zoho_tool.append_receipt(
+        "zoho_shm_inv000051_customer_committed_verified",
+        f"contact_id={contact_id}; billing_address_id={verified['billing_address_id']}; "
+        f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
+    )
+    print(json.dumps({
+        "status": "COMMITTED_AND_VERIFIED",
+        "kind": SHM_KIND,
+        "contact_id": contact_id,
+        "contact_name": SHM_CONTACT_NAME,
+        "billing_address_id": verified["billing_address_id"],
+        "contact_person_id": verified["contact_person_id"],
+        "shipping_address_blank": verified["shipping_address_blank"],
+        "zoho_default_keys": verified["zoho_default_keys"],
+        "plan": str(plan_path),
+        "plan_sha256": plan["sha256"],
+        "email_sent": False,
+        "atomic": True,
+        "atomic_with_invoice_correction": False,
+        "replay_locked": True,
+    }, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=TOOL_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -3264,6 +4055,14 @@ def build_parser() -> argparse.ArgumentParser:
     commit_item9.add_argument("--plan", required=True)
     commit_item9.add_argument("--approval", required=True)
     commit_item9.set_defaults(func=command_commit_item9_quantity_correction)
+    # No --input, no --source and no business argument of any kind: the whole
+    # SHM Marine Constructors JV record is fixed in code.
+    stage_shm = commands.add_parser("stage-shm-inv000051-customer")
+    stage_shm.set_defaults(func=command_stage_shm_inv000051_customer)
+    commit_shm = commands.add_parser("commit-shm-inv000051-customer")
+    commit_shm.add_argument("--plan", required=True)
+    commit_shm.add_argument("--approval", required=True)
+    commit_shm.set_defaults(func=command_commit_shm_inv000051_customer)
     return parser
 
 

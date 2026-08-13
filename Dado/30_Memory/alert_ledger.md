@@ -94,6 +94,15 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-11 Debit Return FRP DEPOTS - MID 426988 — New Forte notices say the resubmitted CAD 1,148.23 debit returned again, another credit was deleted, and CAD 1,148.23 must be wired by 12 PM CST August 12 or credits may be reversed; live Zoho imported feeds were refreshed August 11 but show no open line confirming resolution.
 - 2026-08-11 RE: D470 Couplings -- SCT PO26330 — New revised SCT PO replaces 5% GST with 13% Ontario HST and totals CAD 113.45; live Zoho shows 2 physically available, no sales order yet, and the prior CAD 105.42 staged plan is obsolete, so restage before approval.
 - 2026-08-11 QT-000029 / PO 104750 J6276 accepted — New Zoho notification confirms Troy Dualam Services accepted the corrected estimate; fresh Zoho read verifies accepted status, Item 9 quantity 1, and CAD 11,165.88 total. Next step is order processing.
+- 2026-08-12 RFQ / J-Rain B95 pricing — Fei has not replied after 14 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-12 FRP Depot WooCommerce/Zoho and Search Console priorities — Northnet has not provided the implementation plan after 13 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-12 RE: !! Rush !! RFQ Grating — Abitibi has not replied to the July 27 follow-up after 12 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-12 KENZ Ref. 2600AM-KE4288 — KENZ Jordan has not replied to the D411 quotation and datasheet after 9 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-12 FRP Components and Custom Fabrication for PCPS — PCPS has not replied after 7 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-12 Covestro / AR-5369 CHLORINE CONDENSATE RECEIVER — New controlled-technology RFQ requires confirmation that the Keelvar bid was accessed and is being worked; bidding closes August 13 at 17:00 CDT, so same-day verification and acknowledgment were recommended.
+- 2026-08-12 INV-000051 / SHM Marine Constructors JV — New Ralmax confirmation accepts customer-arranged courier collection from Brockville, clearing the carrier decision needed to revise the CAD 13,671 invoice to SHM with PO 0000031 and Ontario HST; proceed with the invoice prerequisites.
+- 2026-08-12 INV-000046 / Airwallex ticket 1605332 — New Airwallex reply needs the specific account name before tracing Les Plastiques P.V.'s missing CAD 40.94 Interac payment; reply needed to keep recovery moving.
+- 2026-08-12 1-inch Stub Flange D411 / SCT — New RFQ from Bon requests 2 × 1-inch D411MEKP stub flanges; live Zoho shows 321 physically available at CAD 50.40 each, so approval requested to prepare quick pricing.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

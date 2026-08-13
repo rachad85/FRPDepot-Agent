@@ -637,6 +637,28 @@ Systems of record:
   is unavailable. The failed 1.0.0 artifact is permanently withdrawn; corrected
   1.0.1 SHA-256 is
   `fe6fa440ea3a08169bf568ae0fbb06f666ad71c1110e58f9b2b6bb0acc8be6cb`.
+  On 2026-08-12 Rachad commissioned `wordpress_packing_ring_media_tool.py`:
+  BUILT AND TESTED ONLY — no plan staged, zero uploads, zero website writes.
+  It has two commands, `stage` and `commit --plan --approval`, and may upload
+  ONLY the six approved Packing Ring PNGs in
+  `Dado\20_Working\packing_rings\generated_gallery_20260812\`, hard-coded by
+  path, name, byte size, SHA-256 and PNG/RGB/1024x1024. A seventh file, the
+  review sheet, the ZIP, a source photo and any arbitrary path are unreachable.
+  The uploads are UNATTACHED media: it changes no product, variation, price,
+  stock, order, setting or user, sends no email, makes no REST call and reads no
+  cookie or token. It attaches only to the existing authenticated WordPress
+  browser and holds the shared browser lane lock for the whole run, taken before
+  the plan's permanent attempt lock, so a busy browser is a free refusal. Its
+  duplicate check is COMPLETE: every attachment by name, and EVERY image in the
+  Media Library downloaded and hashed against all six digests, so an identical
+  image already on the site under an older unrelated filename is caught. It does
+  not sample — anything it cannot read, download or hash makes the check
+  incomplete and it refuses before touching anything. Say plainly when offering
+  it: it is NOT atomic and has NO rollback — if upload 4
+  fails, uploads 1-3 stay live, 5-6 never happen, and the plan is locked with no
+  retry; there is no delete route by design. Every upload needs its own immutable
+  24-hour plan and Rachad's own fresh byte-exact uppercase `APPROVED`, and the
+  images are representative marketing drafts, never dimensional evidence.
 - INTER-COMPANY LINE to Troy Dualam (Aze): LIVE 2026-07-23. When Rachad
   asks you to get something priced or answered by Troy Dualam — or to
   answer a question that came from TDI — run:

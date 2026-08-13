@@ -106,10 +106,57 @@ class ChangeValidationTests(unittest.TestCase):
 
     def test_variation_create_forces_draft(self):
         changes = change.clean_changes("variation_create", {
-            "sku": "PIPE-1-A", "regular_price": "11.00",
+            "sku": "PIPE-1A", "regular_price": "11.00",
             "attributes": [{"id": 3, "option": "2 in"}],
         })
         self.assertEqual(change.payload_for("variation_create", changes)["status"], "draft")
+
+    def test_variation_update_accepts_only_complete_zero_stock_publication_bundle(self):
+        bundle = {
+            "status": "publish",
+            "manage_stock": True,
+            "stock_quantity": 0,
+            "stock_status": "outofstock",
+            "backorders": "no",
+        }
+        self.assertEqual(change.clean_changes("variation_update", bundle), bundle)
+
+    def test_variation_publication_bundle_rejects_partial_or_wrong_values(self):
+        complete = {
+            "status": "publish",
+            "manage_stock": True,
+            "stock_quantity": 0,
+            "stock_status": "outofstock",
+            "backorders": "no",
+        }
+        for missing in complete:
+            partial = {key: value for key, value in complete.items() if key != missing}
+            with self.subTest(missing=missing), self.assertRaises(change.ChangeError):
+                change.clean_changes("variation_update", partial)
+        wrong_values = {
+            "status": "private",
+            "manage_stock": False,
+            "stock_quantity": 1,
+            "stock_status": "instock",
+            "backorders": "yes",
+        }
+        for field, wrong in wrong_values.items():
+            payload = dict(complete)
+            payload[field] = wrong
+            with self.subTest(field=field), self.assertRaises(change.ChangeError):
+                change.clean_changes("variation_update", payload)
+
+    def test_stock_publication_bundle_is_refused_for_creates_and_parent_products(self):
+        bundle = {
+            "status": "publish",
+            "manage_stock": True,
+            "stock_quantity": 0,
+            "stock_status": "outofstock",
+            "backorders": "no",
+        }
+        for action in ("variation_create", "product_create", "product_update"):
+            with self.subTest(action=action), self.assertRaises(change.ChangeError):
+                change.clean_changes(action, bundle)
 
     def test_unsafe_html_rejected(self):
         for value in ("<script>alert(1)</script>", '<p onclick="x()">bad</p>',
@@ -528,6 +575,74 @@ class StageCommitTests(unittest.TestCase):
             with self.assertRaises(change.ChangeError):
                 change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
             second_write.assert_not_called()
+
+    def test_description_commit_accepts_only_wordpress_table_tag_whitespace(self):
+        approved = (
+            '<table><tbody><tr><td>1/2&quot;</td><td>6&quot;, 8&quot;</td></tr>'
+            '</tbody></table>'
+        )
+        wordpress = (
+            '<table>\n<tbody>\n<tr>\n<td>1/2&quot;</td>\n<td>6&quot;, 8&quot;</td>\n'
+            '</tr>\n</tbody>\n</table>'
+        )
+        path = self._input({
+            "action": "product_update", "resource_id": 7,
+            "changes": {"description": approved},
+            "sources": {"description": "Rachad's approved technical table"},
+        })
+        with mock.patch.object(change.wc, "api_get", return_value=(self.old, {})):
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_stage(argparse.Namespace(input=str(path)))
+        result = json.loads(output.getvalue())
+        plan_path = Path(result["plan"])
+        updated = {
+            **self.old,
+            "description": wordpress,
+            "date_modified_gmt": "2026-07-24T12:01:00",
+        }
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(self.old, {}), (updated, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(updated, {})) as write:
+            with contextlib.redirect_stdout(io.StringIO()):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
+            write.assert_called_once()
+        lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "committed_verified")
+
+    def test_description_commit_rejects_changed_table_content(self):
+        approved = '<table><tbody><tr><td>6&quot;</td></tr></tbody></table>'
+        changed = '<table>\n<tbody>\n<tr>\n<td>8&quot;</td>\n</tr>\n</tbody>\n</table>'
+        self.assertFalse(change.approved_readback_matches(
+            {"description": changed}, {"description": approved}
+        ))
+
+    def test_description_commit_does_not_normalize_prose_whitespace(self):
+        self.assertFalse(change.approved_readback_matches(
+            {"description": "<p>Length  options</p>"},
+            {"description": "<p>Length options</p>"},
+        ))
+
+    def test_variation_plain_description_accepts_exact_wordpress_paragraph_wrapper(self):
+        approved = "Not currently in stock. Contact FRP Depots for current pricing and lead time."
+        self.assertTrue(change.approved_readback_matches(
+            {"description": f"<p>{approved}</p>\n"},
+            {"description": approved},
+        ))
+
+    def test_variation_plain_description_wrapper_rejects_changed_content(self):
+        approved = "Not currently in stock. Contact FRP Depots for current pricing and lead time."
+        self.assertFalse(change.approved_readback_matches(
+            {"description": f"<p>{approved} Coming soon.</p>\n"},
+            {"description": approved},
+        ))
+
+    def test_variation_plain_description_wrapper_rejects_extra_markup(self):
+        approved = "Not currently in stock. Contact FRP Depots for current pricing and lead time."
+        self.assertFalse(change.approved_readback_matches(
+            {"description": f"<p>{approved}</p><p>Extra text</p>"},
+            {"description": approved},
+        ))
 
     def test_case_insensitive_approved_is_accepted(self):
         plan_path, _ = self._stage_update()

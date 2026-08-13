@@ -1297,9 +1297,11 @@ class NoSendSurfaceTests(unittest.TestCase):
             self.assertNotIn(marker, self.SOURCE, f"route {marker} must not appear in this tool")
 
     def test_only_two_write_verbs_and_two_route_patterns_exist(self) -> None:
-        # Exactly one PUT (revise one invoice) and exactly one POST (create one
-        # draft invoice), both funnelled through the single network call site.
-        self.assertEqual(self.SOURCE.count('method="PUT"'), 1)
+        # TWO PUTs -- the general one-invoice revision, and the fixed
+        # INV-000051 SHM correction commissioned 2026-08-12 -- plus exactly one
+        # POST (create one draft invoice). All three still funnel through the
+        # SINGLE network call site, which is the property that matters.
+        self.assertEqual(self.SOURCE.count('method="PUT"'), 2)
         self.assertEqual(self.SOURCE.count('method="POST"'), 1)
         self.assertEqual(self.SOURCE.count("urlopen("), 1)
         self.assertEqual(
@@ -1362,14 +1364,22 @@ class ScopeTests(unittest.TestCase):
             "ZohoBooks.customerpayments.UPDATE", "ZohoInventory.packages.UPDATE",
             "ZohoBooks.fullaccess.all",
             # ZohoBooks.salesorders.CREATE was commissioned on 2026-08-11 for
-            # zoho_sales_order_tool.py. Every broader sales-order scope, and the
-            # Inventory sales-order writes, remain refused.
-            "ZohoBooks.salesorders.UPDATE", "ZohoBooks.salesorders.DELETE",
+            # zoho_sales_order_tool.py and .UPDATE on 2026-08-12 for
+            # zoho_historical_client_po_reference_tool.py. Every broader
+            # sales-order scope, and the Inventory sales-order writes, remain
+            # refused.
+            "ZohoBooks.salesorders.DELETE",
             "ZohoBooks.salesorders.ALL", "ZohoInventory.salesorders.CREATE",
         ):
             with self.subTest(scope=scope):
                 with self.assertRaises(zoho_tool.ZohoError):
                     zoho_tool.validate_scopes([scope])
+        # The commissioned sales-order UPDATE belongs to another named tool and
+        # must stay unreachable from this one.
+        source = Path(revision_tool.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("ZohoBooks.salesorders.UPDATE", source)
+        self.assertEqual(revision_tool.INVOICE_PATH_RE.pattern, r"^/books/v3/invoices/([1-9][0-9]*)$")
+        self.assertIsNone(revision_tool.INVOICE_PATH_RE.match("/books/v3/salesorders/96274000000317001"))
 
 
 if __name__ == "__main__":

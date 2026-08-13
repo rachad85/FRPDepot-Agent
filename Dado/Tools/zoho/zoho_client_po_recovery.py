@@ -777,7 +777,11 @@ def _evidence_record(
         "date": _text(message.get("receivedDateTime"))[:10],
         "subject": collapse_whitespace(redact_amounts(_text(message.get("subject"))))[:200],
         "sender": message_sender(message),
-        "attachment_name": attachment_name,
+        # Attachment names are customer-controlled report text too. Redact
+        # financial figures here just as we already do for subjects/excerpts;
+        # a real Purolator filename containing "$208.75" correctly tripped the
+        # finished-report leak scanner on 2026-08-12.
+        "attachment_name": collapse_whitespace(redact_amounts(_text(attachment_name)))[:255],
         "value": candidate["value"],
         "excerpt": candidate["excerpt"],
     }

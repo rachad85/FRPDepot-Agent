@@ -49,6 +49,12 @@ class ZohoToolTests(unittest.TestCase):
                 # ONE fixed SCT PO26330 draft sales order and the upload of the
                 # original client PO to the order that create just returned.
                 "ZohoBooks.salesorders.CREATE",
+                # Commissioned 2026-08-12 for
+                # zoho_historical_client_po_reference_tool.py only: the six fixed
+                # historical Sales Orders whose visible Reference# still shows an
+                # internal quote number instead of the customer's own PO. One
+                # field, reference_number, one record per approved plan.
+                "ZohoBooks.salesorders.UPDATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
                 # Commissioned 2026-08-11 for zoho_backing_ring_stock_tool.py
@@ -66,11 +72,10 @@ class ZohoToolTests(unittest.TestCase):
             # estimate still cannot be deleted, sent, marked or converted.
             "ZohoBooks.estimates.DELETE",
             "ZohoBooks.estimates.ALL",
-            # The SCT PO26330 commission gained CREATE and nothing else: a sales
-            # order still cannot be updated, deleted, voided, restatused,
-            # confirmed, converted or mailed, and no Inventory sales-order write
-            # scope exists at all.
-            "ZohoBooks.salesorders.UPDATE",
+            # The SCT PO26330 commission gained CREATE and the 2026-08-12 client-PO
+            # reference repair gained UPDATE. Nothing else: a sales order still
+            # cannot be deleted, voided, restatused, confirmed, converted or
+            # mailed, and no Inventory sales-order write scope exists at all.
             "ZohoBooks.salesorders.DELETE",
             "ZohoBooks.salesorders.ALL",
             "ZohoInventory.salesorders.CREATE",
@@ -115,17 +120,26 @@ class ZohoToolTests(unittest.TestCase):
         self.assertIn("ZohoBooks.salesorders.CREATE", tool.SCOPES)
         absent = [line for line in lines if "ABSENT" in line]
         self.assertEqual(len(absent), 3, "connect, reauthorize and check each state this")
+        self.assertIn("ZohoBooks.salesorders.UPDATE", tool.SCOPES)
         for line in absent:
             lowered = line.casefold()
             self.assertNotIn("order write scopes: absent", lowered)
-            # Only UPDATE and DELETE remain absent on sales orders; a bare
-            # "sales-order ... ABSENT" would read as covering CREATE too.
+            # Since 2026-08-12 sales-order UPDATE is commissioned too, so only
+            # DELETE remains absent. A bare "sales-order ... ABSENT", or one
+            # still claiming UPDATE is absent, would be the same false comfort
+            # as a stale status line.
             if "sales-order" in lowered:
-                self.assertIn("sales-order update", lowered)
+                self.assertIn("sales-order delete", lowered)
+                self.assertNotIn("sales-order update", lowered)
         disclosed = [line for line in lines if "Books sales-order writes:" in line]
         self.assertEqual(len(disclosed), 3)
         for line in disclosed:
             self.assertIn("PO26330", line)
+            self.assertIn("NAMED TOOL ONLY", line)
+        updates = [line for line in lines if "Books sales-order updates:" in line]
+        self.assertEqual(len(updates), 3, "connect, reauthorize and check each state this")
+        for line in updates:
+            self.assertIn("CLIENT-PO REFERENCE", line)
             self.assertIn("NAMED TOOL ONLY", line)
 
     def test_scope_copy_uses_only_validated_configured_scopes(self) -> None:
