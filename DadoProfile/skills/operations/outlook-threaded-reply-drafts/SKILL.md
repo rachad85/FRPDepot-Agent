@@ -78,6 +78,7 @@ When the thread concerns a new/current customer order, load `frp-order-workflow`
 - A same-subject standalone draft is not proof of thread membership. Verify `conversationId`.
 - An older draft in the same thread may belong to an earlier response. Compare its creation time to the selected source message before treating it as a duplicate.
 - If two attempts at the same operation fail, stop and report the exact blocker rather than trying more variants.
+- When replacing an active Reply All draft in the same response, pass its exact `--superseded-id` and `--superseded-subject`. The duplicate guard must exempt only that verified named draft; all other same-response drafts still block replacement. Regression coverage lives in `test_reply_all_preserves_thread_recipients_history_and_replaces_old_draft`.
 
 ## Proven sources
 
