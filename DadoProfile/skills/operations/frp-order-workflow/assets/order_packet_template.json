@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "packet_id": "customer-po-exact-value",
+  "customer": {
+    "name": "REPLACE",
+    "state": "existing",
+    "zoho_customer_id": "REPLACE_WITH_CANONICAL_ID",
+    "source": "Fresh live Zoho customer read"
+  },
+  "source_review": {
+    "full_thread_read": false,
+    "outlook_conversation_id": "REPLACE",
+    "latest_external_message_id": "REPLACE",
+    "latest_external_received_utc": "2026-01-01T00:00:00+00:00",
+    "thread_source": "Complete live FRP Depot Outlook thread",
+    "internal_document_numbers_seen": [],
+    "attachments": [
+      {
+        "path": "C:\\FRPDepot\\Dado\\20_Working\\orders\\REPLACE\\original-client-po.pdf",
+        "role": "client_po",
+        "inspected": false,
+        "sha256": "REPLACE_WITH_64_LOWERCASE_HEX",
+        "bytes": 1,
+        "source": "Original attachment on exact Outlook message"
+      }
+    ]
+  },
+  "client_po": {
+    "state": "issued",
+    "value": "REPLACE_EXACTLY",
+    "source_value_exact": "REPLACE_EXACTLY",
+    "evidence_kind": "client_po_attachment",
+    "evidence_locator": "C:\\FRPDepot\\Dado\\20_Working\\orders\\REPLACE\\original-client-po.pdf",
+    "no_po_exception_authorized_by": "",
+    "no_po_exception_source": ""
+  },
+  "requested_actions": [
+    {
+      "kind": "quote",
+      "operation": "create_draft",
+      "required": true,
+      "reference_number": "REPLACE_EXACTLY",
+      "target_record_id": "",
+      "target_record_number": "",
+      "recipients": [],
+      "attachments": [],
+      "source": "Exact customer request"
+    },
+    {
+      "kind": "email_draft",
+      "operation": "reply_all",
+      "required": true,
+      "reference_number": "",
+      "target_record_id": "",
+      "target_record_number": "",
+      "recipients": [
+        {
+          "email": "replace@example.com",
+          "source": "Outlook Reply All from latest external message",
+          "verification": "outlook_thread"
+        }
+      ],
+      "attachments": ["rendered_document_pdf"],
+      "source": "Exact customer request"
+    }
+  ],
+  "commercial_terms": {
+    "document_date": {"value": "2026-01-01", "source": "REPLACE"},
+    "quote_expiry_date": {"value": "", "source": "No expiry stated; Rachad must decide before Quote staging if required"},
+    "invoice_due_date": {"value": "", "source": "No Invoice requested in this packet"},
+    "currency": {"value": "CAD", "source": "Fresh live customer currency"},
+    "billing_address": {"value": "REPLACE", "source": "Fresh live customer-owned billing address"},
+    "billing_address_id": {"value": "REPLACE_WITH_CANONICAL_ID", "source": "Fresh live customer-owned billing address ID"},
+    "shipping_address": {"value": "REPLACE", "source": "Customer PO and fresh live customer-owned shipping address"},
+    "shipping_address_id": {"value": "REPLACE_WITH_CANONICAL_ID", "source": "Fresh live customer-owned shipping address ID"},
+    "shipping_instructions": {"value": "REPLACE", "source": "Customer PO/thread"},
+    "payment_terms": {"value": "REPLACE", "source": "Customer PO/thread or fresh live customer terms"},
+    "required_date": {"value": "REPLACE", "source": "Customer PO/thread"},
+    "document_notes": {"value": "REPLACE", "source": "Customer PO/thread and Rachad instruction"}
+  },
+  "lines": [
+    {
+      "item_id": "REPLACE_WITH_CANONICAL_ID",
+      "item_name": "REPLACE_WITH_LIVE_NAME",
+      "sku": "REPLACE_WITH_LIVE_SKU",
+      "item_source": "Fresh live active Zoho item read",
+      "description": {"value": "REPLACE", "source": "Customer PO/specification and live item"},
+      "unit": "pcs",
+      "quantity": {"value": "1", "source": "Exact customer PO line"},
+      "rate": {"value": "0.00", "source": "Exact price list/Zoho record/Rachad words"},
+      "discount": {"kind": "none", "value": "0.00", "source": "No discount in authoritative terms"},
+      "tax": {"state": "taxable", "tax_id": "REPLACE_WITH_CANONICAL_ID", "percentage": "13", "source": "Verified place-of-supply treatment and live Zoho tax"},
+      "availability": {
+        "state": "sufficient_physical_stock",
+        "physical_available_for_sale": "1",
+        "checked_utc": "2026-01-01T00:00:00+00:00",
+        "source": "Zoho item Overview Physical Available for Sale / actual_available_stock"
+      }
+    }
+  ]
+}

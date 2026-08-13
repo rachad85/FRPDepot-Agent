@@ -7,6 +7,8 @@ description: Create or replace FRP Depot Outlook reply drafts in the original li
 
 Use this skill whenever Rachad asks for an email reply or asks to revise a reply draft tied to an existing customer/vendor conversation.
 
+When the thread concerns a new/current customer order, load `frp-order-workflow` first. The validated order packet is the cross-document request/evidence manifest; this skill remains authoritative for the final live-thread, Reply All, recipients, signature, attachment, duplicate-draft, and readback safeguards. Never add an address merely because it appears in the packet unless the address is independently verified through an allowed live recipient source.
+
 ## Non-negotiable boundaries
 
 - Drafts only. Never call a send, reply, replyAll, or forward endpoint that sends mail.
