@@ -103,6 +103,7 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-12 INV-000051 / SHM Marine Constructors JV — New Ralmax confirmation accepts customer-arranged courier collection from Brockville, clearing the carrier decision needed to revise the CAD 13,671 invoice to SHM with PO 0000031 and Ontario HST; proceed with the invoice prerequisites.
 - 2026-08-12 INV-000046 / Airwallex ticket 1605332 — New Airwallex reply needs the specific account name before tracing Les Plastiques P.V.'s missing CAD 40.94 Interac payment; reply needed to keep recovery moving.
 - 2026-08-12 1-inch Stub Flange D411 / SCT — New RFQ from Bon requests 2 × 1-inch D411MEKP stub flanges; live Zoho shows 321 physically available at CAD 50.40 each, so approval requested to prepare quick pricing.
+- 2026-08-13 QT-000031 / 1-inch Stub Flange D411 / SCT — New inbound says Bon may increase the order from 2 to 10; live Zoho shows 319 physically available for sale after 2 committed, so approval requested to draft the stock confirmation and revised quote.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
