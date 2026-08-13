@@ -8,3 +8,7 @@ __pycache__/
 Dado/20_Working/
 Dado/Tools/vendor/
 Dado/Tools/google/google_client.json
+
+# Pre-fix backups of the skills mirror (2026-08-12). A backup of a mirror does
+# not belong in the history of the thing it mirrors; it stays on disk instead.
+Dado/Temp/
