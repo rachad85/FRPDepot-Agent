@@ -428,6 +428,42 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
       is indexed without company filtering. NOTE vendor is
       APPENDED to sys.path, never inserted first — it carries its own
       cryptography copy and the venv pins 46.0.7 for hermes.
+- [x] SWALLOWED-MESSAGE DETECTION added to `stall_tripwire.py` (2026-08-13,
+      Rachad's ask, after the identical failure hit Sary). No new tool and no new
+      cron — the existing `dado-stall-tripwire "*/15 * * * *"` carries it.
+      THE HOLE: orphan detection starts from `inbound message:`. A message that
+      is never PICKED UP produces no such line — it only ever reaches the
+      adapter's own arrival line (`Cached user voice at ...` /
+      `Flushing text batch ...`), so the orphan check could not see that class at
+      all. Her log carries 16 voice arrivals and 326 text flushes it had never
+      read. On Sary this cost a real business question: a voice note asking how a
+      competitor handles shipping arrived while his session was wedged on a
+      90-minute work unit, was never picked up, and died in the restart.
+      `swallowed_messages()` deliberately mirrors `orphaned_messages()` — same
+      per-lane shape, same same-life clearing, same "report only once the current
+      life has moved past it" — so the two cannot drift apart. THE CLASSES ARE
+      DISJOINT BY CONSTRUCTION: an arrival that produced an inbound is cleared
+      here and becomes the orphan check's problem, so one user message can never
+      be reported twice. A swallowed message is ranked ABOVE an orphan: the
+      orphan at least reached her.
+      *** IT MATCHES IN TWO PASSES, NOT IN STREAMING ORDER — DO NOT "SIMPLIFY"
+      THAT BACK. *** The first cut cleared arrivals as it walked the log, and the
+      real log produced a false positive immediately:
+          23:35:04,731  inbound message: platform=telegram ... msg=''
+          23:35:04,841  [Telegram] Flushing text batch ... (65 chars)
+      The inbound is written 110 MILLISECONDS BEFORE the flush for the SAME
+      message — two different loggers, order in the file not guaranteed — so one
+      ordinary message reported as BOTH an orphan and swallowed. Both sides are
+      now collected first and matched with `ADMIT_SKEW_SECONDS = 5`. A regression
+      test pins that exact pair of lines.
+      A QUEUED MESSAGE IS NOT A FAULT and must never page him: both agents
+      legitimately run turns over an hour, so a note picked up 95 minutes later
+      in the same gateway life is fine. Only an arrival whose gateway life ENDED
+      without ever admitting it is reported.
+      Tests: 11 new in `test_stall_tripwire_swallowed.py`, 38 across all
+      tripwire suites, zero regressions. Verified against the live log: 0
+      swallowed (the false positive above is gone) and the 2 known orphans still
+      detected, both older than the 12h lookback so nothing was announced.
 - [x] LONG-JOB DISCIPLINE (2026-07-24, after the 3-hour stall): Dado must
       NEVER wait on a job inside her turn. Anything over ~2 min goes through
       `Dado\Tools\watch\job_runner.py start --name X -- <cmd>` (returns in
@@ -511,6 +547,29 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
       - 2026-08-11: `zoho_backing_ring_stock_tool.py` commissioned for one fixed existing-item merge. Rachad approved plan `81d35927cbbb88318c9575bad8caa19ce495ad6a9c638e10d72a142f5275bfee`; Inventory Adjustment `96274000001556196` added 12 pcs to existing 4-inch item `96274000001518002` and 101 pcs to existing 10-inch item `96274000001518014`, then changed only their future sales rates to CAD 108.00 and CAD 468.00. Fresh GETs proved stock 12/-12 available for sale and 101/65 available for sale, preserved INV-000051 / SO-00050 line links/quantities/historical rates, and zero duplicates or emails. The lock is verified and permanently replay-locked.
       - 2026-08-11: `zoho_backing_ring_eight_stock_tool.py` was approved for the 713 photographed units on the eight newly created colour-neutral items. Plan `fd77238cca9e0552c216e9b79cac8569354cea1dfb310e5b53ff906aa01b696b` made its one POST and created Inventory Adjustment `96274000001555048`: every quantity landed correctly, but Zoho ignored all posted line `item_total` values because the items' live purchase rates were zero. All eight lines and total are CAD 0.00 instead of the tentative CAD 78,816.51. The plan is permanently locked `indeterminate`; no retry. Three fresh GET rounds proved stable stock, zero purchase rates, unchanged sales rates/protected fields, and zero website/email writes. A valuation fix now needs a separately commissioned and approved correction. Pre-commit tests were 58 targeted/regression plus the full 1,032-test Zoho suite (4 expected skips); superseded wording plan `fa5d1ab504f45993ea5d595f13575938ec1194a608b0ce61bcdd0171fbeb099b` remains hash-blocked.
       - 2026-08-12: after that zero valuation, Rachad commissioned and approved the fixed correction. `zoho_backing_ring_eight_valuation_correction_tool.py` made its one POST from plan `2fa9a355a426540aaf72078c4002467a386ebf907c26b40d421a20c8dc04c594`, creating VALUE Inventory Adjustment `96274000001555109`. The immediate verifier saw valuation pending and permanently locked the plan `indeterminate`; no retry. Later fresh reads proved status adjusted/pending false, eight exact `value_adjusted` lines totaling CAD 78,816.51, no quantity fields, and every protected source adjustment/item stock/purchase/selling-rate field unchanged. The two apparent reconciliation mismatches were local comparison defects (`2059.8` vs `2059.80`, then read labels included in a fingerprint); normalizing the three already-saved reads proved them identical without another Zoho call. The lock remains `indeterminate` / no-retry. Tests before commit: 19 fixed, 77 focused, full Zoho 1,051 passed with 4 expected skips. ZERO quantity, item/rate, order/invoice, website or email changes beyond the approved value adjustment.
+      - 2026-08-13: `zoho_customer_quote_tool.py` gained the GENERAL in-place ESTIMATE REVISION (`stage-estimate-revision` / `commit-estimate-revision`) Rachad commissioned so an ordinary quote change amends the customer's own estimate instead of replacing it. Draft/sent only, header reference/date/expiry/notes/terms plus existing-line quantity/rate/discount/description/tax, one atomic PUT, reuses estimates.UPDATE. BUILD AND TESTS ONLY — no plan staged, no plan approved…
+      - 2026-08-13: `zoho_purchase_order_tool.py` commissioned (NEW named tool) for creating ONE NEW Books Purchase Order in exactly Draft status, ready for Rachad to review and send himself. One route `POST /books/v3/purchaseorders`, one new scope `ZohoBooks.purchaseorders.CREATE` (NOT live yet — reauthorization pending). BUILD AND TESTS ONLY — zero purchase orders created…
+      - 2026-08-13: item creation + catalog classification DIAGNOSED, not widened — the D441 failure was the input SHAPE (a top-level `payload` wrapper), not the tool; the refusal message and the module docstring were corrected and regression-tested. Classification values stay `Website Catalog` / `Custom / Customer-Specific` / `Review / Unclassified`; there is no `Non Website` value…
+- [x] ZOHO CAPABILITY REPAIR (2026-08-13) — BUILD AND TESTS ONLY, ZERO Zoho
+      business writes, ZERO emails, ZERO website writes, ZERO browser use. Three
+      pieces, all detailed in `Dado\Tools\zoho\COMMISSIONS.md` (read that file,
+      not this line, before touching any of them): the GENERAL in-place estimate
+      revision inside `zoho_customer_quote_tool.py`; the new
+      `zoho_purchase_order_tool.py` Draft-PO creator; and the D441 item-create
+      diagnosis (input-shape defect, not a tool defect).
+      TWO THINGS TO KNOW WITHOUT OPENING THAT FILE:
+      1. `ZohoBooks.purchaseorders.CREATE` is PREPARED BUT NOT LIVE — the saved
+         connection held 54 scopes on 2026-08-13 and this was not among them, so
+         `stage-create` refuses today with the reauthorization steps. Run
+         PREPARE_DADO_ZOHO_ACCESS.bat, create the grant, then
+         REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat when Rachad wants it.
+      2. The unwanted replacement-estimate plan
+         `Dado_Working\zoho_plans60813T133339Z_quote_bff39a8d.json` was
+         NEVER used, approved or committed. It is left on disk unmodified as a
+         record of why the in-place revision exists.
+      Verification: py_compile clean; 218 focused tests; full Zoho suite 1,504
+      passed with the same 4 pre-existing environment skips. Build result:
+      `Dado_Working\zoho_capability_repair_build_result_20260813.json`.
 - [x] WOOCOMMERCE IMAGE ALT SUPPORT (2026-08-08): Rachad commissioned a narrow
       existing-product image-alt-only extension to `woocommerce_change_tool.py`.
       Every plan must carry the complete gallery with unchanged IDs and order;
