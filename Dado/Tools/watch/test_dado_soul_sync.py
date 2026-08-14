@@ -52,6 +52,18 @@ class SoulSyncTests(unittest.TestCase):
         self.assertEqual(self.live.stat().st_mtime_ns, before)
         self.assertEqual(self.receipt_actions(), [])
 
+    def test_a_crlf_live_file_already_in_sync_stays_untouched(self) -> None:
+        # 2026-08-13: the live profile is CRLF and the mirror is LF, so a raw
+        # byte comparison never matched and every run rewrote an identical file.
+        self.mirror.write_text(BASE, encoding="utf-8", newline="\n")
+        self.live.write_bytes(BASE.replace("\n", "\r\n").encode("utf-8"))
+        before = self.live.stat().st_mtime_ns
+        for _ in range(3):
+            self.assertEqual(sync.sync(self.mirror, self.live, dry_run=False), 0)
+        self.assertEqual(self.live.stat().st_mtime_ns, before)
+        self.assertEqual(self.receipt_actions(), [])
+        self.assertFalse(self.live.with_name(sync.BACKUP_NAME).exists())
+
     # -- the drift this exists for -------------------------------------
     def test_a_rule_added_to_the_mirror_reaches_the_live_profile(self) -> None:
         self.live.write_text(BASE, encoding="utf-8", newline="\n")

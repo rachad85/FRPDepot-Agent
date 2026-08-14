@@ -5,11 +5,12 @@ Commissioned by Rachad Homsi on 2026-08-09. Commissioning authorises building an
 testing this tool. It is NOT approval of any site change: every write still needs
 Rachad's own one-word APPROVED against one exact staged plan.
 
-SCOPE -- ONE PLUGIN, THREE WRITE ROUTES, NOTHING ELSE.
+SCOPE -- ONE PLUGIN, FOUR WRITE ROUTES, NOTHING ELSE.
 
     plugin_replace      Upload Plugin -> replace the installed copy, leave INACTIVE
     plugin_activate     Plugins row -> Activate, then anonymous public validation
     plugin_deactivate   Plugins row -> Deactivate, stays installed
+    plugin_ups_repair   Active 2.0.4 -> exact frozen 2.0.5 hidden-panel CSS repair
 
 The plugin identity, the site origin, the artifact path, the artifact version and
 the artifact SHA-256 are all hard-coded constants. A caller supplies no URL, no
@@ -154,8 +155,8 @@ def holds_wordpress_browser(purpose: str):
     return decorate
 
 TOOL_NAME = "FRP Depot WordPress Plugin Deployment Tool"
-TOOL_VERSION = "1.2.0"
-SCHEMA_VERSION = 3
+TOOL_VERSION = "1.4.0"
+SCHEMA_VERSION = 5
 PREFLIGHT_SCHEMA_VERSION = 2
 
 ROOT = Path(r"C:\FRPDepot")
@@ -190,6 +191,42 @@ ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/readme.txt",
     f"{PLUGIN_SLUG}/ups-allowlist.json",
 )
+
+# Fixed active-plugin UPS repair commissioned by Rachad's "Fix UPS" / "RESUME UPS"
+# instructions on 2026-08-13/14. The artifact is frozen from the exact deployed
+# 2.0.4 ZIP and changes only two version tokens, the disclosed readme and the
+# exact one-rule CSS fix. The 64-variation allowlist remains byte-identical.
+# It is deliberately a separate action:
+# the older inactive 1.0.0 -> 1.0.1 deployment routes remain scoped as before.
+UPS_REPAIR_ARTIFACT_PATH = (
+    ROOT / "Dado" / "20_Working" / "ups_repair_2_0_5"
+    / "frpdepot-freight-checkout-guard-2.0.5.zip"
+)
+UPS_REPAIR_VERSION = "2.0.5"
+UPS_REPAIR_FROM_VERSION = "2.0.4"
+UPS_REPAIR_SHA256 = "0955d21163c5cc96f5f9eea7e71935807f8433450904ac2f815baa8d6cbe8d10"
+UPS_REPAIR_ALLOWLIST_SHA256 = "a8051de3e7c99a3d8285c3199f1f0a32bb525ff8ca3dac56acbf7132f8e154a8"
+UPS_REPAIR_BASELINE_PATH = (
+    ROOT / "Dado" / "20_Working" / "ups_repair_2_0_5"
+    / "frpdepot-freight-checkout-guard-2.0.4.zip"
+)
+UPS_REPAIR_BASELINE_SHA256 = "9f4d1917b99a1a75de8a2549375e8e262cdbb3bd2353bc09560636821f1e4f75"
+UPS_REPAIR_MEASUREMENT_STATUS = (
+    "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED"
+)
+UPS_REPAIR_MEMBERS = (
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css",
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js",
+    f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php",
+    f"{PLUGIN_SLUG}/readme.txt",
+    f"{PLUGIN_SLUG}/ups-allowlist.json",
+)
+UPS_REPAIR_CSS_SUFFIX = (
+    "\n/* The active theme gives section elements display:block even when hidden. */\n"
+    ".frpdepot-fqj-product[hidden] {\n"
+    "\tdisplay: none !important;\n"
+    "}\n"
+).encode("utf-8")
 
 # Permanently refused. Withdrawn after the 2026-08-09 production failure.
 WITHDRAWN_VERSION = "1.0.0"
@@ -256,7 +293,7 @@ FATAL_MARKERS = (
 )
 MIN_RENDERED_TEXT = 40  # Below this a storefront page is treated as blank.
 
-ACTIONS = ("plugin_replace", "plugin_activate", "plugin_deactivate")
+ACTIONS = ("plugin_replace", "plugin_activate", "plugin_deactivate", "plugin_ups_repair")
 
 
 def _select_step(label: str) -> str:
@@ -515,6 +552,133 @@ def verify_artifact(path: Path | None = None) -> dict[str, Any]:
     }
 
 
+def verify_ups_repair_artifact(path: Path | None = None) -> dict[str, Any]:
+    """Independently prove the one frozen active 2.0.4 -> 2.0.5 CSS repair ZIP."""
+    artifact = Path(path or UPS_REPAIR_ARTIFACT_PATH)
+    if artifact.resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve():
+        raise DeploymentError("REFUSED: only the fixed UPS repair artifact may be used.")
+    if not artifact.is_file():
+        raise DeploymentError(f"The fixed UPS repair artifact is missing: {artifact}")
+    data = artifact.read_bytes()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != UPS_REPAIR_SHA256:
+        raise DeploymentError("REFUSED: the fixed UPS repair artifact SHA-256 does not match.")
+
+    baseline = Path(UPS_REPAIR_BASELINE_PATH)
+    if not baseline.is_file():
+        raise DeploymentError("REFUSED: the frozen deployed 2.0.4 baseline is missing.")
+    baseline_data = baseline.read_bytes()
+    if hashlib.sha256(baseline_data).hexdigest() != UPS_REPAIR_BASELINE_SHA256:
+        raise DeploymentError("REFUSED: the frozen deployed 2.0.4 baseline SHA-256 changed.")
+
+    try:
+        with zipfile.ZipFile(artifact) as repair_zip, zipfile.ZipFile(baseline) as baseline_zip:
+            members = tuple(sorted(repair_zip.namelist()))
+            baseline_members = tuple(sorted(baseline_zip.namelist()))
+            php_member = f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php"
+            allowlist_member = f"{PLUGIN_SLUG}/ups-allowlist.json"
+            readme_member = f"{PLUGIN_SLUG}/readme.txt"
+            repair_php = repair_zip.read(php_member)
+            baseline_php = baseline_zip.read(php_member)
+            allowlist_bytes = repair_zip.read(allowlist_member)
+            readme = repair_zip.read(readme_member).decode("utf-8")
+            js_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+            if repair_zip.read(js_member) != baseline_zip.read(js_member):
+                raise DeploymentError(
+                    "REFUSED: the CSS-only UPS repair changed protected JavaScript."
+                )
+            css_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+            if repair_zip.read(css_member) != baseline_zip.read(css_member) + UPS_REPAIR_CSS_SUFFIX:
+                raise DeploymentError(
+                    "REFUSED: the UPS repair is not the exact fixed hidden-panel CSS rule."
+                )
+    except (KeyError, OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
+        raise DeploymentError("REFUSED: the fixed UPS repair artifact is unreadable.") from exc
+
+    if members != tuple(sorted(UPS_REPAIR_MEMBERS)) or baseline_members != members:
+        raise DeploymentError("REFUSED: the UPS repair ZIP members are not the fixed set.")
+    header = repair_php.decode("utf-8", errors="strict")
+    found = re.search(r"(?im)^\s*\*\s*Version:\s*(\S+)\s*$", header)
+    version = found.group(1) if found else ""
+    if version != UPS_REPAIR_VERSION or f"FRPDEPOT_FQJ_VERSION = '{UPS_REPAIR_VERSION}'" not in header:
+        raise DeploymentError("REFUSED: the UPS repair does not declare fixed version 2.0.5.")
+    if f"Plugin Name: {PLUGIN_NAME}" not in header:
+        raise DeploymentError("REFUSED: the UPS repair is not the fixed FRP Depot plugin.")
+    if "register_activation_hook" in header or "admin_post_frpdepot_fqj_fixed_apply" not in header:
+        raise DeploymentError("REFUSED: the UPS repair changed the fixed activation/apply trigger contract.")
+
+    normalized_php = header.replace(
+        " * Version:     2.0.5", " * Version:     2.0.4", 1
+    ).replace(
+        "const FRPDEPOT_FQJ_VERSION = '2.0.5';",
+        "const FRPDEPOT_FQJ_VERSION = '2.0.4';",
+        1,
+    ).encode("utf-8")
+    if normalized_php != baseline_php:
+        raise DeploymentError("REFUSED: the UPS repair PHP changed beyond the two version tokens.")
+
+    if hashlib.sha256(allowlist_bytes).hexdigest() != UPS_REPAIR_ALLOWLIST_SHA256:
+        raise DeploymentError("REFUSED: the UPS repair allowlist SHA-256 changed.")
+    try:
+        allowlist = json.loads(allowlist_bytes)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DeploymentError("REFUSED: the UPS repair allowlist is unreadable.") from exc
+    required = {
+        "schema_version": 2,
+        "measurement_status": UPS_REPAIR_MEASUREMENT_STATUS,
+        "verified_packing_groups": 0,
+        "researched_candidate_groups": 30,
+        "oversized_groups_excluded": 7,
+    }
+    for key, expected in required.items():
+        if allowlist.get(key) != expected:
+            raise DeploymentError(f"REFUSED: the UPS repair allowlist field {key!r} changed.")
+    items = allowlist.get("items")
+    if not isinstance(items, list) or len(items) != 64:
+        raise DeploymentError("REFUSED: the UPS repair must allowlist exactly 64 variations.")
+    identities: set[tuple[int, int, str]] = set()
+    for item in items:
+        if not isinstance(item, dict) or set(item) != {
+            "product_id", "variation_id", "sku", "packing_group_id", "source_status",
+        }:
+            raise DeploymentError("REFUSED: a UPS repair allowlist entry is not the fixed projection.")
+        identity = (item["product_id"], item["variation_id"], item["sku"])
+        if (item["product_id"] not in (1368, 1423) or not item["variation_id"]
+                or not item["sku"] or item["source_status"] != UPS_REPAIR_MEASUREMENT_STATUS):
+            raise DeploymentError("REFUSED: a UPS repair allowlist identity or disclosure changed.")
+        identities.add(identity)
+    if len(identities) != 64:
+        raise DeploymentError("REFUSED: UPS repair allowlist identities are duplicated.")
+    oversized = {1444, 1445, 1446, 1447, 2044, 2045, 2046, 2047,
+                 2048, 2049, 2050, 2051, 2052, 2053}
+    if any(identity[1] in oversized for identity in identities):
+        raise DeploymentError("REFUSED: the UPS repair includes an oversized variation.")
+    try:
+        expires = datetime.fromisoformat(str(allowlist["expires_utc"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DeploymentError("REFUSED: the UPS repair allowlist expiry is invalid.") from exc
+    if utc_now() >= expires:
+        raise DeploymentError("REFUSED: the UPS repair allowlist has expired.")
+
+    for marker in (
+        "Stable tag: 2.0.5",
+        "honor its hidden state",
+        "64-variation UPS",
+        "NOT physical packing measurements",
+        "14 variations",
+        "60 published FNPT",
+    ):
+        if marker not in readme:
+            raise DeploymentError(f"REFUSED: the UPS repair disclosure is missing {marker!r}.")
+    return {
+        "path": str(artifact),
+        "sha256": digest,
+        "version": version,
+        "members": list(members),
+        "bytes": artifact.stat().st_size,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Privacy-projected view of the one plugin row.
 #
@@ -660,12 +824,18 @@ class AdminPage:
 
     # -- replace ------------------------------------------------------------
     def upload_replace(self, artifact: Path) -> dict[str, Any]:
-        """Upload the fixed ZIP and take WordPress's replace-current branch.
-
-        Returns the comparison facts that were verified before the click.
-        """
+        """Upload the fixed legacy 1.0.1 ZIP and take WordPress's replace branch."""
         if Path(artifact).resolve() != Path(ARTIFACT_PATH).resolve():
             raise DeploymentError("REFUSED: only the one hard-coded plugin artifact may be uploaded.")
+        return self._upload_fixed_replace(artifact, ARTIFACT_VERSION)
+
+    def upload_ups_repair(self, artifact: Path) -> dict[str, Any]:
+        """Upload only the exact frozen 2.0.5 UPS repair ZIP."""
+        if Path(artifact).resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve():
+            raise DeploymentError("REFUSED: only the fixed UPS repair artifact may be uploaded.")
+        return self._upload_fixed_replace(artifact, UPS_REPAIR_VERSION)
+
+    def _upload_fixed_replace(self, artifact: Path, expected_version: str) -> dict[str, Any]:
         self.goto_upload()
         chooser = self._page.query_selector('input[type="file"][name="pluginzip"]')
         if chooser is None:
@@ -678,7 +848,7 @@ class AdminPage:
         submit.click(timeout=ACTION_TIMEOUT_MS)
         self._page.wait_for_load_state("domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS)
         assert_admin_url(self.url)
-        return self._confirm_and_overwrite()
+        return self._confirm_and_overwrite(expected_version)
 
     def _comparison_cells(self, table: Any, label_pattern: str) -> str:
         """Return the 'Uploaded' cell for one labelled comparison row."""
@@ -691,8 +861,10 @@ class AdminPage:
                 return str(cells[-1].inner_text() or "").strip()
         return ""
 
-    def _confirm_and_overwrite(self) -> dict[str, Any]:
-        """Verify the comparison screen is OUR plugin at 1.0.1, then replace."""
+    def _confirm_and_overwrite(self, expected_version: str) -> dict[str, Any]:
+        """Verify the comparison screen is the fixed plugin at the fixed version."""
+        if expected_version not in (ARTIFACT_VERSION, UPS_REPAIR_VERSION):
+            raise DeploymentError("Internal: a non-fixed replacement version was requested.")
         tables = self._page.query_selector_all("table.update-from-upload-comparison")
         if len(tables) != 1:
             raise DeploymentError(
@@ -711,10 +883,10 @@ class AdminPage:
             raise DeploymentError(
                 "REFUSED: the comparison screen offers the withdrawn 1.0.0. Nothing was replaced."
             )
-        if uploaded_version != ARTIFACT_VERSION:
+        if uploaded_version != expected_version:
             raise DeploymentError(
                 f"REFUSED: the comparison screen offers version {uploaded_version!r}, not "
-                f"{ARTIFACT_VERSION}. Nothing was replaced."
+                f"{expected_version}. Nothing was replaced."
             )
         links = self._page.query_selector_all("a.update-from-upload-overwrite")
         if len(links) != 1:
@@ -1435,6 +1607,37 @@ VALIDATION_CONTRACT = {
                       "verify homepage and cart recovery, close the plan permanently",
 }
 
+UPS_REPAIR_VALIDATION_CONTRACT = {
+    "artifact_relation": "exact deployed 2.0.4 baseline plus two version tokens, "
+                         "disclosed readme and one fixed hidden-panel CSS rule only; "
+                         "allowlist and JavaScript byte-identical",
+    "allowlisted_variations": 64,
+    "researched_candidate_groups": 30,
+    "physically_verified_groups": 0,
+    "measurement_status": UPS_REPAIR_MEASUREMENT_STATUS,
+    "oversized_variations_still_quote_only": 14,
+    "fnpt_variations_still_quote_only": 60,
+    "freight_class_still_overrides_allowlist": True,
+    "unknown_mixed_custom_customer_specific_still_quote_only": True,
+    "creates_shipping_rate": False,
+    "uses_existing_woocommerce_ups_method": True,
+    "product_price_stock_shipping_class_weight_dimensions_touched": False,
+    "quote_form_transaction_triggered": False,
+    "email_order_payment_created": False,
+    "automatic_rollback": False,
+    "one_upload_attempt": True,
+    "post_write_plugin_row_required": "version 2.0.5 and active",
+    "post_commit_public_checks": [
+        "one allowlisted small elbow/stub selection keeps direct checkout",
+        "one oversized selection remains freight quote",
+        "one incomplete FNPT selection remains freight quote",
+        "pipe remains freight quote",
+        "one mixed cart remains freight quote",
+        "ordinary eligible cart reaches existing UPS rate path",
+    ],
+    "on_upload_or_row_failure": "lock plan indeterminate with no retry and no rollback",
+}
+
 PLAN_KEYS = frozenset({
     "schema_version", "tool", "origin", "action", "created_utc", "expires_utc", "nonce",
     "plugin_name", "plugin_slug", "plugin_file", "artifact", "before", "after_expected",
@@ -1484,7 +1687,11 @@ def stage_plan(action: str, before: dict[str, Any], after_expected: dict[str, An
         "artifact": artifact,
         "before": before,
         "after_expected": after_expected,
-        "validation": dict(VALIDATION_CONTRACT) if action == "plugin_activate" else None,
+        "validation": (
+            dict(VALIDATION_CONTRACT) if action == "plugin_activate"
+            else dict(UPS_REPAIR_VALIDATION_CONTRACT) if action == "plugin_ups_repair"
+            else None
+        ),
         "preflight": dict(preflight) if action == "plugin_activate" else None,
     }
     digest = digest_for(core)
@@ -1556,8 +1763,19 @@ def load_plan(path: str) -> dict[str, Any]:
                 or tuple(artifact["members"]) != tuple(sorted(ARTIFACT_MEMBERS))):
             raise DeploymentError("REFUSED: the plan artifact is not the approved 1.0.1 artifact.")
         expected = _expected_after("plugin_replace", plan["before"])
+    elif action == "plugin_ups_repair":
+        if not isinstance(artifact, dict) or set(artifact) != {
+            "path", "sha256", "version", "members", "bytes"
+        }:
+            raise DeploymentError("A UPS repair plan must carry the closed artifact record.")
+        if (artifact["sha256"] != UPS_REPAIR_SHA256
+                or artifact["version"] != UPS_REPAIR_VERSION
+                or Path(artifact["path"]).resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve()
+                or tuple(artifact["members"]) != tuple(sorted(UPS_REPAIR_MEMBERS))):
+            raise DeploymentError("REFUSED: the plan artifact is not the fixed UPS repair.")
+        expected = _expected_after("plugin_ups_repair", plan["before"])
     elif artifact is not None:
-        raise DeploymentError("Only a replace plan may carry an artifact.")
+        raise DeploymentError("Only a replace or UPS repair plan may carry an artifact.")
     else:
         expected = _expected_after(action, plan["before"])
 
@@ -1582,9 +1800,14 @@ def load_plan(path: str) -> dict[str, Any]:
                 f"An activation plan must be built on {PREFLIGHT_RUNS} passing rehearsals."
             )
         resolve_preflight_path(str(preflight["path"]))
+    elif action == "plugin_ups_repair":
+        if plan["validation"] != UPS_REPAIR_VALIDATION_CONTRACT:
+            raise DeploymentError("The UPS repair plan disclosure/verification contract changed.")
+        if preflight is not None:
+            raise DeploymentError("A UPS repair plan cannot carry activation preflight evidence.")
     else:
         if plan["validation"] is not None:
-            raise DeploymentError("Only an activation plan may carry a validation contract.")
+            raise DeploymentError("Only activation and UPS repair plans may carry validation contracts.")
         if preflight is not None:
             raise DeploymentError("Only an activation plan may carry preflight evidence.")
     plan["sha256"] = saved
@@ -1594,6 +1817,8 @@ def load_plan(path: str) -> dict[str, Any]:
 def _expected_after(action: str, before: dict[str, Any]) -> dict[str, Any]:
     if action == "plugin_replace":
         return project_row(True, False, ARTIFACT_VERSION, False)
+    if action == "plugin_ups_repair":
+        return project_row(True, True, UPS_REPAIR_VERSION, False)
     if action == "plugin_activate":
         return project_row(True, True, ARTIFACT_VERSION, before["update_marker"])
     return project_row(True, False, ARTIFACT_VERSION, before["update_marker"])
@@ -1741,6 +1966,27 @@ def command_stage_replace(_: argparse.Namespace) -> None:
     _stage_and_report("plugin_replace", before, artifact)
 
 
+def command_stage_ups_repair(_: argparse.Namespace) -> None:
+    artifact = verify_ups_repair_artifact()
+    before = _live_row()
+    if before["version"] == UPS_REPAIR_VERSION:
+        raise DeploymentError(
+            f"No change is needed: UPS repair version {UPS_REPAIR_VERSION} is already installed. "
+            "Nothing was staged."
+        )
+    if before["version"] != UPS_REPAIR_FROM_VERSION:
+        raise DeploymentError(
+            f"REFUSED: the installed version is {before['version']!r}, not the exact frozen "
+            f"baseline {UPS_REPAIR_FROM_VERSION}. Nothing was staged."
+        )
+    if before["active"] is not True:
+        raise DeploymentError(
+            f"REFUSED: the fixed {UPS_REPAIR_FROM_VERSION} plugin is not active. The UPS repair is an "
+            "active-to-active replacement only; nothing was staged."
+        )
+    _stage_and_report("plugin_ups_repair", before, artifact)
+
+
 def command_stage_activate(args: argparse.Namespace) -> None:
     # The preflight is checked FIRST: it is a local file read, so a missing,
     # stale, foreign or failed rehearsal refuses without even opening the admin
@@ -1860,6 +2106,82 @@ def command_commit_replace(args: argparse.Namespace) -> None:
         "active": after["active"],
         "comparison": comparison,
         "activated": False,
+        "plan_sha256": plan["sha256"],
+        "replay_locked": True,
+    })
+
+
+@holds_wordpress_browser("WordPress: apply the active 2.0.5 UPS repair")
+def command_commit_ups_repair(args: argparse.Namespace) -> None:
+    plan_path, plan = _open_commit(args, "plugin_ups_repair")
+    artifact = verify_ups_repair_artifact(Path(plan["artifact"]["path"]))
+    if artifact["sha256"] != plan["artifact"]["sha256"]:
+        raise DeploymentError("REFUSED: the UPS repair artifact no longer matches the approved plan.")
+    lock = lock_path(plan_path)
+
+    # The shared WordPress browser lock is acquired by the decorator before this
+    # function. The live row is checked before the permanent plan lock, so drift or
+    # a busy/missing browser is a free refusal. The lock is written immediately
+    # before the one overwrite click.
+    with admin_session() as admin:
+        _verify_pre_state(admin, plan)
+        write_lock(lock, {
+            "plan_sha256": plan["sha256"], "status": "in_flight",
+            "started_utc": utc_now().isoformat(), "stage": "ups_repair_upload",
+        }, exclusive=True)
+        try:
+            comparison = admin.upload_ups_repair(Path(artifact["path"]))
+            admin.goto_plugins()
+            after = admin.read_row()
+        except Exception as exc:
+            _burn(lock, plan, plan_path, exc, "ups_repair_upload")
+            raise IndeterminateError(
+                "The UPS repair upload or row read-back is unverified. The plan is permanently "
+                "locked with no retry and no rollback; inspect the fixed Plugins row."
+            ) from exc
+
+    if after != plan["after_expected"]:
+        write_lock(lock, {
+            "plan_sha256": plan["sha256"], "status": "indeterminate",
+            "updated_utc": utc_now().isoformat(), "after": after,
+            "public_validation_pending": True,
+        })
+        record_result(plan_path, plan, "INDETERMINATE", {
+            "after": after, "retry": False, "rollback": False,
+            "public_validation_pending": True,
+        })
+        raise IndeterminateError(
+            "The fixed plugin row does not exactly read back as active version 2.0.5. "
+            "The plan is permanently locked with no retry and no rollback."
+        )
+
+    write_lock(lock, {
+        "plan_sha256": plan["sha256"], "status": "plugin_row_verified",
+        "updated_utc": utc_now().isoformat(), "after": after,
+        "public_validation_pending": True,
+    })
+    record_result(plan_path, plan, "PLUGIN_ROW_VERIFIED_PUBLIC_CHECKS_PENDING", {
+        "after": after,
+        "comparison": comparison,
+        "active_before_and_after": True,
+        "quote_form_transaction_triggered": False,
+        "product_or_setting_write": False,
+        "email_order_payment_created": False,
+        "automatic_rollback": False,
+        "public_validation_pending": True,
+    })
+    emit({
+        "status": "PLUGIN_ROW_VERIFIED_PUBLIC_CHECKS_PENDING",
+        "action": "plugin_ups_repair",
+        "plugin_file": PLUGIN_FILE,
+        "installed_version": after["version"],
+        "active": after["active"],
+        "comparison": comparison,
+        "quote_form_transaction_triggered": False,
+        "product_or_setting_write": False,
+        "email_order_payment_created": False,
+        "automatic_rollback": False,
+        "public_validation_pending": True,
         "plan_sha256": plan["sha256"],
         "replay_locked": True,
     })
@@ -2149,6 +2471,7 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("inspect").set_defaults(func=command_inspect)
     commands.add_parser("preflight-validation").set_defaults(func=command_preflight_validation)
     commands.add_parser("stage-replace").set_defaults(func=command_stage_replace)
+    commands.add_parser("stage-ups-repair").set_defaults(func=command_stage_ups_repair)
     commands.add_parser("stage-deactivate").set_defaults(func=command_stage_deactivate)
 
     stage_activate = commands.add_parser("stage-activate")
@@ -2157,6 +2480,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, handler in (
         ("commit-replace", command_commit_replace),
+        ("commit-ups-repair", command_commit_ups_repair),
         ("commit-activate", command_commit_activate),
         ("commit-deactivate", command_commit_deactivate),
     ):

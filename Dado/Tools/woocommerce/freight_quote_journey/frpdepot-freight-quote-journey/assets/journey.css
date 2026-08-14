@@ -1,0 +1,49 @@
+.frpdepot-fq-hidden,
+.frpdepot-fq-hidden-by-journey {
+    display: none !important;
+}
+
+.frpdepot-fq-product-panel,
+.frpdepot-fq-cart-panel,
+.frpdepot-fq-page .frpdepot-fq-intro {
+    margin: 1.25rem 0;
+    padding: 1rem;
+    border-left: 4px solid #c45421;
+    background: #fff8f3;
+}
+
+.frpdepot-fq-product-panel h3,
+.frpdepot-fq-cart-panel h2 {
+    margin-top: 0;
+}
+
+.frpdepot-fq-product-panel label {
+    display: block;
+    margin: .75rem 0;
+}
+
+.frpdepot-fq-product-button,
+.frpdepot-fq-cart-button {
+    margin-top: .5rem;
+}
+
+body.frpdepot-fq-cart-blocked .woocommerce-shipping-calculator,
+body.frpdepot-fq-cart-blocked .shipping-calculator-button,
+body.frpdepot-fq-cart-blocked .wc-proceed-to-checkout,
+body.frpdepot-fq-cart-blocked .wp-block-woocommerce-cart-order-summary-shipping-block,
+body.frpdepot-fq-cart-blocked .wp-block-woocommerce-proceed-to-checkout-block,
+body.frpdepot-fq-cart-blocked .wc-block-cart__submit-container,
+body.frpdepot-fq-cart-blocked .wc-block-components-totals-shipping {
+    display: none !important;
+}
+
+.frpdepot-fq-page {
+    max-width: 860px;
+    margin: 0 auto;
+    padding: 2rem 1rem;
+}
+
+.frpdepot-fq-readonly input[readonly],
+.frpdepot-fq-readonly textarea[readonly] {
+    background: #f4f4f4;
+}

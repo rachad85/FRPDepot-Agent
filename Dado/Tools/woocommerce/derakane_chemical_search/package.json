@@ -1,0 +1,12 @@
+{
+  "name": "frpdepot-derakane-search-tests",
+  "private": true,
+  "version": "2.0.0",
+  "description": "Fixture-only browser tests for the fixed Derakane guide search client",
+  "scripts": {
+    "test": "node --test tests/js/*.test.js"
+  },
+  "devDependencies": {
+    "jsdom": "30.0.1"
+  }
+}

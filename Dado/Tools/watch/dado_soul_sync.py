@@ -138,7 +138,14 @@ def sync(mirror_path: Path, live_path: Path, *, dry_run: bool) -> int:
         return 0
     mirror_bytes = mirror_path.read_bytes()
     live_bytes = live_path.read_bytes()
-    if mirror_bytes == live_bytes:
+    # CONTENT, not raw bytes - for the same reason the verification further down
+    # compares content: the live file keeps its own newline convention on
+    # purpose, so a CRLF profile is PERMANENTLY byte-different from an LF mirror.
+    # Comparing bytes here made every 5-minute run "apply" an already-identical
+    # file: it rewrote the live SOUL.md, overwrote the backup with a copy of the
+    # current file, and logged 224 "+0 line(s)" receipts by 2026-08-13 - burying
+    # real business receipts exactly like the refusal loop fixed on 2026-08-12.
+    if normalized_lines(mirror_bytes) == normalized_lines(live_bytes):
         clear_refusal_marker()
         return 0
 

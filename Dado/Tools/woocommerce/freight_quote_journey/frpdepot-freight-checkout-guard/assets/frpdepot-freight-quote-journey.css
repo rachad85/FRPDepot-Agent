@@ -1,0 +1,46 @@
+.frpdepot-fqj-product,
+.frpdepot-fqj-cart-notice {
+	border-left: 4px solid #d97706;
+	background: #fff8e8;
+	color: #252525;
+	margin: 1rem 0;
+	padding: 1rem 1.15rem;
+}
+
+.frpdepot-fqj-product h3 {
+	font-size: 1.25rem;
+	margin: 0 0 .5rem;
+}
+
+.frpdepot-fqj-product p {
+	margin: 0 0 .9rem;
+}
+
+.frpdepot-fqj-product-button[aria-disabled="true"] {
+	cursor: not-allowed;
+	opacity: .55;
+	pointer-events: none;
+}
+
+.frpdepot-fqj-native-quote-state .woocommerce-variation-add-to-cart {
+	margin-bottom: 0;
+}
+
+.frpdepot-fqj-cart-button {
+	display: block;
+	text-align: center;
+	width: 100%;
+}
+
+@media (max-width: 600px) {
+	.frpdepot-fqj-product,
+	.frpdepot-fqj-cart-notice {
+		padding: .85rem;
+	}
+	.frpdepot-fqj-product-button {
+		box-sizing: border-box;
+		display: block;
+		text-align: center;
+		width: 100%;
+	}
+}

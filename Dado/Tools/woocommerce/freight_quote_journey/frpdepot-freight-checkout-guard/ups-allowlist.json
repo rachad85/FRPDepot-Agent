@@ -1,0 +1,462 @@
+{
+  "comment": "UPS direct-checkout allowlist for the fixed 2.0.4 repair. Every entry is an exact published variation with nonzero live WooCommerce weight/dimensions and a researched one-piece package estimate below published generic UPS maxima. These are NOT physical measurements and NOT carrier approval. Freight-class, oversized, incomplete, unknown, mismatched, malformed and expired entries remain fail-closed. This file becomes live only through a separately staged and approved plugin plan.",
+  "expires_utc": "2026-11-12T01:02:02.932894+00:00",
+  "generated_utc": "2026-08-14T01:02:02.932894+00:00",
+  "items": [
+    {
+      "packing_group_id": "PKG-022",
+      "product_id": 1368,
+      "sku": "FLDN15050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1369
+    },
+    {
+      "packing_group_id": "PKG-022",
+      "product_id": 1368,
+      "sku": "FLDN15050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1370
+    },
+    {
+      "packing_group_id": "PKG-023",
+      "product_id": 1368,
+      "sku": "FLDN150150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1371
+    },
+    {
+      "packing_group_id": "PKG-023",
+      "product_id": 1368,
+      "sku": "FLDN150150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1372
+    },
+    {
+      "packing_group_id": "PKG-024",
+      "product_id": 1368,
+      "sku": "FLDN20050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1373
+    },
+    {
+      "packing_group_id": "PKG-024",
+      "product_id": 1368,
+      "sku": "FLDN20050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1374
+    },
+    {
+      "packing_group_id": "PKG-025",
+      "product_id": 1368,
+      "sku": "FLDN200150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1375
+    },
+    {
+      "packing_group_id": "PKG-025",
+      "product_id": 1368,
+      "sku": "FLDN200150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1376
+    },
+    {
+      "packing_group_id": "PKG-026",
+      "product_id": 1368,
+      "sku": "FLDN25050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1377
+    },
+    {
+      "packing_group_id": "PKG-026",
+      "product_id": 1368,
+      "sku": "FLDN25050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1378
+    },
+    {
+      "packing_group_id": "PKG-027",
+      "product_id": 1368,
+      "sku": "FLDN250150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1379
+    },
+    {
+      "packing_group_id": "PKG-027",
+      "product_id": 1368,
+      "sku": "FLDN250150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1380
+    },
+    {
+      "packing_group_id": "PKG-028",
+      "product_id": 1368,
+      "sku": "FLDN30050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1381
+    },
+    {
+      "packing_group_id": "PKG-028",
+      "product_id": 1368,
+      "sku": "FLDN30050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1382
+    },
+    {
+      "packing_group_id": "PKG-029",
+      "product_id": 1368,
+      "sku": "FLDN300150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1383
+    },
+    {
+      "packing_group_id": "PKG-029",
+      "product_id": 1368,
+      "sku": "FLDN300150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1384
+    },
+    {
+      "packing_group_id": "PKG-030",
+      "product_id": 1368,
+      "sku": "FLDN35050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1385
+    },
+    {
+      "packing_group_id": "PKG-030",
+      "product_id": 1368,
+      "sku": "FLDN35050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1386
+    },
+    {
+      "packing_group_id": "PKG-031",
+      "product_id": 1368,
+      "sku": "FLDN350150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1387
+    },
+    {
+      "packing_group_id": "PKG-031",
+      "product_id": 1368,
+      "sku": "FLDN350150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1388
+    },
+    {
+      "packing_group_id": "PKG-032",
+      "product_id": 1368,
+      "sku": "FLDN40050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1389
+    },
+    {
+      "packing_group_id": "PKG-032",
+      "product_id": 1368,
+      "sku": "FLDN40050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1390
+    },
+    {
+      "packing_group_id": "PKG-033",
+      "product_id": 1368,
+      "sku": "FLDN400150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1391
+    },
+    {
+      "packing_group_id": "PKG-033",
+      "product_id": 1368,
+      "sku": "FLDN400150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1392
+    },
+    {
+      "packing_group_id": "PKG-034",
+      "product_id": 1368,
+      "sku": "FLDN45050PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1393
+    },
+    {
+      "packing_group_id": "PKG-034",
+      "product_id": 1368,
+      "sku": "FLDN45050PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1394
+    },
+    {
+      "packing_group_id": "PKG-035",
+      "product_id": 1368,
+      "sku": "FLDN450150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1395
+    },
+    {
+      "packing_group_id": "PKG-035",
+      "product_id": 1368,
+      "sku": "FLDN450150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1396
+    },
+    {
+      "packing_group_id": "PKG-016",
+      "product_id": 1368,
+      "sku": "FLDN12150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2028
+    },
+    {
+      "packing_group_id": "PKG-016",
+      "product_id": 1368,
+      "sku": "FLDN12150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2029
+    },
+    {
+      "packing_group_id": "PKG-020",
+      "product_id": 1368,
+      "sku": "FLDN20150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2030
+    },
+    {
+      "packing_group_id": "PKG-020",
+      "product_id": 1368,
+      "sku": "FLDN20150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2031
+    },
+    {
+      "packing_group_id": "PKG-016",
+      "product_id": 1368,
+      "sku": "FLDN25150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2032
+    },
+    {
+      "packing_group_id": "PKG-016",
+      "product_id": 1368,
+      "sku": "FLDN25150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2033
+    },
+    {
+      "packing_group_id": "PKG-017",
+      "product_id": 1368,
+      "sku": "FLDN40150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2034
+    },
+    {
+      "packing_group_id": "PKG-017",
+      "product_id": 1368,
+      "sku": "FLDN40150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2035
+    },
+    {
+      "packing_group_id": "PKG-018",
+      "product_id": 1368,
+      "sku": "FLDN50150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2036
+    },
+    {
+      "packing_group_id": "PKG-018",
+      "product_id": 1368,
+      "sku": "FLDN50150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2037
+    },
+    {
+      "packing_group_id": "PKG-020",
+      "product_id": 1368,
+      "sku": "FLDN80150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2038
+    },
+    {
+      "packing_group_id": "PKG-020",
+      "product_id": 1368,
+      "sku": "FLDN80150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2039
+    },
+    {
+      "packing_group_id": "PKG-021",
+      "product_id": 1368,
+      "sku": "FLDN100150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2040
+    },
+    {
+      "packing_group_id": "PKG-021",
+      "product_id": 1368,
+      "sku": "FLDN100150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2041
+    },
+    {
+      "packing_group_id": "PKG-019",
+      "product_id": 1368,
+      "sku": "FLDN65150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2042
+    },
+    {
+      "packing_group_id": "PKG-019",
+      "product_id": 1368,
+      "sku": "FLDN65150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 2043
+    },
+    {
+      "packing_group_id": "PKG-001",
+      "product_id": 1423,
+      "sku": "ELDN25150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1424
+    },
+    {
+      "packing_group_id": "PKG-001",
+      "product_id": 1423,
+      "sku": "ELDN25150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1425
+    },
+    {
+      "packing_group_id": "PKG-002",
+      "product_id": 1423,
+      "sku": "ELDN40150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1426
+    },
+    {
+      "packing_group_id": "PKG-002",
+      "product_id": 1423,
+      "sku": "ELDN40150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1427
+    },
+    {
+      "packing_group_id": "PKG-003",
+      "product_id": 1423,
+      "sku": "ELDN50150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1428
+    },
+    {
+      "packing_group_id": "PKG-003",
+      "product_id": 1423,
+      "sku": "ELDN50150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1429
+    },
+    {
+      "packing_group_id": "PKG-004",
+      "product_id": 1423,
+      "sku": "ELDN65150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1430
+    },
+    {
+      "packing_group_id": "PKG-004",
+      "product_id": 1423,
+      "sku": "ELDN65150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1431
+    },
+    {
+      "packing_group_id": "PKG-005",
+      "product_id": 1423,
+      "sku": "ELDN80150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1432
+    },
+    {
+      "packing_group_id": "PKG-005",
+      "product_id": 1423,
+      "sku": "ELDN80150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1433
+    },
+    {
+      "packing_group_id": "PKG-006",
+      "product_id": 1423,
+      "sku": "ELDN100150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1434
+    },
+    {
+      "packing_group_id": "PKG-006",
+      "product_id": 1423,
+      "sku": "ELDN100150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1435
+    },
+    {
+      "packing_group_id": "PKG-007",
+      "product_id": 1423,
+      "sku": "ELDN150150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1436
+    },
+    {
+      "packing_group_id": "PKG-007",
+      "product_id": 1423,
+      "sku": "ELDN150150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1437
+    },
+    {
+      "packing_group_id": "PKG-008",
+      "product_id": 1423,
+      "sku": "ELDN200150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1438
+    },
+    {
+      "packing_group_id": "PKG-008",
+      "product_id": 1423,
+      "sku": "ELDN200150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1439
+    },
+    {
+      "packing_group_id": "PKG-009",
+      "product_id": 1423,
+      "sku": "ELDN250150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1440
+    },
+    {
+      "packing_group_id": "PKG-009",
+      "product_id": 1423,
+      "sku": "ELDN250150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1441
+    },
+    {
+      "packing_group_id": "PKG-010",
+      "product_id": 1423,
+      "sku": "ELDN300150PSI411",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1442
+    },
+    {
+      "packing_group_id": "PKG-010",
+      "product_id": 1423,
+      "sku": "ELDN300150PSI470",
+      "source_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+      "variation_id": 1443
+    }
+  ],
+  "measurement_status": "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED",
+  "oversized_groups_excluded": 7,
+  "packing_estimate_source": "C:\\FRPDepot\\Dado\\20_Working\\catalog_shipping_policy\\packing_measurement_estimates_researched.csv",
+  "packing_estimate_source_sha256": "fa394c7e9513fcde8066752b7e89cae6149dfd7c88483ffe2aae47e492a19b72",
+  "researched_candidate_groups": 30,
+  "schema_version": 2,
+  "verified_packing_groups": 0
+}

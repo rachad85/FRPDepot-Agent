@@ -1,0 +1,31 @@
+{
+  "artifact_name": "frpdepot-freight-quote-journey-1.0.0.zip",
+  "artifact_sha256": "771ce5a883dc49d00b6e88b48b963704158cf2c42cf8002efab5c397f67cbe2c",
+  "artifact_size": 13255,
+  "files": {
+    "frpdepot-freight-quote-journey/assets/analytics.js": {
+      "sha256": "3303738a55e1d76292eaad930eb8a6d4452dd9559392793159f6fee4558f3691",
+      "size": 2369
+    },
+    "frpdepot-freight-quote-journey/assets/journey.css": {
+      "sha256": "9f1ee8dc3505b6c649e764e1673a2640e7718bf0821284c52b3226b77d259748",
+      "size": 1237
+    },
+    "frpdepot-freight-quote-journey/assets/journey.js": {
+      "sha256": "f5dda6052a32ed5a7d588cd22c28b5ff336f7cff54f1f56ba39af89b7eaaa8f7",
+      "size": 4431
+    },
+    "frpdepot-freight-quote-journey/frpdepot-freight-quote-journey.php": {
+      "sha256": "ca22e2f51d2092e8b37f1d7c74a87f5f5b149d8d6fa90b272acf7d6ef4c150c7",
+      "size": 36732
+    },
+    "frpdepot-freight-quote-journey/readme.txt": {
+      "sha256": "a276fdb256aa75b37f7d69e3ac3c8811ddae05a50c951567e34c4ac796169821",
+      "size": 1088
+    }
+  },
+  "plugin_slug": "frpdepot-freight-quote-journey",
+  "plugin_version": "1.0.0",
+  "schema": 1,
+  "specification_sha256": "5348ef3f357676f5629cf72696fd3fe0be718a3847854974f20cf28cc7047400"
+}

@@ -59,8 +59,8 @@
   "kind": "copy",
   "deployed_sha256": "10e97f28b18bac5a41e25466ee3c7590366133cda96e406ad2f4c0e9f3394052",
   "repo_path": "Dado\\Tools\\watch\\stall_tripwire.py",
-  "repo_sha256": "10e97f28b18bac5a41e25466ee3c7590366133cda96e406ad2f4c0e9f3394052",
-  "in_sync": true
+  "repo_sha256": "841a157a7fc2a2eb0b5b713e330abddf1970b3fdf62c0e06158b60dabf16448e",
+  "in_sync": false
  },
  "zoho_reorder_analysis.py": {
   "kind": "copy",

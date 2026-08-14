@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "specification_sha256": "5348ef3f357676f5629cf72696fd3fe0be718a3847854974f20cf28cc7047400",
+  "live_execution_required": false,
+  "models": [
+    {
+      "id": 1,
+      "name": "freight_pipe_desktop",
+      "viewport": "desktop",
+      "country": "CA",
+      "product_id": 1455,
+      "expected": "Choice-A quote UI active only after SIZE, PRESSURE RATING and RESIN TYPE resolve a non-allowlisted variation"
+    },
+    {
+      "id": 2,
+      "name": "freight_pipe_mobile",
+      "viewport": "mobile",
+      "country": "US",
+      "product_id": 1455,
+      "expected": "same exact Choice-A wording and full-width Request a Freight Quote action"
+    },
+    {
+      "id": 3,
+      "name": "unverified_elbow_and_stub",
+      "viewport": "desktop_and_mobile",
+      "country": "CA_US",
+      "product_ids": [1423, 1368],
+      "expected": "both use quote action when absent from exact allowlist"
+    },
+    {
+      "id": 4,
+      "name": "manway_and_cover",
+      "viewport": "desktop_and_mobile",
+      "country": "CA_US",
+      "product_ids": [1397, 1411],
+      "expected": "both use quote action when absent from exact allowlist"
+    },
+    {
+      "id": 5,
+      "name": "future_allowlisted_variation",
+      "fixture": "fictional product 900001 variation 900002 SKU TEST-UPS-VERIFIED-1, blank shipping class, current allowlist",
+      "expected": "Add to cart remains; quote action hidden"
+    },
+    {
+      "id": 6,
+      "name": "product_handoff",
+      "expected": "product name/id, variation id, size, pressure, resin, quantity and product URL prefill fixed form fields"
+    },
+    {
+      "id": 7,
+      "name": "freight_cart_controls",
+      "expected": "no usable shipping calculator, checkout or payment control; quote handoff remains"
+    },
+    {
+      "id": 8,
+      "name": "mixed_cart",
+      "fixture": "one fictional allowlisted line plus one freight line",
+      "expected": "entire cart uses quote route until freight line removed"
+    },
+    {
+      "id": 9,
+      "name": "no_invented_shipping",
+      "expected": "rate list is empty; no flat/free/pickup/fallback route exists"
+    },
+    {
+      "id": 10,
+      "name": "notification_once",
+      "expected": "dedicated form has exactly one active notification cloned from Form 1 active Admin Notification; route hash matches; recipient never projected"
+    },
+    {
+      "id": 11,
+      "name": "generate_lead_once_success",
+      "test_marker": "FRPDEPOT-FQJ-ACCEPTANCE-20260813",
+      "expected": "one successful gform_confirmation appends one idempotent generate_lead push"
+    },
+    {
+      "id": 12,
+      "name": "generate_lead_zero_validation_failure",
+      "expected": "no gform_confirmation means zero generate_lead"
+    },
+    {
+      "id": 13,
+      "name": "analytics_non_pii",
+      "expected_parameters": ["lead_type", "form_id", "product_id", "variation_id", "source_page"],
+      "forbidden_parameters": ["name", "email", "phone", "company", "postal_code", "message", "upload"]
+    },
+    {
+      "id": 14,
+      "name": "destination_fields",
+      "countries": ["CA", "US"],
+      "expected": "both quote destinations validate; US direct checkout stays default-deny unless separately allowlisted"
+    },
+    {
+      "id": 15,
+      "name": "no_commerce_side_effect",
+      "expected": "acceptance does not create order, authorize payment, or invoke payment/send/order APIs"
+    }
+  ]
+}

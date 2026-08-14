@@ -1,0 +1,104 @@
+{
+  "contract": "frpdepot.derakane-search.import-manifest",
+  "contract_version": 2,
+  "dataset": {
+    "bytes": 20077421,
+    "file": "derakane-dataset.json",
+    "sha256": "30279d4f41c9f08ea764aeaacca359acad090fd4a85450a8b7851028730e6b14"
+  },
+  "generated_utc": "2026-08-13T19:35:07.115445+00:00",
+  "producer": {
+    "contract_version": 2,
+    "pipeline": "frpdepot.derakane-guide-rebuild",
+    "run_id": "output-manifest:2719b36429437dfee97c9f2b2ba726eef345206379926ca92051df03eecff3d3"
+  },
+  "rebuild_provenance": {
+    "artifacts": [
+      {
+        "bytes": 1531,
+        "path": "data/dataset_metadata.json",
+        "sha256": "852a75902d111d6fec300c83847ca7b13f4693efabdd6e4849c21cf9b6ef41ea"
+      },
+      {
+        "bytes": 7498055,
+        "path": "data/records.jsonl",
+        "sha256": "cb3233c3922c09f250b1a76d8bb5be7246fc83d6800ef0ef283876872860db22"
+      },
+      {
+        "bytes": 1321167,
+        "path": "data/cas_crosswalk.json",
+        "sha256": "a659fd00ea21bc54c03841c7e6695fe660e11987229abce6bd269947a25b6ec1"
+      },
+      {
+        "bytes": 13802,
+        "path": "data/footnotes.json",
+        "sha256": "a90ef1303c68625c46950cecffc94c404eb85cbd66dfe2deb4eba9759e3cb7fa"
+      },
+      {
+        "bytes": 2870,
+        "path": "data/semantics.json",
+        "sha256": "d2a10e9dce24fdfc8d9c4604e899e148949668993334042797ba69000c3a5917"
+      },
+      {
+        "bytes": 1219529,
+        "path": "data/chemical_groups.json",
+        "sha256": "c908d35ca9afbc67bd965398808553936aed5826182555ae84e298dd521537cc"
+      },
+      {
+        "bytes": 1518754,
+        "path": "data/search_index.json",
+        "sha256": "94d1408ee4080619a18d266306d7a02c4c3ee8b22bb513e489a1ae4cb2702dd7"
+      },
+      {
+        "bytes": 966896,
+        "path": "validation/cas_adjudication/final_adjudication_report.json",
+        "sha256": "dfbdee43fd146b280a4b80ed273f527e3b68db97593945e8a992bdf3fec46849"
+      }
+    ],
+    "output_manifest_bytes": 3671,
+    "output_manifest_sha256": "2719b36429437dfee97c9f2b2ba726eef345206379926ca92051df03eecff3d3",
+    "source_pdf_sha256": "1cbd9522b49d5ac10d01f268b78e4d062b06e61c7e4011da69c989abba32c241"
+  },
+  "source": {
+    "document_code": "INEOS-DERAKANE-CORROSION-GUIDE-OCT-2019",
+    "document_sha256": "1cbd9522b49d5ac10d01f268b78e4d062b06e61c7e4011da69c989abba32c241",
+    "edition": "October 2019",
+    "page_count": 68,
+    "product_family": "Derakane™ epoxy vinyl ester resins",
+    "publication_date": "2019-10",
+    "publisher": "INEOS Composites",
+    "source_url": null,
+    "title": "Resin Selection Guide for Chemical Resistance"
+  },
+  "summary": {
+    "cas_entry_count": 716,
+    "cas_excluded_count": 7,
+    "cas_public_searchable_count": 709,
+    "chemical_count": 1116,
+    "footnote_count": 25,
+    "parser_uncertainty_count": 0,
+    "rating_count": 11565,
+    "resin_columns": [
+      "411",
+      "441",
+      "451",
+      "455",
+      "470",
+      "510A/B/C",
+      "510N",
+      "515",
+      "8084"
+    ],
+    "row_count": 1285,
+    "search_entity_count": 1345,
+    "source_special_count": 17
+  },
+  "verification": {
+    "method": "PDF geometry rebuild, closed rating model, five-batch CAS adjudication, manifest verification, and deterministic contract-v2 adapter",
+    "reviewed_row_count": 1285,
+    "status": "VERIFIED",
+    "unresolved_count": 0,
+    "verified_utc": "2026-08-13T19:35:07.115445+00:00",
+    "verifier": "FRP Depot local Derakane rebuild pipeline"
+  }
+}

@@ -1,0 +1,45 @@
+{
+  "artifact": "C:\\FRPDepot\\Dado\\Tools\\woocommerce\\freight_quote_journey\\frpdepot-freight-checkout-guard-2.0.3.zip",
+  "artifact_bytes": 26798,
+  "artifact_sha256": "8202de8ad490fbbf379c4706f7d0901659e73bc71ae6e4fbba99b570a79db47c",
+  "baseline_allowlist": "C:\\FRPDepot\\Dado\\Tools\\woocommerce\\freight_checkout_guard\\frpdepot-freight-checkout-guard\\ups-allowlist.json",
+  "baseline_allowlist_sha256": "b4ac24e198d70d5bf971739dbbb7718e209a805d82d050256108fbed842ff276",
+  "live_write_performed": false,
+  "member_order": [
+    "frpdepot-freight-checkout-guard/assets/frpdepot-freight-quote-journey.css",
+    "frpdepot-freight-checkout-guard/assets/frpdepot-freight-quote-journey.js",
+    "frpdepot-freight-checkout-guard/frpdepot-freight-checkout-guard.php",
+    "frpdepot-freight-checkout-guard/readme.txt",
+    "frpdepot-freight-checkout-guard/ups-allowlist.json"
+  ],
+  "members": {
+    "frpdepot-freight-checkout-guard/assets/frpdepot-freight-quote-journey.css": {
+      "bytes": 799,
+      "sha256": "3488e16872885011009b838b5959d22fc71a0b4c7ca78ac4ae44cd8addda9f0c"
+    },
+    "frpdepot-freight-checkout-guard/assets/frpdepot-freight-quote-journey.js": {
+      "bytes": 12564,
+      "sha256": "d644d29d47e051203c04ab13100b724e41a922a45a83896a422470dcd8e206b0"
+    },
+    "frpdepot-freight-checkout-guard/frpdepot-freight-checkout-guard.php": {
+      "bytes": 96211,
+      "sha256": "f471a2aa8d6af7c1acd6698a5ec1f8bafcbf476cf6d2a83ae8256e8784be5e27"
+    },
+    "frpdepot-freight-checkout-guard/readme.txt": {
+      "bytes": 3854,
+      "sha256": "abcbac5461b92d13a05d7f18168eb89b51034de1ce81f26df9b46a5796d68261"
+    },
+    "frpdepot-freight-checkout-guard/ups-allowlist.json": {
+      "bytes": 657,
+      "sha256": "b4ac24e198d70d5bf971739dbbb7718e209a805d82d050256108fbed842ff276"
+    }
+  },
+  "network_used": false,
+  "plugin_slug": "frpdepot-freight-checkout-guard",
+  "plugin_version": "2.0.3",
+  "reproducible_two_clean_builds": true,
+  "schema_version": 2,
+  "specification_sha256": "5348ef3f357676f5629cf72696fd3fe0be718a3847854974f20cf28cc7047400",
+  "zip_permissions": "100644",
+  "zip_timestamp": "1980-01-01T00:00:00"
+}

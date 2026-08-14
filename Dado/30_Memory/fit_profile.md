@@ -12,6 +12,10 @@ sheet — ask instead.
 - Resin standard (Rachad, confirmed 2026-08-08): use D411 unless Rachad explicitly requests another resin. Use `D411` in customer-facing selectors, item names, quotes, and catalog labels. In technical/manufacturer documents, use `Derakane 411-350 (D411)` on first mention when the exact grade matters. D411 and Derakane 411-350 are the same catalog option and must not be listed separately. Stock availability does not authorize changing the resin.
 - Hetron offering policy (Rachad, 2026-08-13): FRP Depot does not offer Hetron resin. Remove Hetron from every public website page, selector, guide link and catalogue presentation. Existing hidden/private historical records are not an offering and must not be published; deleting or changing them requires an exact separately approved write plan.
 - Public chemical-guide policy (Rachad, 2026-08-13): Derakane/Alta chemical guides are public and FRP Depot may use them for its searchable guide. Do not treat separate INEOS/Alta permission as a blocker. Data accuracy, complete footnotes, units, source attribution and technical limitations still must be proven before wider promotion. For broad or mixture chemical names, publish no normalized CAS unless the exact substance form is independently proven; keep the chemical name searchable and retain the guide's raw identifier internally.
+- Customer stock-disclosure rule (Rachad, 2026-08-13 13:29, on the Taha reply):
+  "let not tell him how much we have in stock and send him unit pricing." Do NOT
+  put our stock quantities in a customer-facing draft. Quote UNIT PRICING and,
+  if needed, availability in plain words. Stock figures are internal, like costs.
 - Location / warehouse: Business/contact address repeatedly shown as 4507
   Ferguson Dr., Brockville, Ontario, Canada K6T 1A9. Warehouse status is not
   confirmed.
@@ -1135,13 +1139,16 @@ preserving the estimate number, the customer, the currency and the status.
 Prefer it for any ordinary revision; creating a replacement estimate is now the
 exception and needs a reason.
 
-**SCT (Structural Composites Technologies Ltd, `96274000000186533`) is taxed at
-GST 5%, not HST.** Their billing address is 200-100 Hoka St, Winnipeg, Manitoba,
-and their live quote QT-000031 carries tax `96274000000035512` GST 5%. This is
-worth keeping because a 2026-08-13 brief assumed HST for this customer. Ontario
-HST 13% (`96274000000035516`) is the right tax for Ontario-destined sales — that
-is the tax Rachad corrected the SCT PO26330 sales ORDER to on 2026-08-11 — so the
-two records genuinely differ and neither is a mistake to "fix" without asking.
+**SCT (Structural Composites Technologies Ltd, `96274000000186533`) — RACHAD
+RULED ONTARIO TAX FOR SCT, NOT 5%, AND HE HAS SAID IT TWICE.** 2026-08-11 on the
+PO26330 sales order ("we want to charge sale of Ontario"), and again 2026-08-13
+13:52: "Approved. make sure also for SCT its Ontario taxes not 5%". So NEW SCT
+documents carry Ontario HST 13% (`96274000000035516`), even though their billing
+address is 200-100 Hoka St, Winnipeg, Manitoba. Measured read-only the same day
+and still true as an observation: their EXISTING quote QT-000031 carries tax
+`96274000000035512` GST 5%. That is one live record, NOT the rule — do not treat
+it as precedent for the next SCT document, and do not silently "fix" it either;
+changing it needs its own staged, approved plan.
 
 **The Catalog Classification dropdown has exactly three values and there is no
 `Non Website` option.** They are `Website Catalog`, `Custom / Customer-Specific`

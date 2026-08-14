@@ -1,0 +1,20 @@
+{
+  "artifact_bytes": 5319,
+  "artifact_name": "frpdepot-hetron-private-history-1.1.0.zip",
+  "artifact_sha256": "bb9012fc9daffeef43d5d551445f72f745ef36b95c72c7a9c428b958c98dd55d",
+  "members": {
+    "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php": {
+      "bytes": 19011,
+      "sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+    },
+    "frpdepot-hetron-private-history/readme.txt": {
+      "bytes": 1824,
+      "sha256": "ec13b87367a12747abdc1714812acd16679498e24ab1ac14a83fefaaefd94b00"
+    }
+  },
+  "plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+  "plugin_name": "FRP Depot Hetron Private History",
+  "plugin_slug": "frpdepot-hetron-private-history",
+  "plugin_version": "1.1.0",
+  "schema": 1
+}

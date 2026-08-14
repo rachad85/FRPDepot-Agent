@@ -1,0 +1,104 @@
+{
+  "contract": "frpdepot.derakane-search.import-manifest",
+  "contract_version": 2,
+  "dataset": {
+    "bytes": 989977,
+    "file": "derakane-dataset.json",
+    "sha256": "cbc85ef1088901491a40bc5dc17d1a94df368e92a7e4222e8b0f3fb3c4441738"
+  },
+  "generated_utc": "2099-01-01T00:00:00Z",
+  "producer": {
+    "contract_version": 2,
+    "pipeline": "frpdepot.derakane-guide-rebuild",
+    "run_id": "SYNTHETIC-FIXTURE-RUN-V2"
+  },
+  "rebuild_provenance": {
+    "artifacts": [
+      {
+        "bytes": 101,
+        "path": "data/dataset_metadata.json",
+        "sha256": "b585a24d501c71b0e7ee3e5111b2e3d0b7a4fa625a83ac7cdc0be25bd931dea3"
+      },
+      {
+        "bytes": 102,
+        "path": "data/records.jsonl",
+        "sha256": "4779228febb6de710e11e9b3c14a9f5a008d6d8f12e0994cd98c29225d0a036c"
+      },
+      {
+        "bytes": 103,
+        "path": "data/cas_crosswalk.json",
+        "sha256": "5025508ae7595fda39ab2dc694d6544add77718eb9195ee0c49c5d0f709e7e00"
+      },
+      {
+        "bytes": 104,
+        "path": "data/footnotes.json",
+        "sha256": "ba611b5eb740268129cf030537d61f1ba54a1441265f99dd74a39b4f28e0c8c0"
+      },
+      {
+        "bytes": 105,
+        "path": "data/semantics.json",
+        "sha256": "fd677a27107ccdc2977c039c6073ac1b2d30c223b0041c4684a13e9ce1a1b699"
+      },
+      {
+        "bytes": 106,
+        "path": "data/chemical_groups.json",
+        "sha256": "150637ef43bc558b45dfd3aea883f18e90b4cbc394f0546191fc0a0bfd8cbe2a"
+      },
+      {
+        "bytes": 107,
+        "path": "data/search_index.json",
+        "sha256": "5f8f6d490bd09c492dd4b78311a281d9a2c70cf53f8fbcef6c684cbd2b9500c9"
+      },
+      {
+        "bytes": 108,
+        "path": "validation/cas_adjudication/final_adjudication_report.json",
+        "sha256": "5fd3f673f55d4d10f398b16125536a19e00de0741bfeaba112a813ba86104ed5"
+      }
+    ],
+    "output_manifest_bytes": 1234,
+    "output_manifest_sha256": "23383ea7e4fd748b656de1ed5bdce1cb0c7f725057a0082db40f39bb005a4d61",
+    "source_pdf_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "source": {
+    "document_code": "FIXTURE-ONLY-002",
+    "document_sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "edition": "SYNTHETIC TEST EDITION — NOT FOR PUBLICATION",
+    "page_count": 99,
+    "product_family": "Synthetic Derakane/Alta fixture data only",
+    "publication_date": "2099-01-01",
+    "publisher": "SYNTHETIC FIXTURE PUBLISHER",
+    "source_url": null,
+    "title": "Synthetic Chemical Resistance Guide Fixture"
+  },
+  "summary": {
+    "cas_entry_count": 9,
+    "cas_excluded_count": 1,
+    "cas_public_searchable_count": 8,
+    "chemical_count": 42,
+    "footnote_count": 25,
+    "parser_uncertainty_count": 0,
+    "rating_count": 486,
+    "resin_columns": [
+      "411",
+      "441",
+      "451",
+      "455",
+      "470",
+      "510A/B/C",
+      "510N",
+      "515",
+      "8084"
+    ],
+    "row_count": 54,
+    "search_entity_count": 42,
+    "source_special_count": 5
+  },
+  "verification": {
+    "method": "Synthetic fixture contract-v2 exercise only",
+    "reviewed_row_count": 54,
+    "status": "VERIFIED",
+    "unresolved_count": 0,
+    "verified_utc": "2099-01-01T00:01:00Z",
+    "verifier": "FIXTURE"
+  }
+}

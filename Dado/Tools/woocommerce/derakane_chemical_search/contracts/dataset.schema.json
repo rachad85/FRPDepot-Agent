@@ -1,0 +1,293 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://frpdepots.local/contracts/derakane-search/dataset-v2.schema.json",
+  "title": "FRP Depot verified Derakane search dataset v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["contract", "contract_version", "source", "rebuild_provenance", "resin_columns", "footnotes", "semantics", "cas_catalog", "search_entities", "rows"],
+  "properties": {
+    "contract": {"const": "frpdepot.derakane-search.dataset"},
+    "contract_version": {"const": 2},
+    "source": {"$ref": "#/$defs/source"},
+    "rebuild_provenance": {"$ref": "#/$defs/rebuildProvenance"},
+    "resin_columns": {
+      "type": "array", "minItems": 9, "maxItems": 9,
+      "prefixItems": [
+        {"$ref": "#/$defs/resin411"}, {"$ref": "#/$defs/resin441"}, {"$ref": "#/$defs/resin451"},
+        {"$ref": "#/$defs/resin455"}, {"$ref": "#/$defs/resin470"}, {"$ref": "#/$defs/resin510ABC"},
+        {"$ref": "#/$defs/resin510N"}, {"$ref": "#/$defs/resin515"}, {"$ref": "#/$defs/resin8084"}
+      ],
+      "items": false
+    },
+    "footnotes": {"type": "array", "minItems": 25, "maxItems": 25, "items": {"$ref": "#/$defs/footnote"}},
+    "semantics": {"$ref": "#/$defs/semantics"},
+    "cas_catalog": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/casEntry"}},
+    "search_entities": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/searchEntity"}},
+    "rows": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/row"}}
+  },
+  "$defs": {
+    "sha256": {"type": "string", "pattern": "^[a-f0-9]{64}$"},
+    "bbox": {"type": "array", "minItems": 4, "maxItems": 4, "items": {"type": "number"}},
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["publisher", "title", "product_family", "edition", "document_code", "publication_date", "document_sha256", "page_count", "source_url"],
+      "properties": {
+        "publisher": {"type": "string", "minLength": 1}, "title": {"type": "string", "minLength": 1},
+        "product_family": {"type": "string", "minLength": 1}, "edition": {"type": "string", "minLength": 1},
+        "document_code": {"type": "string", "minLength": 1}, "publication_date": {"type": "string", "minLength": 1},
+        "document_sha256": {"$ref": "#/$defs/sha256"}, "page_count": {"type": "integer", "minimum": 1},
+        "source_url": {"type": ["string", "null"]}
+      }
+    },
+    "artifactPin": {
+      "type": "object", "additionalProperties": false, "required": ["path", "bytes", "sha256"],
+      "properties": {"path": {"type": "string", "minLength": 1}, "bytes": {"type": "integer", "minimum": 1}, "sha256": {"$ref": "#/$defs/sha256"}}
+    },
+    "rebuildProvenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["output_manifest_sha256", "output_manifest_bytes", "source_pdf_sha256", "artifacts"],
+      "properties": {
+        "output_manifest_sha256": {"$ref": "#/$defs/sha256"}, "output_manifest_bytes": {"type": "integer", "minimum": 1},
+        "source_pdf_sha256": {"$ref": "#/$defs/sha256"},
+        "artifacts": {"type": "array", "minItems": 8, "items": {"$ref": "#/$defs/artifactPin"}}
+      }
+    },
+    "resinIds": {"const": ["411", "441", "451", "455", "470", "510A/B/C", "510N", "515", "8084"]},
+    "resinColumn": {
+      "type": "object", "additionalProperties": false, "required": ["id", "label", "source_sequence"],
+      "properties": {"id": {"type": "string"}, "label": {"type": "string", "minLength": 1}, "source_sequence": {"type": "integer", "minimum": 1, "maximum": 9}}
+    },
+    "resin411": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "411"}, "source_sequence": {"const": 1}}}]},
+    "resin441": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "441"}, "source_sequence": {"const": 2}}}]},
+    "resin451": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "451"}, "source_sequence": {"const": 3}}}]},
+    "resin455": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "455"}, "source_sequence": {"const": 4}}}]},
+    "resin470": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "470"}, "source_sequence": {"const": 5}}}]},
+    "resin510ABC": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "510A/B/C"}, "source_sequence": {"const": 6}}}]},
+    "resin510N": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "510N"}, "source_sequence": {"const": 7}}}]},
+    "resin515": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "515"}, "source_sequence": {"const": 8}}}]},
+    "resin8084": {"allOf": [{"$ref": "#/$defs/resinColumn"}, {"properties": {"id": {"const": "8084"}, "source_sequence": {"const": 9}}}]},
+    "sourcePart": {
+      "type": "object", "additionalProperties": false, "required": ["bbox", "raw"],
+      "properties": {"bbox": {"$ref": "#/$defs/bbox"}, "raw": {"type": "string", "minLength": 1}}
+    },
+    "footnote": {
+      "type": "object", "additionalProperties": false, "required": ["id", "text", "source_page", "source_parts"],
+      "properties": {
+        "id": {"type": "integer", "minimum": 1, "maximum": 25}, "text": {"type": "string", "minLength": 1},
+        "source_page": {"type": "integer", "minimum": 1},
+        "source_parts": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/sourcePart"}}
+      }
+    },
+    "semanticState": {
+      "type": "object", "additionalProperties": false, "required": ["source_quote", "state"],
+      "properties": {"source_quote": {"type": "string", "minLength": 1}, "state": {"type": "string", "minLength": 1}}
+    },
+    "semantics": {
+      "type": "object", "additionalProperties": false,
+      "required": ["blank", "concentration", "ls", "model_states", "nr", "parser_uncertainty", "rating_model_version", "resolution_statuses", "source_page", "source_special", "temperature_pair"],
+      "properties": {
+        "blank": {"$ref": "#/$defs/semanticState"}, "ls": {"$ref": "#/$defs/semanticState"}, "nr": {"$ref": "#/$defs/semanticState"},
+        "concentration": {
+          "type": "object", "additionalProperties": false, "required": ["column_header_raw", "legend"],
+          "properties": {"column_header_raw": {"type": "string", "minLength": 1}, "legend": {"type": "string", "minLength": 1}}
+        },
+        "model_states": {"const": ["blank", "nr", "ls", "value", "source_special", "parser_uncertainty"]},
+        "parser_uncertainty": {
+          "type": "object", "additionalProperties": false, "required": ["meaning", "resolution_status", "state"],
+          "properties": {"meaning": {"type": "string", "minLength": 1}, "resolution_status": {"const": "PARSER_UNCERTAINTY"}, "state": {"const": "parser_uncertainty"}}
+        },
+        "rating_model_version": {"const": 2},
+        "resolution_statuses": {"const": ["RESOLVED", "SOURCE_SPECIAL", "PARSER_UNCERTAINTY"]},
+        "source_page": {"type": "integer", "minimum": 1},
+        "source_special": {
+          "type": "object", "additionalProperties": false, "required": ["forms", "meaning", "resolution_status", "state"],
+          "properties": {
+            "forms": {"type": "array", "minItems": 5, "maxItems": 5, "items": {"enum": ["limited_service_temperature_pair", "semicolon_separated_temperature_alternatives", "printed_single_temperature_without_unit", "printed_dash", "510_variant_specific_values"]}, "uniqueItems": true},
+            "meaning": {"type": "string", "minLength": 1}, "resolution_status": {"const": "SOURCE_SPECIAL"}, "state": {"const": "source_special"}
+          }
+        },
+        "temperature_pair": {
+          "type": "object", "additionalProperties": false,
+          "required": ["column_header_raw", "meaning", "not_necessarily_maximum_service_temperature", "page_text_sha256", "source_quote_parts"],
+          "properties": {
+            "column_header_raw": {"const": "°C/°F"}, "meaning": {"type": "string", "minLength": 1},
+            "not_necessarily_maximum_service_temperature": {"const": true}, "page_text_sha256": {"$ref": "#/$defs/sha256"},
+            "source_quote_parts": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+          }
+        }
+      }
+    },
+    "adjudication": {
+      "type": "object", "additionalProperties": false, "required": ["category", "category_label", "mechanism", "rationale", "status"],
+      "properties": {
+        "category": {"type": "string", "minLength": 1}, "category_label": {"type": "string", "minLength": 1},
+        "mechanism": {"type": "string", "minLength": 1}, "rationale": {"type": "string", "minLength": 1},
+        "status": {"enum": ["PROVEN", "EXCLUDED"]}
+      }
+    },
+    "authorityProof": {
+      "type": "object", "additionalProperties": false,
+      "required": ["body_sha256", "evidence_path", "http_status", "official_source", "query", "retrieved_utc", "role", "url"],
+      "oneOf": [
+        {"required": ["pubchem_cids"], "not": {"required": ["pubchem_sids"]}},
+        {"required": ["pubchem_sids"], "not": {"required": ["pubchem_cids"]}}
+      ],
+      "properties": {
+        "body_sha256": {"$ref": "#/$defs/sha256"}, "evidence_path": {"type": "string", "minLength": 1},
+        "http_status": {"type": "integer", "minimum": 100}, "official_source": {"type": "string", "minLength": 1},
+        "pubchem_cids": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "pubchem_sids": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+        "query": {"type": "string", "minLength": 1}, "retrieved_utc": {"type": "string", "format": "date-time"},
+        "role": {"type": "string", "minLength": 1}, "url": {"type": "string", "minLength": 1}
+      }
+    },
+    "casSource": {
+      "type": "object", "additionalProperties": false, "required": ["column", "line_bboxes", "page", "pdf_sha256", "raw_lines"],
+      "properties": {
+        "column": {"type": "integer", "minimum": 1}, "line_bboxes": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/bbox"}},
+        "page": {"type": "integer", "minimum": 1}, "pdf_sha256": {"$ref": "#/$defs/sha256"},
+        "raw_lines": {"type": "array", "minItems": 1, "items": {"type": "string", "minLength": 1}}
+      }
+    },
+    "casEntry": {
+      "type": "object", "additionalProperties": false,
+      "required": ["cas_entry_id", "source_sequence", "cas_raw", "raw_pdf_cas", "normalized_cas", "public_searchable", "checksum_valid", "chemical_name_display", "chemical_name_raw", "chemical_search_key", "adjudication", "authority_provenance", "source"],
+      "properties": {
+        "cas_entry_id": {"type": "string", "minLength": 1}, "source_sequence": {"type": "integer", "minimum": 1},
+        "cas_raw": {"type": "string", "minLength": 1}, "raw_pdf_cas": {"type": "string", "minLength": 1},
+        "normalized_cas": {"type": ["string", "null"], "pattern": "^[0-9]{2,7}-[0-9]{2}-[0-9]$"},
+        "public_searchable": {"type": "boolean"}, "checksum_valid": {"type": "boolean"},
+        "chemical_name_display": {"type": "string", "minLength": 1}, "chemical_name_raw": {"type": "string", "minLength": 1},
+        "chemical_search_key": {"type": "string", "minLength": 1}, "adjudication": {"$ref": "#/$defs/adjudication"},
+        "authority_provenance": {"type": "array", "items": {"$ref": "#/$defs/authorityProof"}}, "source": {"$ref": "#/$defs/casSource"}
+      }
+    },
+    "alias": {
+      "type": "object", "additionalProperties": false, "required": ["display", "search_key", "basis"],
+      "properties": {"display": {"type": "string", "minLength": 1}, "search_key": {"type": "string", "minLength": 1}, "basis": {"type": "string", "minLength": 1}}
+    },
+    "concentrationIndex": {
+      "type": "object", "additionalProperties": false, "required": ["display", "record_id", "source_page", "source_raw", "source_sequence"],
+      "properties": {
+        "display": {"type": "string"}, "record_id": {"type": "string", "minLength": 1},
+        "source_page": {"type": "integer", "minimum": 1}, "source_raw": {"type": "string"},
+        "source_sequence": {"type": "integer", "minimum": 1}
+      }
+    },
+    "searchEntity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["entity_type", "entity_id", "source_order", "display_name", "name_key", "aliases", "cas_entry_ids", "record_ids", "concentrations_in_source_order"],
+      "properties": {
+        "entity_type": {"enum": ["table_chemical", "cas_catalog_only"]}, "entity_id": {"type": "string", "minLength": 1},
+        "source_order": {"type": "integer", "minimum": 1}, "display_name": {"type": "string", "minLength": 1},
+        "name_key": {"type": "string", "minLength": 1}, "aliases": {"type": "array", "items": {"$ref": "#/$defs/alias"}},
+        "cas_entry_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "record_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "concentrations_in_source_order": {"type": "array", "items": {"$ref": "#/$defs/concentrationIndex"}}
+      }
+    },
+    "component": {
+      "type": "object", "additionalProperties": false, "required": ["unit", "value", "limited_service", "limited_service_prefix_raw"],
+      "properties": {"unit": {"enum": ["C", "F"]}, "value": {"type": "integer", "minimum": 0}, "limited_service": {"type": "boolean"}, "limited_service_prefix_raw": {"type": ["string", "null"]}}
+    },
+    "temperatureAlternative": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "source_raw", "components", "temperature_pair_order"],
+      "properties": {"kind": {"const": "temperature_pair"}, "source_raw": {"type": "string", "minLength": 1}, "components": {"type": "array", "minItems": 2, "maxItems": 2, "items": {"$ref": "#/$defs/component"}}, "temperature_pair_order": {"const": "C/F"}}
+    },
+    "singleAlternative": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "source_raw", "value", "unit", "unit_status"],
+      "properties": {"kind": {"const": "single_temperature"}, "source_raw": {"type": "string", "minLength": 1}, "value": {"type": "integer", "minimum": 0}, "unit": {"type": "null"}, "unit_status": {"const": "NOT_PRINTED"}}
+    },
+    "dashAlternative": {
+      "type": "object", "additionalProperties": false, "required": ["kind", "source_raw"],
+      "properties": {"kind": {"const": "printed_dash"}, "source_raw": {"const": "-"}}
+    },
+    "alternative": {"oneOf": [{"$ref": "#/$defs/temperatureAlternative"}, {"$ref": "#/$defs/singleAlternative"}, {"$ref": "#/$defs/dashAlternative"}]},
+    "variantNotPrinted": {
+      "type": "object", "additionalProperties": false, "required": ["state", "source_raw"],
+      "properties": {"state": {"const": "not_printed"}, "source_raw": {"type": "null"}}
+    },
+    "variantAssignment": {
+      "type": "object", "additionalProperties": false, "required": ["label_raw", "rating", "variants"],
+      "properties": {"label_raw": {"type": "string", "minLength": 1}, "rating": {"$ref": "#/$defs/alternative"}, "variants": {"type": "array", "minItems": 1, "items": {"enum": ["A", "B", "C"]}, "uniqueItems": true}}
+    },
+    "resinVariants": {
+      "type": "object", "additionalProperties": false, "required": ["A", "B", "C", "assignments", "source_notation", "source_notation_raw", "unassigned_variants"],
+      "properties": {
+        "A": {"oneOf": [{"$ref": "#/$defs/alternative"}, {"$ref": "#/$defs/variantNotPrinted"}]},
+        "B": {"oneOf": [{"$ref": "#/$defs/alternative"}, {"$ref": "#/$defs/variantNotPrinted"}]},
+        "C": {"oneOf": [{"$ref": "#/$defs/alternative"}, {"$ref": "#/$defs/variantNotPrinted"}]},
+        "assignments": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/variantAssignment"}},
+        "source_notation": {"type": "string", "minLength": 1}, "source_notation_raw": {"type": "string", "minLength": 1},
+        "unassigned_variants": {"type": "array", "items": {"enum": ["A", "B", "C"]}, "uniqueItems": true}
+      }
+    },
+    "rating": {
+      "type": "object", "additionalProperties": false,
+      "required": ["alternative_separators_raw", "alternatives", "footnote_refs_raw", "footnote_refs", "rating_model_version", "resin", "resin_sequence", "resolution_status", "source_geometry", "source_raw", "state", "syntax", "temperature_c", "temperature_f", "temperature_pair_order", "value_text"],
+      "properties": {
+        "alternative_separators_raw": {"type": "array", "items": {"type": "string", "minLength": 1}},
+        "alternatives": {"type": "array", "items": {"$ref": "#/$defs/alternative"}},
+        "footnote_refs_raw": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}},
+        "footnote_refs": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}, "uniqueItems": true},
+        "rating_model_version": {"const": 2}, "resin": {"type": "string", "minLength": 1},
+        "resin_sequence": {"type": "integer", "minimum": 1, "maximum": 9}, "resolution_status": {"enum": ["RESOLVED", "SOURCE_SPECIAL"]},
+        "source_geometry": {"type": "object", "additionalProperties": false, "required": ["bbox"], "properties": {"bbox": {"$ref": "#/$defs/bbox"}}},
+        "source_raw": {"type": "string"}, "state": {"enum": ["blank", "nr", "ls", "value", "source_special"]},
+        "syntax": {"enum": ["blank", "not_recommended", "limited_service", "temperature_pair", "multiple_alternatives", "single_temperature", "printed_dash", "resin_variant_values"]},
+        "temperature_c": {"type": ["integer", "null"]}, "temperature_f": {"type": ["integer", "null"]},
+        "temperature_pair_order": {"enum": ["C/F", null]}, "value_text": {"type": "string"},
+        "source_special_form": {"enum": ["limited_service_temperature_pair", "semicolon_separated_temperature_alternatives", "printed_single_temperature_without_unit", "printed_dash", "510_variant_specific_values"]},
+        "resin_variants": {"$ref": "#/$defs/resinVariants"}
+      }
+    },
+    "cell": {
+      "type": "object", "additionalProperties": false, "required": ["resin_id", "raw", "footnote_ids_raw", "footnote_ids", "ratings"],
+      "properties": {
+        "resin_id": {"type": "string", "minLength": 1}, "raw": {"type": "string"},
+        "footnote_ids_raw": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}},
+        "footnote_ids": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}, "uniqueItems": true},
+        "ratings": {"type": "array", "minItems": 1, "maxItems": 1, "items": {"$ref": "#/$defs/rating"}}
+      }
+    },
+    "chemicalSource": {
+      "type": "object", "additionalProperties": false, "required": ["display", "footnote_refs_raw", "footnote_refs", "search_key", "source_raw"],
+      "properties": {
+        "display": {"type": "string", "minLength": 1},
+        "footnote_refs_raw": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}},
+        "footnote_refs": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}, "uniqueItems": true},
+        "search_key": {"type": "string", "minLength": 1}, "source_raw": {"type": "string", "minLength": 1}
+      }
+    },
+    "concentration": {
+      "type": "object", "additionalProperties": false, "required": ["column_unit_raw", "display", "source_raw", "unit_semantics"],
+      "properties": {"column_unit_raw": {"type": "string", "minLength": 1}, "display": {"type": "string"}, "source_raw": {"type": "string"}, "unit_semantics": {"type": "string", "minLength": 1}}
+    },
+    "rowSource": {
+      "type": "object", "additionalProperties": false, "required": ["cell_bboxes", "page", "page_row_index", "pdf_sha256", "raw_cells", "row_bbox", "table_index"],
+      "properties": {
+        "cell_bboxes": {"type": "array", "minItems": 11, "maxItems": 11, "items": {"$ref": "#/$defs/bbox"}},
+        "page": {"type": "integer", "minimum": 1}, "page_row_index": {"type": "integer", "minimum": 1},
+        "pdf_sha256": {"$ref": "#/$defs/sha256"}, "raw_cells": {"type": "array", "minItems": 11, "maxItems": 11, "items": {"type": "string"}},
+        "row_bbox": {"$ref": "#/$defs/bbox"}, "table_index": {"type": "integer", "minimum": 1}
+      }
+    },
+    "row": {
+      "type": "object", "additionalProperties": false,
+      "required": ["row_id", "source_sequence", "source_page", "chemical_sequence", "chemical_id", "chemical_name", "chemical_source", "aliases", "cas_entry_ids", "public_cas_numbers", "concentration", "row_footnote_ids_raw", "row_footnote_ids", "cells", "source", "qa_status"],
+      "properties": {
+        "row_id": {"type": "string", "minLength": 1}, "source_sequence": {"type": "integer", "minimum": 1},
+        "source_page": {"type": "integer", "minimum": 1}, "chemical_sequence": {"type": "integer", "minimum": 1},
+        "chemical_id": {"type": "string", "minLength": 1}, "chemical_name": {"type": "string", "minLength": 1},
+        "chemical_source": {"$ref": "#/$defs/chemicalSource"}, "aliases": {"type": "array", "items": {"$ref": "#/$defs/alias"}},
+        "cas_entry_ids": {"type": "array", "items": {"type": "string", "minLength": 1}, "uniqueItems": true},
+        "public_cas_numbers": {"type": "array", "items": {"type": "string", "pattern": "^[0-9]{2,7}-[0-9]{2}-[0-9]$"}, "uniqueItems": true},
+        "concentration": {"$ref": "#/$defs/concentration"},
+        "row_footnote_ids_raw": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}},
+        "row_footnote_ids": {"type": "array", "items": {"type": "integer", "minimum": 1, "maximum": 25}, "uniqueItems": true},
+        "cells": {"type": "array", "minItems": 9, "maxItems": 9, "items": {"$ref": "#/$defs/cell"}},
+        "source": {"$ref": "#/$defs/rowSource"}, "qa_status": {"const": "VERIFIED"}
+      }
+    }
+  }
+}

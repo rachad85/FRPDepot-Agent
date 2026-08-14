@@ -945,9 +945,10 @@ class TestFixedIdentity(unittest.TestCase):
             r"C:\FRPDepot\Dado\Tools\woocommerce\freight_checkout_guard"
             r"\frpdepot-freight-checkout-guard.zip"))
 
-    def test_actions_are_a_closed_set_of_three(self):
+    def test_actions_are_a_closed_set_of_four(self):
         self.assertEqual(set(deploy.ACTIONS),
-                         {"plugin_replace", "plugin_activate", "plugin_deactivate"})
+                         {"plugin_replace", "plugin_activate", "plugin_deactivate",
+                          "plugin_ups_repair"})
 
     def test_navigation_is_a_closed_allowlist(self):
         self.assertEqual(deploy.ALLOWED_ADMIN_PATHS, frozenset({
@@ -988,8 +989,8 @@ class TestFixedIdentity(unittest.TestCase):
                          frozenset({"visible_role_radio", "backing_select"}))
 
     def test_the_versions_moved_together_so_old_evidence_and_plans_are_dead(self):
-        self.assertEqual(deploy.TOOL_VERSION, "1.2.0")
-        self.assertEqual(deploy.SCHEMA_VERSION, 3)
+        self.assertEqual(deploy.TOOL_VERSION, "1.4.0")
+        self.assertEqual(deploy.SCHEMA_VERSION, 5)
         self.assertEqual(deploy.PREFLIGHT_SCHEMA_VERSION, 2)
         self.assertEqual(deploy.PREFLIGHT_RUNS, 3)
 
@@ -2359,7 +2360,7 @@ class TestPlanIntegrity(Harness):
         self.rehash(self.plan_path, artifact=deploy.verify_artifact())
         with self.assertRaises(deploy.DeploymentError) as caught:
             deploy.load_plan(str(self.plan_path))
-        self.assertIn("Only a replace plan", str(caught.exception))
+        self.assertIn("Only a replace or UPS repair plan", str(caught.exception))
 
     def test_replace_plan_naming_the_withdrawn_artifact_is_refused(self):
         self.wp.version = OLD_VERSION
@@ -3231,13 +3232,13 @@ class TestSourceBoundaries(unittest.TestCase):
             with self.subTest(banned_call=banned_call):
                 self.assertNotIn(banned_call, block)
 
-    def test_only_the_eight_subcommands_exist(self):
+    def test_only_the_ten_subcommands_exist(self):
         literal = set(re.findall(r'add_parser\("([a-z-]+)"\)', self.source))
         looped = set(re.findall(r'^\s+\("([a-z-]+)", command_', self.source, re.M))
         self.assertEqual(literal | looped, {
             "inspect", "preflight-validation",
-            "stage-replace", "stage-activate", "stage-deactivate",
-            "commit-replace", "commit-activate", "commit-deactivate"})
+            "stage-replace", "stage-ups-repair", "stage-activate", "stage-deactivate",
+            "commit-replace", "commit-ups-repair", "commit-activate", "commit-deactivate"})
 
     def test_every_navigation_and_action_carries_an_explicit_timeout(self):
         for call in re.findall(r"\.goto\([^)]*\)", self.code):
