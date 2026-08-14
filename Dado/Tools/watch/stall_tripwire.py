@@ -45,6 +45,11 @@ DISABLE_FLAG_PATH = Path(r"C:\FRPDepot\Dado\40_Logs\gateway_disabled.flag")
 STOP_LEDGER_PATH = Path(r"C:\FRPDepot\Dado\40_Logs\gateway_stops.log")
 ORPHAN_ALERTS = 1            # a lost message is announced once; repeating adds nothing
 ORPHAN_LOOKBACK_HOURS = 12   # the tail holds ~a week; older than this is archaeology
+SWALLOWED_ALERTS = 1         # same reasoning as ORPHAN_ALERTS
+# The inbound and the arrival are written by DIFFERENT loggers and their order in
+# the file is not guaranteed - measured 110 ms inverted on the real log. Without
+# this tolerance an ordinary message reports as lost. See swallowed_messages().
+ADMIT_SKEW_SECONDS = 5
 STALL_MINUTES = 20          # SOUL promises a sign of life every 10-15 min
 POLL_LOOP_REPEATS = 3       # N near-timeout tool calls in one turn = babysitting
 POLL_NEAR_TIMEOUT_S = 300   # terminal.timeout is 600; anything over 300s is a block
@@ -63,6 +68,17 @@ PLATFORM = re.compile(r"platform=(\S+)")
 INBOUND = re.compile(TS + r".*gateway\.run: inbound message: platform=(\S+) user=\S+ chat=(\S+) msg=(.*)")
 RESPONSE_READY = re.compile(TS + r".*gateway\.run: response ready: platform=(\S+) chat=(\S+) ")
 GATEWAY_START = re.compile(TS + r".*gateway\.run: Starting Hermes Gateway")
+
+# *** A MESSAGE CAN DIE BEFORE IT EVER BECOMES A TURN. *** Added 2026-08-13
+# after the identical failure hit Sary: a voice note arrived while his session
+# was wedged on a 90-minute work unit, was never picked up, and was destroyed by
+# the next restart. ORPHAN detection above cannot see that class at all, because
+# it starts from `inbound message:` and a swallowed message never produces one -
+# it only ever reaches the adapter's own arrival line. Dado has the same hole:
+# her log carries 16 voice arrivals and 326 text flushes, none of which the
+# orphan check reads.
+VOICE_ARRIVAL = re.compile(TS + r".*\[(\w+)\] Cached user voice at ")
+FLUSH_ARRIVAL = re.compile(TS + r".*\[(\w+)\] Flushing text batch (\S+) \((\d+) chars\)")
 
 
 def log_path() -> Path:
@@ -312,6 +328,133 @@ def orphan_message(orphan: dict) -> str:
     )
 
 
+def lane_from_session(session_key: str) -> tuple[str, str] | None:
+    """`agent:main:telegram:dm:891365639` -> ('telegram', '891365639').
+
+    The flush line carries only this composite key while inbound lines carry
+    platform and chat as separate fields, so one has to be converted for the two
+    to be comparable.
+    """
+    parts = session_key.split(":")
+    if len(parts) < 4:
+        return None
+    return parts[2], parts[-1]
+
+
+def swallowed_messages(lines: list[str], started: dt.datetime | None) -> list[dict]:
+    """Messages that ARRIVED but never became a turn, and whose gateway died.
+
+    Deliberately the same shape as orphaned_messages() - per-lane, cleared by
+    the matching event from the SAME gateway life, and reported only once the
+    current life has moved past them - so the two read alike and cannot drift
+    apart. The difference is only which event proves the message was picked up:
+    an orphan has an inbound and lacks a response; a swallowed message never
+    even got an inbound.
+
+    THE TWO CLASSES ARE DISJOINT BY CONSTRUCTION. An arrival that produced an
+    inbound is cleared here and becomes the orphan check's problem, so one user
+    message can never be reported twice.
+
+    A queued message is NOT a fault - both agents legitimately run turns over an
+    hour, and a note picked up 95 minutes later is fine. Only an arrival that
+    the gateway life ENDED without ever admitting is reported.
+    """
+    if started is None:
+        return []
+
+    # TWO PASSES, NOT A STREAMING CLEAR, AND THE REASON IS MEASURED. The first
+    # cut cleared arrivals as it walked the log, so an inbound only cancelled
+    # arrivals it had already seen. Run against the real log that produced a
+    # FALSE "swallowed" immediately:
+    #     23:35:04,731  inbound message: platform=telegram ... msg=''
+    #     23:35:04,841  [Telegram] Flushing text batch ... (65 chars)
+    # The inbound is written 110 MILLISECONDS BEFORE the flush for the SAME
+    # message - two different loggers, and their order in the file is not
+    # guaranteed. Streaming order therefore reported one ordinary message as
+    # both an orphan AND swallowed. Collect both sides first, then match with a
+    # small skew tolerance.
+    life = 0
+    arrivals: list[dict] = []
+    inbounds: list[dict] = []
+    for line in lines:
+        if GATEWAY_START.search(line):
+            life += 1
+            continue
+        voice = VOICE_ARRIVAL.search(line)
+        if voice:
+            # The voice line names no session or chat, only a cache path. It is
+            # tracked per-PLATFORM for that reason, which is sound while each
+            # lane is allowlisted to Rachad alone. A second allowed user would
+            # make this attribution unsafe and it would need the chat id.
+            arrivals.append({"ts": parse_ts(voice.group(1)), "platform": voice.group(2).lower(),
+                             "chat": None, "what": "a voice note", "life": life})
+            continue
+        flush = FLUSH_ARRIVAL.search(line)
+        if flush:
+            parsed = lane_from_session(flush.group(3))
+            if parsed:
+                arrivals.append({"ts": parse_ts(flush.group(1)), "platform": parsed[0],
+                                 "chat": parsed[1], "life": life,
+                                 "what": f"a text message ({flush.group(4)} chars)"})
+            continue
+        inbound = INBOUND.search(line)
+        if inbound:
+            inbounds.append({"ts": parse_ts(inbound.group(1)), "platform": inbound.group(2).lower(),
+                             "chat": inbound.group(3), "life": life})
+
+    def admitted(arrival: dict) -> bool:
+        """Was this arrival picked up in the life it arrived in?
+
+        Same-life only, for the reason the orphan check gives: a later pickup of
+        a RE-SENT message must not erase the evidence that the first was never
+        seen. Unbounded above WITHIN the life on purpose - a note answered 95
+        minutes into a long turn is normal, not a fault.
+        """
+        floor = arrival["ts"] - dt.timedelta(seconds=ADMIT_SKEW_SECONDS)
+        for item in inbounds:
+            if item["life"] != arrival["life"] or item["platform"] != arrival["platform"]:
+                continue
+            if arrival["chat"] is not None and item["chat"] != arrival["chat"]:
+                continue
+            if item["ts"] >= floor:
+                return True
+        return False
+
+    starts = gateway_starts(lines)
+    per_lane: dict[str, list[dict]] = {}
+    for arrival in arrivals:
+        if arrival["ts"] >= started or admitted(arrival):
+            continue
+        per_lane.setdefault(arrival["platform"], []).append(arrival)
+
+    swallowed: list[dict] = []
+    for platform, lost in per_lane.items():
+        lost.sort(key=lambda item: item["ts"])
+        first = lost[0]
+        died = next((s for s in starts if s > first["ts"]), started)
+        swallowed.append({"platform": platform, "received": first["ts"],
+                          "what": first["what"], "count": len(lost), "died": died})
+    swallowed.sort(key=lambda item: item["received"])
+    return swallowed
+
+
+def swallowed_key(item: dict) -> str:
+    return f"swallowed:{item['platform']}@{item['received'].isoformat()}"
+
+
+def swallowed_message(item: dict) -> str:
+    extra = ""
+    if item["count"] > 1:
+        extra = f" The {item['count'] - 1} message(s) you sent after it went the same way."
+    return (
+        f"Your {item['platform']} message from "
+        f"{item['received'].strftime('%Y-%m-%d %H:%M')} - {item['what']} - was NEVER "
+        f"PICKED UP: Dado was busy on an earlier job, it sat in the queue, and her "
+        f"gateway restarted at {item['died'].strftime('%H:%M')} before she ever saw it."
+        f"{extra} She has no record of it and never will. Re-send it if you still need it."
+    )
+
+
 def main() -> int:
     # A deliberate stop wins over everything, exactly as dado_lane_health does.
     if DISABLE_FLAG_PATH.exists():
@@ -333,6 +476,7 @@ def main() -> int:
     stops = deliberate_stops()
     problems: list[tuple[str, str, dict]] = []
     orphan_problems: list[tuple[str, str, dict]] = []
+    swallowed_problems: list[tuple[str, str, dict]] = []
     seen: set[str] = set()
 
     # A message that died with its gateway outranks a slow one: the slow turn may
@@ -351,6 +495,21 @@ def main() -> int:
         if record["alerts"] >= ORPHAN_ALERTS:
             continue
         orphan_problems.append((orphan_message(orphan), key, record))
+
+    # A message she never even SAW outranks one she saw and lost: the orphan at
+    # least reached her, so re-asking it lands in a conversation that has some
+    # trace of it. Same lookback and same deliberate-stop suppression.
+    for item in swallowed_messages(lines, started):
+        if (now - item["died"]).total_seconds() > ORPHAN_LOOKBACK_HOURS * 3600:
+            continue
+        if any(item["received"] <= stop <= item["died"] for stop in stops):
+            continue  # he stopped her himself; reporting it is crying wolf
+        key = swallowed_key(item)
+        seen.add(key)
+        record = state.get(key) or {"alerts": 0, "last_alert": None}
+        if record["alerts"] >= SWALLOWED_ALERTS:
+            continue
+        swallowed_problems.append((swallowed_message(item), key, record))
 
     for session, turn in open_turns(lines).items():
         if started is not None and turn["started"] < started:
@@ -402,8 +561,9 @@ def main() -> int:
     for key in [k for k in state if k not in seen]:
         del state[key]
 
-    # An orphan outranks a stall: the slow turn may still answer him.
-    problems = orphan_problems + problems
+    # An orphan outranks a stall: the slow turn may still answer him. A
+    # swallowed message outranks both - she has no record of it at all.
+    problems = swallowed_problems + orphan_problems + problems
 
     # --dry-run is read off sys.argv rather than argparse ON PURPOSE: cron
     # invokes this as exactly [python, script], and an argument parser that
