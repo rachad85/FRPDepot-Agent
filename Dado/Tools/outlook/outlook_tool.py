@@ -1058,15 +1058,6 @@ def command_reply_all(args: argparse.Namespace) -> None:
             )
         if str(latest.get("id") or "") != source_message_id:
             raise OutlookError("Reply All blocked: a newer external reply exists in the live thread.")
-    same_response_drafts = [
-        message
-        for message in messages
-        if message.get("isDraft") is True
-        and message_datetime(message) >= message_datetime(source)
-    ]
-    if same_response_drafts:
-        raise OutlookError("Reply All blocked: an active reply draft already exists for this response.")
-
     if superseded_draft_id:
         encoded_superseded_id = quote(superseded_draft_id, safe="")
         superseded = graph_request(
@@ -1076,6 +1067,16 @@ def command_reply_all(args: argparse.Namespace) -> None:
         )
         if superseded.get("isDraft") is not True or superseded.get("subject") != superseded_subject:
             raise OutlookError("The named superseded Outlook draft did not pass its identity check.")
+
+    same_response_drafts = [
+        message
+        for message in messages
+        if message.get("isDraft") is True
+        and message_datetime(message) >= message_datetime(source)
+        and str(message.get("id") or "") != superseded_draft_id
+    ]
+    if same_response_drafts:
+        raise OutlookError("Reply All blocked: an active reply draft already exists for this response.")
 
     created = graph_request(
         access_token,

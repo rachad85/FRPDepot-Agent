@@ -256,6 +256,13 @@ class OutlookToolTests(unittest.TestCase):
                 "receivedDateTime": "2026-07-23T10:00:00Z",
                 "isDraft": False,
             }
+            old_draft = {
+                "id": "old-draft-id",
+                "conversationId": "conversation-id",
+                "subject": "Standalone pricing",
+                "createdDateTime": "2026-07-23T10:05:00Z",
+                "isDraft": True,
+            }
             generated_body = '<div class="quoted">Original history</div>'
             updated_body = ""
             calls = []
@@ -266,7 +273,7 @@ class OutlookToolTests(unittest.TestCase):
                 if method == "GET" and path.startswith("/me/messages/source-id?"):
                     return source
                 if method == "GET" and path.startswith("/me/messages?"):
-                    return {"value": [source]}
+                    return {"value": [source, old_draft]}
                 if method == "GET" and path.startswith("/me/messages/old-draft-id?"):
                     return {"id": "old-draft-id", "isDraft": True, "subject": "Standalone pricing"}
                 if method == "POST" and path.endswith("/createReplyAll"):
