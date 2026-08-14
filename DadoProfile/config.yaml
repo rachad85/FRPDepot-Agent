@@ -119,6 +119,19 @@ display:
   long_running_notifications: true
   busy_ack_detail: true
   background_process_notifications: false
+# Voice notes -> text. Rachad, 2026-08-13: give Dado and Sary the same
+# transcription Aze has. Local faster-whisper (free, offline, no API key);
+# large-v3 is the accurate tier. WITHOUT this block STT still runs, but
+# auto-detect falls back to the `base` model: measured on a real 12s voice
+# note, base heard "backhand" where large-v3 heard "back end". The model and
+# its 2.9 GB download are already on this machine and shared by every profile
+# (one hermes install), so this is a config change only, no download.
+stt:
+  enabled: true
+  provider: local
+  local:
+    model: large-v3
+    language: en
 memory:
   memory_enabled: true
   user_profile_enabled: true
