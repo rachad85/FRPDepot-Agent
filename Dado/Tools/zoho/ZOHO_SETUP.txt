@@ -5,25 +5,34 @@ IMPORTANT
 ---------
 - Use only the FRP Depot Zoho account.
 - Never paste the Client Secret or Grant Code into Telegram.
-- Zoho Books named writes: create customers; create draft estimates; create
-  draft invoices; revise only commissioned existing invoices; and correct only
-  the 10% line discounts on draft estimates QT-000029 and QT-000030.
+- Zoho Books named writes: create customers; create draft estimates; revise
+  existing draft/sent estimates in place while preserving status and line
+  identity; create draft invoices; revise only commissioned existing invoices;
+  create draft purchase orders; and retain the fixed estimate corrections.
 - Zoho Books banking named writes: match or categorize imported bank lines, including
   verified internal transfers and ordinary expenses, plus unmatch/uncategorize corrections.
 - Zoho Inventory named writes: create items and update item name/SKU.
 - No delete, .ALL, fullaccess, banking-account/rule change, standalone bank-
-  transaction creation, stock adjustment, order, estimate status/send, invoice
-  status/send, payment, credit-note, void, approval, or email-send scope.
+  transaction creation, uncommissioned stock adjustment, purchase-order update,
+  purchase-order status/send/approval/receive/bill/pay, estimate status/send,
+  invoice status/send, payment, credit-note, void, or email-send scope.
 - Every write is staged first and requires Rachad to answer that plan with APPROVED.
 - Zoho's items.UPDATE scope is broad, but the local named tool enforces name/SKU-only updates.
 - ZohoBooks.banking.CREATE and UPDATE are broad, but the local named banking
   tool allows only reviewed match/categorize/correction endpoints; UPDATE is
   limited to source/destination account corrections on existing transfers.
   The tool never deletes a bank transaction.
-- ZohoBooks.estimates.UPDATE is broad, but the local quote tool allows it only
-  for the staged 10% discount correction on QT-000029 and QT-000030. It cannot
-  delete, send, approve, accept, decline, change status, add/remove/reorder a
-  line, or update any other estimate.
+- ZohoBooks.estimates.UPDATE is broad, but the local quote tool permits only
+  immutable approval-gated revisions of existing draft/sent estimates while
+  preserving customer, number, currency, status and the complete existing line
+  identity/order, plus the fixed corrections already commissioned. It cannot
+  delete, send, approve, accept, decline, convert, change status, or add/remove/
+  reorder/substitute a line.
+- ZohoBooks.purchaseorders.CREATE is broad, but the local named purchase-order
+  tool creates only one new purchase order in exactly Draft status from an
+  immutable approval-gated plan, using an existing active vendor and existing
+  active Zoho items. It cannot send, approve, update, delete, void, receive,
+  attach, bill, pay, or change a purchase order's status.
 - ZohoBooks.invoices.CREATE and UPDATE are broad, but the local named invoice
   tool permits only draft creation and the separately commissioned restricted
   revision path. It cannot delete, send, void, mark sent, approve, credit, or
@@ -42,13 +51,14 @@ Expand the existing Self Client authorization
 5. Paste into the Scope box. The complete restricted scope list is already on the Windows clipboard.
 
 6. Confirm there is no DELETE, .ALL, fullaccess, bank-account/rule write,
-inventory adjustment write, order write, status/send, payment, credit-note,
-void, approval, or email-send scope.
+uncommissioned inventory-adjustment write, purchaseorders.UPDATE, purchase-
+order status/send/approval/receive/bill/pay, estimate or invoice status/send,
+payment, credit-note, void, or email-send scope.
 
 7. Choose a 10-minute duration if Zoho offers it.
 
 8. Add this description:
-FRP Depot complete read reporting plus staged named customer, draft quote, two-draft discount correction, restricted invoice, item catalog, and bank reconciliation changes
+FRP Depot complete read reporting plus staged named customer, draft quote and estimate revision, draft purchase order, restricted invoice, item catalog, and bank reconciliation changes
 
 9. Click Create/Generate.
 

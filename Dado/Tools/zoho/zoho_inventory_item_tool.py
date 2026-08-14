@@ -13,6 +13,19 @@ Allowed service writes:
 Forbidden: delete, stock/opening quantity, stock rate, adjustments, prices on
 existing items, status changes, group creation/deletion/restructuring, transfers,
 orders, invoices, and mail.
+
+TWO THINGS THIS TOOL DELIBERATELY DOES NOT DO, spelled out because both were
+misread on 2026-08-13:
+1. It NEVER publishes to the website. There is no WooCommerce, WordPress or
+   storefront route anywhere in this module; creating an item here changes Zoho
+   Inventory and nothing else.
+2. It NEVER sets a Catalog Classification. `custom_fields` is in
+   FORBIDDEN_CREATE_FIELDS, so classification is a SEPARATE, separately approved
+   plan in zoho_inventory_classification_tool.py -- it has to be, because that
+   plan needs the real item IDs this create returns.
+
+The stage-create input shape is FLAT: every writable field sits at the ROOT of
+the JSON object beside "sources". A top-level "payload" wrapper is refused.
 """
 
 from __future__ import annotations
@@ -495,6 +508,20 @@ def command_stage_create(args: argparse.Namespace) -> None:
         )
     extra = sorted(set(raw) - CREATE_FIELDS - {"sources"})
     if extra:
+        # *** THE 2026-08-13 D441 FAILURE WAS EXACTLY THIS, AND THE OLD MESSAGE
+        # DID NOT SAY SO. *** The inputs wrapped everything in a top-level
+        # "payload" object, so every real field was invisible to this schema and
+        # the only complaint was "Unsupported create-item field(s): payload".
+        # The shape is FLAT: the writable fields sit at the root beside
+        # "sources". No wrapper of any name is accepted.
+        if "payload" in extra:
+            raise ItemToolError(
+                "REFUSED: this input wraps the item in a top-level \"payload\" object. "
+                "stage-create takes a FLAT object: every writable field sits at the root "
+                "beside \"sources\". Writable fields are: "
+                + ", ".join(sorted(CREATE_FIELDS))
+                + ". Unsupported create-item field(s): " + ", ".join(extra)
+            )
         raise ItemToolError("Unsupported create-item field(s): " + ", ".join(extra))
     name = clean_text(raw.get("name"), "name", required=True)
     payload: dict[str, Any] = {"name": name}

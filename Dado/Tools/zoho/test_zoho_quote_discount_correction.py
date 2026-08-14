@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest.mock import patch
 from urllib.error import HTTPError, URLError
 
@@ -968,15 +969,411 @@ class ReadBackTests(CorrectionTestCase):
 
 
 class CreatePathRegressionTests(unittest.TestCase):
+    @staticmethod
+    def quote_evidence(payload: dict, summary: dict) -> dict:
+        customer_id = str(payload["customer_id"])
+        customer_name = (
+            "Troy Dualam Services Inc." if customer_id == draft.TDS_CUSTOMER_ID
+            else f"Customer {customer_id}"
+        )
+        items = {
+            str(line["item_id"]): {
+                "item_id": str(line["item_id"]),
+                "name": str(line.get("name") or f"Item {line['item_id']}"),
+                "sku": "TEST-SKU",
+                "status": "active",
+            }
+            for line in payload["line_items"]
+        }
+        tax_ids = {
+            str(line.get("tax_id") or "") for line in payload["line_items"]
+            if line.get("tax_id")
+        }
+        taxes = {
+            tax_id: {
+                "tax_id": tax_id,
+                "tax_name": "Gst & Qst" if tax_id == draft.TDS_GST_QST_TAX_ID else "Test tax",
+                "tax_percentage": 14.975 if tax_id == draft.TDS_GST_QST_TAX_ID else 13,
+                "tax_type": "tax",
+                "status": "active",
+            }
+            for tax_id in tax_ids
+        }
+        currency_id = str(payload.get("currency_id") or "9988")
+        customer = {
+            "customer_id": customer_id,
+            "customer_name": customer_name,
+            "status": "active",
+            "contact_type": "customer",
+            "currency_code": "CAD",
+            "currency_id": currency_id,
+        }
+        return {
+            "customer": customer,
+            "items": items,
+            "taxes": taxes,
+            "totals": draft.quote_totals(payload, summary, taxes),
+        }
+
     def stage_quote(self, raw: dict, plan_dir: Path) -> dict:
         input_path = plan_dir.parent / "quote_input.json"
         input_path.write_text(json.dumps(raw), encoding="utf-8")
         with patch.object(draft, "PLAN_DIR", plan_dir), patch.object(
             draft.zoho_tool, "append_receipt"
+        ), patch.object(
+            draft, "stage_quote_live_evidence", side_effect=self.quote_evidence
         ):
-            draft.command_stage_quote(argparse.Namespace(input=str(input_path)))
+            output = io.StringIO()
+            with redirect_stdout(output):
+                draft.command_stage_quote(argparse.Namespace(input=str(input_path)))
+            self.last_stage_output = output.getvalue()
         plans = sorted(plan_dir.glob("*_quote_*.json"))
-        return json.loads(plans[-1].read_text(encoding="utf-8"))
+        displayed_sha = json.loads(self.last_stage_output)["approval_card"]["plan_sha256"]
+        matches = [
+            json.loads(path.read_text(encoding="utf-8"))
+            for path in plans
+            if json.loads(path.read_text(encoding="utf-8"))["sha256"] == displayed_sha
+        ]
+        self.assertEqual(len(matches), 1)
+        return matches[0]
+
+    def test_new_quote_has_one_concise_hash_bound_24_hour_approval_card(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote(
+                {
+                    "customer_id": "1001",
+                    "reference_number": "PO CARD",
+                    "line_items": [{
+                        "item_id": "2002", "name": "FRP PANEL", "quantity": 2, "rate": 125.5,
+                        "quantity_source": "customer PO", "rate_source": "approved price list",
+                    }],
+                },
+                plan_dir,
+            )
+        card = plan["approval_card"]
+        self.assertEqual(json.loads(self.last_stage_output), {"approval_card": card})
+        self.assertEqual(card["operation"], draft.QUOTE_CREATE_OPERATION)
+        self.assertEqual(card["card_id"], f"QC-{plan['sha256'][:12].upper()}")
+        self.assertEqual(card["scope"], {
+            "method": "POST", "route": "/books/v3/estimates", "write_count": 1,
+            "draft_only": True, "email_or_lifecycle_action": False,
+        })
+        self.assertEqual(card["customer"], {"id": "1001", "name": "Customer 1001"})
+        self.assertEqual(card["document"]["reference_number"], "PO CARD")
+        self.assertEqual(card["document"]["status"], "draft")
+        self.assertEqual(card["currency"]["currency_id"], "9988")
+        self.assertNotIn("currency_id", plan["payload"])
+        self.assertNotIn("exchange_rate", plan["payload"])
+        self.assertEqual(card["lines"][0]["item"], "FRP PANEL")
+        self.assertEqual(card["totals"], {
+            "subtotal": "251.00", "tax": "0.00", "total": "251.00",
+            "tax_certainty": "deterministic_simple_tax",
+        })
+        self.assertTrue(card["risks"])
+        self.assertEqual(card["expires_utc"], plan["expires_utc"])
+        self.assertEqual(card["plan_sha256"], plan["sha256"])
+        self.assertEqual(draft.approval_plan_digest(plan), plan["sha256"])
+        self.assertIn("payload", plan)
+        self.assertIn("sources", plan)
+        self.assertIn("summary", plan)
+        self.assertIn("live_evidence", plan)
+
+    def test_resigned_payload_tamper_is_refused_before_vault_or_network(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            path = next(
+                path for path in plan_dir.glob("*_quote_*.json")
+                if json.loads(path.read_text(encoding="utf-8"))["sha256"] == plan["sha256"]
+            )
+            plan["payload"]["line_items"][0]["quantity"] = 500
+            plan["sha256"] = draft.approval_plan_digest(plan)
+            plan["approval_card"]["plan_sha256"] = plan["sha256"]
+            plan["approval_card"]["card_id"] = draft.approval_card_id(
+                draft.QUOTE_CREATE_OPERATION, plan["sha256"]
+            )
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            with patch.object(
+                draft.zoho_tool, "load_vault", side_effect=AssertionError("vault must not open")
+            ), patch.object(draft, "urlopen", side_effect=AssertionError("no network")):
+                with self.assertRaisesRegex(draft.DraftToolError, "canonical projection"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
+                    )
+
+    def test_fresh_quote_drift_refuses_before_lock_and_post(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            path = next(
+                path for path in plan_dir.glob("*_quote_*.json")
+                if json.loads(path.read_text(encoding="utf-8"))["sha256"] == plan["sha256"]
+            )
+            drift = copy.deepcopy(plan["live_evidence"])
+            drift["customer"]["currency_code"] = "USD"
+            vault = {
+                "api_domain": "https://www.zohoapis.com",
+                "books_organization_id": "9009",
+                "scopes": ["ZohoBooks.estimates.CREATE"],
+            }
+            with patch.object(draft, "PLAN_DIR", plan_dir), patch.object(
+                draft.zoho_tool, "load_vault", return_value=dict(vault)
+            ), patch.object(draft.zoho_tool, "validate_scopes"), patch.object(
+                draft.zoho_tool, "refresh_access_token", return_value=("token", dict(vault))
+            ), patch.object(
+                draft, "quote_live_evidence", return_value=drift
+            ), patch.object(
+                draft, "api_post_allowed", side_effect=AssertionError("POST must not run")
+            ), patch.object(draft, "urlopen", side_effect=AssertionError("no HTTP network")):
+                with self.assertRaisesRegex(draft.DraftToolError, "changed after review"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
+                    )
+            lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
+            self.assertFalse(lock.exists())
+
+    def test_post_failure_locks_quote_indeterminate_and_no_retry(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            path = next(
+                path for path in plan_dir.glob("*_quote_*.json")
+                if json.loads(path.read_text(encoding="utf-8"))["sha256"] == plan["sha256"]
+            )
+            calls = []
+
+            def failed_post(*_args):
+                lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
+                calls.append(lock.exists())
+                raise TimeoutError("mocked transport timeout")
+
+            vault = {
+                "api_domain": "https://www.zohoapis.com",
+                "books_organization_id": "9009",
+                "scopes": ["ZohoBooks.estimates.CREATE"],
+            }
+            with patch.object(draft, "PLAN_DIR", plan_dir), patch.object(
+                draft.zoho_tool, "load_vault", return_value=dict(vault)
+            ), patch.object(draft.zoho_tool, "validate_scopes"), patch.object(
+                draft.zoho_tool, "refresh_access_token", return_value=("token", dict(vault))
+            ), patch.object(
+                draft, "quote_live_evidence", return_value=copy.deepcopy(plan["live_evidence"])
+            ), patch.object(draft, "api_post_allowed", side_effect=failed_post), patch.object(
+                draft, "urlopen", side_effect=AssertionError("no HTTP network")
+            ):
+                with self.assertRaisesRegex(TimeoutError, "mocked transport timeout"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
+                    )
+                with self.assertRaisesRegex(draft.DraftToolError, "already entered commit"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
+                    )
+            self.assertEqual(calls, [True])
+            lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
+            record = json.loads(lock.read_text(encoding="utf-8"))
+            self.assertEqual(record["status"], "indeterminate")
+            self.assertTrue(record["no_retry"])
+            self.assertTrue(record["write_attempted"])
+
+    def test_quote_card_wrong_operation_hash_expiry_and_nonexact_approval_are_refused(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp).resolve()
+            plan_dir = root / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            plan_path = next(plan_dir.glob("*_quote_*.json"))
+            for bad in ("approved", " APPROVED", "APPROVED ", "APPROVED\n", "APPROVED yes", ""):
+                with self.subTest(approval=bad), patch.object(
+                    draft.zoho_tool, "load_vault", side_effect=AssertionError("vault must not open")
+                ), patch.object(draft, "urlopen", side_effect=AssertionError("no network")):
+                    with self.assertRaisesRegex(draft.DraftToolError, "exact uppercase"):
+                        draft.command_commit(
+                            argparse.Namespace(plan=str(plan_path), approval=bad), "quote"
+                        )
+            tampered = copy.deepcopy(plan)
+            tampered["approval_card"]["operation"] = draft.REVISION_OPERATION
+            plan_path.write_text(json.dumps(tampered), encoding="utf-8")
+            with self.assertRaisesRegex(draft.DraftToolError, "hash check failed"):
+                draft.load_verified_plan(str(plan_path), "quote")
+            expired = copy.deepcopy(plan)
+            expired["created_utc"] = "2026-08-01T00:00:00+00:00"
+            expired["expires_utc"] = "2026-08-02T00:00:00+00:00"
+            expired["approval_card"] = draft.quote_approval_card(
+                expired["payload"], expired["summary"], expired["live_evidence"],
+                expired["expires_utc"]
+            )
+            expired["sha256"] = draft.approval_plan_digest(expired)
+            expired["approval_card"]["plan_sha256"] = expired["sha256"]
+            plan_path.write_text(json.dumps(expired), encoding="utf-8")
+            with self.assertRaisesRegex(draft.DraftToolError, "expired"):
+                draft.load_verified_plan(str(plan_path), "quote")
+
+    def test_quote_card_cannot_be_relabelled_as_revision_even_with_a_new_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            path = next(plan_dir.glob("*_quote_*.json"))
+            plan["approval_card"]["operation"] = draft.REVISION_OPERATION
+            plan["approval_card"]["plan_sha256"] = ""
+            plan["sha256"] = draft.approval_plan_digest(plan)
+            plan["approval_card"]["plan_sha256"] = plan["sha256"]
+            path.write_text(json.dumps(plan), encoding="utf-8")
+            with self.assertRaisesRegex(draft.DraftToolError, "does not exactly match"):
+                draft.load_verified_plan(str(path), "quote")
+
+    def test_new_card_supersedes_old_card_and_bare_approved_is_not_ambiguous(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            first = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO A", "rate_source": "list A",
+                }],
+            }, plan_dir)
+            second = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 2, "rate": 10,
+                    "quantity_source": "PO B", "rate_source": "list B",
+                }],
+            }, plan_dir)
+            paths = sorted(plan_dir.glob("*_quote_*.json"))
+            by_digest = {
+                json.loads(path.read_text(encoding="utf-8"))["sha256"]: path for path in paths
+            }
+            registry_path = plan_dir / draft.APPROVAL_REGISTRY_DIRNAME / "active.json"
+            registry = json.loads(registry_path.read_text(encoding="utf-8"))
+            self.assertEqual(len(registry["entries"]), 1)
+            self.assertEqual(registry["entries"][0]["plan_sha256"], second["sha256"])
+            self.assertNotEqual(first["sha256"], second["sha256"])
+            with patch.object(draft, "PLAN_DIR", plan_dir), patch.object(
+                draft.zoho_tool, "load_vault", side_effect=AssertionError("vault must not open")
+            ), patch.object(draft, "urlopen", side_effect=AssertionError("no network")):
+                with self.assertRaisesRegex(draft.DraftToolError, "not the sole active approval card"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(by_digest[first["sha256"]]), approval="APPROVED"),
+                        "quote",
+                    )
+
+    def test_quote_create_card_is_single_use_and_commit_remains_draft_only(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            plan_dir = Path(temp).resolve() / "plans"
+            plan_dir.mkdir()
+            plan = self.stage_quote({
+                "customer_id": "1001",
+                "line_items": [{
+                    "item_id": "2002", "quantity": 1, "rate": 10,
+                    "quantity_source": "PO", "rate_source": "list",
+                }],
+            }, plan_dir)
+            plan_path = next(plan_dir.glob("*_quote_*.json"))
+            calls = []
+
+            def fake_post(_token, _domain, kind, _organization, payload):
+                lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
+                calls.append((kind, copy.deepcopy(payload), lock.exists()))
+                return {"estimate": {
+                    "estimate_id": "3003", "estimate_number": "QT-TEST", "status": "draft",
+                }}
+
+            vault = {
+                "api_domain": "https://www.zohoapis.com",
+                "books_organization_id": "9009",
+                "scopes": ["ZohoBooks.estimates.CREATE"],
+            }
+            verified = {
+                "estimate_id": "3003", "estimate_number": "QT-TEST", "status": "draft",
+                "customer_id": "1001", "reference_number": "", "currency_code": "CAD",
+                "line_items": [{
+                    "item_id": "2002", "tax_id": "", "quantity": 1, "rate": 10,
+                    "discount": 0,
+                }],
+                "sub_total": 10, "tax_total": 0, "total": 10,
+            }
+            with patch.object(draft, "PLAN_DIR", plan_dir), patch.object(
+                draft.zoho_tool, "load_vault", return_value=dict(vault)
+            ), patch.object(
+                draft.zoho_tool, "validate_scopes"
+            ), patch.object(
+                draft.zoho_tool, "refresh_access_token", return_value=("token", dict(vault))
+            ), patch.object(
+                draft.zoho_tool, "save_vault"
+            ), patch.object(
+                draft.zoho_tool, "append_receipt"
+            ), patch.object(
+                draft, "api_post_allowed", side_effect=fake_post
+            ), patch.object(
+                draft, "quote_live_evidence", return_value=copy.deepcopy(plan["live_evidence"])
+            ), patch.object(
+                draft, "get_estimate", return_value=verified
+            ), patch.object(draft, "urlopen", side_effect=AssertionError("no HTTP network")):
+                with redirect_stdout(io.StringIO()):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(plan_path), approval="APPROVED"), "quote"
+                    )
+                with self.assertRaisesRegex(draft.DraftToolError, "consumed|replay"):
+                    draft.command_commit(
+                        argparse.Namespace(plan=str(plan_path), approval="APPROVED"), "quote"
+                    )
+            self.assertEqual(len(calls), 1)
+            self.assertEqual(calls[0][0], "quote")
+            self.assertEqual(calls[0][1]["status"], "draft")
+            self.assertTrue(calls[0][2])
+            self.assertFalse(any(key in calls[0][1] for key in (
+                "send", "email", "accepted", "declined", "converted", "deleted"
+            )))
+            lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
+            self.assertEqual(json.loads(lock.read_text(encoding="utf-8"))["status"],
+                             "committed_verified")
+
+    def test_approval_cards_do_not_expand_the_service_write_allowlist(self) -> None:
+        self.assertEqual(draft.ALLOWED_POSTS, {
+            "customer": "/books/v3/contacts",
+            "quote": "/books/v3/estimates",
+        })
+        commands = draft.build_parser()._subparsers._group_actions[0].choices
+        self.assertFalse(any(fragment in name for name in commands for fragment in (
+            "send", "email", "status", "accept", "decline", "convert", "delete"
+        )))
 
     def test_a_new_tds_quote_serializes_the_percentage_as_a_string(self) -> None:
         with tempfile.TemporaryDirectory() as temp:

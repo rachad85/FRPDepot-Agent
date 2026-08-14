@@ -16,6 +16,15 @@ Allowed service writes:
 - POST /books/v3/contacts for the ONE fixed customer "SHM Marine Constructors
   JV", the record Elaine Iverson asked INV-000051 to be billed to. No field is
   caller-supplied. Commissioned by Rachad on 2026-08-12. See SHM_CUSTOMER_PAYLOAD.
+- PUT  /books/v3/estimates/{id} to REVISE ONE EXISTING estimate IN PLACE, the
+  general action Rachad commissioned on 2026-08-13 so an ordinary revision
+  amends the customer's own quote instead of replacing it. Eligible only while
+  the live estimate is exactly `draft` or `sent`; the editable surface is the
+  header reference_number/date/expiry_date/notes/terms and, per EXISTING line,
+  quantity/rate/discount/description/tax_id. Customer, estimate number,
+  currency, exchange rate, template, salesperson, shipping charge, adjustment,
+  custom fields and status are preserved, and no status field is ever sent.
+  See REVISION_KIND and the section at the end of this module.
 
 Forbidden: sending/emailing, marking sent/accepted/declined, deletes, any other
 estimate update, Inventory writes, and any unapproved numeric value.
@@ -49,6 +58,15 @@ PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_plans"
 # validated by load_verified_plan. The word must come FROM RACHAD'S OWN MESSAGE
 # answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
 APPROVAL_WORD = "APPROVED"
+APPROVAL_CARD_VERSION = 1
+APPROVAL_CARD_HASH_PLACEHOLDER = ""
+APPROVAL_CARD_ID_PLACEHOLDER = ""
+QUOTE_PLAN_SCHEMA_VERSION = 2
+QUOTE_PLAN_LIFETIME_HOURS = 24
+QUOTE_CREATE_OPERATION = "CREATE_DRAFT_QUOTE"
+REVISION_OPERATION = "REVISE_EXISTING_ESTIMATE"
+APPROVAL_REGISTRY_DIRNAME = ".approval-cards"
+QUOTE_COMMIT_LOCK_DIRNAME = ".quote-commit-locks"
 ALLOWED_POSTS = {
     "customer": "/books/v3/contacts",
     "quote": "/books/v3/estimates",
@@ -98,7 +116,7 @@ QUOTE_FIELDS = {
     "customer_id", "date", "expiry_date", "reference_number", "line_items",
     "notes", "terms", "shipping_charge", "adjustment", "adjustment_description",
     "discount", "is_discount_before_tax", "discount_type", "template_id",
-    "salesperson_id", "currency_id", "exchange_rate", "location_id",
+    "salesperson_id", "location_id",
 }
 LINE_ITEM_FIELDS = {
     "item_id", "name", "description", "quantity", "rate", "unit", "discount",
@@ -109,7 +127,6 @@ SOURCE_FIELDS = {
 }
 TOP_SOURCE_FIELDS = {
     "shipping_charge_source", "adjustment_source", "discount_source",
-    "exchange_rate_source",
 }
 
 # ---------------------------------------------------------------------------
@@ -389,8 +406,335 @@ def stage_plan(kind: str, payload: dict[str, Any], sources: dict[str, Any], summ
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     path = PLAN_DIR / f"{stamp}_{kind}_{digest[:8]}.json"
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-    zoho_tool.append_receipt(f"zoho_{kind}_plan_staged", str(path))
+    zoho_tool.append_receipt("zoho_quote_plan_staged", str(path))
+    activate_approval_cards([plan["approval_card"]], "single")
     return path
+
+
+def approval_plan_digest(plan: dict[str, Any]) -> str:
+    """Digest a plan whose displayed card repeats that same digest.
+
+    ``approval_card.plan_sha256`` is a display/binding copy of the outer hash.
+    Both stage and validation replace that one field with the fixed empty
+    placeholder before hashing, avoiding a circular digest while keeping every
+    other displayed field immutable.
+    """
+    core = json_copy(plan)
+    core.pop("sha256", None)
+    card = core.get("approval_card")
+    if not isinstance(card, dict):
+        raise DraftToolError("Plan approval card is missing or invalid.")
+    card["plan_sha256"] = APPROVAL_CARD_HASH_PLACEHOLDER
+    card["card_id"] = APPROVAL_CARD_ID_PLACEHOLDER
+    return digest_for(core)
+
+
+def approval_card_id(operation: str, plan_sha256: str) -> str:
+    if not HEX_64_RE.fullmatch(str(plan_sha256)):
+        return APPROVAL_CARD_ID_PLACEHOLDER
+    prefix = "QC" if operation == QUOTE_CREATE_OPERATION else "QR"
+    return f"{prefix}-{plan_sha256[:12].upper()}"
+
+
+def approval_registry_path() -> Path:
+    return PLAN_DIR / APPROVAL_REGISTRY_DIRNAME / "active.json"
+
+
+def quote_commit_lock_path(plan_sha256: str) -> Path:
+    if not HEX_64_RE.fullmatch(str(plan_sha256)):
+        raise DraftToolError("Quote plan digest is invalid for replay locking.")
+    return PLAN_DIR / QUOTE_COMMIT_LOCK_DIRNAME / f"{plan_sha256}.json"
+
+
+def _write_json_durable(path: Path, value: dict[str, Any], *, exclusive: bool = False) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
+    try:
+        descriptor = os.open(str(path), flags, 0o600)
+    except FileExistsError as exc:
+        raise DraftToolError(
+            "REFUSED: this plan has already entered commit and cannot be replayed."
+        ) from exc
+    with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+        handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def activate_approval_card(card: dict[str, Any]) -> dict[str, Any]:
+    """Make exactly one displayed immutable card the sole active approval."""
+    digest = str(card.get("plan_sha256") or "")
+    operation = str(card.get("operation") or "")
+    expires = str(card.get("expires_utc") or "")
+    if not HEX_64_RE.fullmatch(digest) or operation not in (
+        QUOTE_CREATE_OPERATION, REVISION_OPERATION
+    ):
+        raise DraftToolError("Approval card identity is invalid.")
+    parse_plan_time(expires, "approval-card expiry")
+    entries = [{
+        "plan_sha256": digest,
+        "operation": operation,
+        "expires_utc": expires,
+        "status": "active",
+    }]
+    created = utc_now().isoformat()
+    batch_core = {
+        "version": APPROVAL_CARD_VERSION,
+        "mode": "single",
+        "created_utc": created,
+        "approval_required": APPROVAL_WORD,
+        "entries": entries,
+    }
+    registry = dict(batch_core)
+    registry["batch_sha256"] = digest_for(batch_core)
+    _write_json_durable(approval_registry_path(), registry)
+    zoho_tool.append_receipt(
+        "zoho_quote_approval_card_activated",
+        f"mode=single; batch_sha256={registry['batch_sha256']}; plan={digest}",
+    )
+    return registry
+
+
+def require_active_approval_card(plan: dict[str, Any]) -> dict[str, Any]:
+    """Bare APPROVED is valid only for the sole current displayed card."""
+    path = approval_registry_path()
+    try:
+        registry = read_json_value(path, "Active approval-card registry")
+    except DraftToolError as exc:
+        raise DraftToolError(
+            "REFUSED: this plan is not the active approval card. Stage it again for review."
+        ) from exc
+    if not isinstance(registry, dict):
+        raise DraftToolError("REFUSED: the active approval-card registry is invalid.")
+    batch_sha = str(registry.get("batch_sha256") or "")
+    core = dict(registry)
+    core.pop("batch_sha256", None)
+    if not HEX_64_RE.fullmatch(batch_sha) or not secrets.compare_digest(
+        batch_sha, digest_for(core)
+    ):
+        raise DraftToolError("REFUSED: the active approval-card registry changed after review.")
+    entries = registry.get("entries")
+    mode = registry.get("mode")
+    if not isinstance(entries, list) or mode != "single":
+        raise DraftToolError("REFUSED: the active approval-card registry is malformed.")
+    if len(entries) != 1:
+        raise DraftToolError("REFUSED: the active single-card registry is ambiguous.")
+    digest = str(plan.get("sha256") or "")
+    operation = str((plan.get("approval_card") or {}).get("operation") or "")
+    matches = [entry for entry in entries if isinstance(entry, dict) and entry.get("plan_sha256") == digest]
+    if len(matches) != 1:
+        raise DraftToolError(
+            "REFUSED: this plan is not the sole active approval card. Stage it again for review."
+        )
+    entry = matches[0]
+    if entry.get("status") != "active" or entry.get("operation") != operation:
+        raise DraftToolError("REFUSED: this approval card is consumed, superseded, or operation-mismatched.")
+    if entry.get("expires_utc") != plan.get("expires_utc"):
+        raise DraftToolError("REFUSED: the active approval-card expiry does not match the plan.")
+    return registry
+
+
+def mark_active_card_attempted(plan: dict[str, Any]) -> None:
+    registry = require_active_approval_card(plan)
+    digest = str(plan["sha256"])
+    for entry in registry["entries"]:
+        if entry["plan_sha256"] == digest:
+            entry["status"] = "attempted"
+            entry["attempted_utc"] = utc_now().isoformat()
+            break
+    core = dict(registry)
+    core.pop("batch_sha256", None)
+    registry["batch_sha256"] = digest_for(core)
+    _write_json_durable(approval_registry_path(), registry)
+
+
+def quote_approval_card(
+    payload: dict[str, Any], summary: dict[str, Any], evidence: dict[str, Any], expires_utc: str,
+    plan_sha256: str = APPROVAL_CARD_HASH_PLACEHOLDER,
+) -> dict[str, Any]:
+    """Build the permanent phone-sized card for a new Draft quote.
+
+    The complete payload, source map, live GET evidence and arithmetic remain
+    immutable inside the plan; this card is their concise hash-bound view.
+    """
+    customer = evidence["customer"]
+    totals = evidence["totals"]
+    item_names = {
+        str(item_id): str(row.get("name") or item_id)
+        for item_id, row in evidence["items"].items()
+    }
+    lines = [
+        {
+            "item": item_names.get(str(row.get("item_id") or ""), str(row.get("item_id") or "")),
+            "quantity": row.get("quantity"),
+            "rate": row.get("rate"),
+            "discount": row.get("discount", 0),
+            "tax": (evidence["taxes"].get(str(row.get("tax_id") or "")) or {}).get("tax_name", "None"),
+            "net": row.get("line_net"),
+        }
+        for row in (summary.get("line_items") or [])
+        if isinstance(row, dict)
+    ]
+    return {
+        "version": APPROVAL_CARD_VERSION,
+        "card_id": approval_card_id(QUOTE_CREATE_OPERATION, plan_sha256),
+        "operation": QUOTE_CREATE_OPERATION,
+        "scope": {
+            "method": "POST",
+            "route": ALLOWED_POSTS["quote"],
+            "write_count": 1,
+            "draft_only": True,
+            "email_or_lifecycle_action": False,
+        },
+        "customer": {
+            "id": customer["customer_id"],
+            "name": customer["customer_name"],
+        },
+        "document": {
+            "type": "quote/estimate",
+            "number": "assigned by Zoho on Draft creation",
+            "reference_number": payload.get("reference_number"),
+            "status": "draft",
+        },
+        "currency": {
+            "code": customer["currency_code"],
+            "currency_id": customer["currency_id"],
+            "basis": "live customer currency in Zoho; never overridden",
+        },
+        "lines": lines,
+        "totals": {
+            "subtotal": totals["sub_total"],
+            "tax": totals["tax_total"],
+            "total": totals["total"],
+            "tax_certainty": totals["tax_certainty"],
+        },
+        "risks": [
+            "One POST creates one Draft estimate only.",
+            "Customer, item, currency and tax rows are read live again before the write.",
+            "The created Draft is read back and checked against this card.",
+            "No send, email, status, accept, decline, convert or delete route is available.",
+        ],
+        "expires_utc": expires_utc,
+        "plan_sha256": plan_sha256,
+        "approval": "Reply with exact one-word APPROVED to this displayed plan only.",
+    }
+
+
+def stage_quote_plan(
+    payload: dict[str, Any], sources: dict[str, Any], summary: dict[str, Any],
+    evidence: dict[str, Any],
+) -> Path:
+    created = utc_now()
+    expires = (created + timedelta(hours=QUOTE_PLAN_LIFETIME_HOURS)).isoformat()
+    core = {
+        "tool": TOOL_NAME,
+        "kind": "quote",
+        "schema_version": QUOTE_PLAN_SCHEMA_VERSION,
+        "nonce": secrets.token_hex(16),
+        "created_utc": created.isoformat(),
+        "expires_utc": expires,
+        "approval_required": APPROVAL_WORD,
+        "payload": payload,
+        "sources": sources,
+        "summary": summary,
+        "live_evidence": evidence,
+        "approval_card": quote_approval_card(payload, summary, evidence, expires),
+    }
+    digest = approval_plan_digest(core)
+    plan = json_copy(core)
+    plan["approval_card"]["plan_sha256"] = digest
+    plan["approval_card"]["card_id"] = approval_card_id(QUOTE_CREATE_OPERATION, digest)
+    plan["sha256"] = digest
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = created.strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_quote_{digest[:8]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    activate_approval_card(plan["approval_card"])
+    zoho_tool.append_receipt("zoho_quote_plan_staged", str(path))
+    return path
+
+
+def validate_quote_approval_plan(plan: dict[str, Any]) -> None:
+    if (
+        plan.get("tool") != TOOL_NAME
+        or plan.get("kind") != "quote"
+        or plan.get("schema_version") != QUOTE_PLAN_SCHEMA_VERSION
+        or plan.get("approval_required") != APPROVAL_WORD
+    ):
+        raise DraftToolError("The plan belongs to a different tool, operation or schema version.")
+    if not NONCE_RE.fullmatch(str(plan.get("nonce") or "")):
+        raise DraftToolError("Plan nonce is invalid.")
+    created = parse_plan_time(plan.get("created_utc"), "creation time")
+    expires = parse_plan_time(plan.get("expires_utc"), "expiry")
+    if expires - created != timedelta(hours=QUOTE_PLAN_LIFETIME_HOURS):
+        raise DraftToolError("Quote plan must have exactly a 24-hour lifetime.")
+    now = utc_now()
+    if created > now + timedelta(minutes=5):
+        raise DraftToolError("Plan creation time is in the future.")
+    if now >= expires:
+        raise DraftToolError("Plan expired. Stage a new Draft quote plan for review.")
+    payload = plan.get("payload")
+    sources = plan.get("sources")
+    summary = plan.get("summary")
+    evidence = plan.get("live_evidence")
+    if (
+        not isinstance(payload, dict) or not isinstance(sources, dict)
+        or not isinstance(summary, dict) or not isinstance(evidence, dict)
+    ):
+        raise DraftToolError("Quote plan payload or detailed summary is invalid.")
+    if payload.get("status") != "draft":
+        raise DraftToolError("Quote creation plan is not Draft-only.")
+    if "currency_id" in payload or "exchange_rate" in payload:
+        raise DraftToolError(
+            "Quote creation must preserve the live customer currency; currency and exchange-rate "
+            "overrides are refused."
+        )
+    canonical_summary = canonical_quote_summary(payload, sources)
+    if summary != canonical_summary:
+        raise DraftToolError(
+            "Quote summary is not the canonical projection of the immutable POST payload."
+        )
+    customer = evidence.get("customer")
+    items = evidence.get("items")
+    taxes = evidence.get("taxes")
+    totals = evidence.get("totals")
+    if not all(isinstance(value, dict) for value in (customer, items, taxes, totals)):
+        raise DraftToolError("Quote live evidence is incomplete.")
+    if (
+        customer.get("customer_id") != payload.get("customer_id")
+        or customer.get("status") != "active"
+        or customer.get("contact_type") not in {"customer", "customer_vendor"}
+    ):
+        raise DraftToolError("Quote customer evidence does not match an active payload customer.")
+    wanted_items = {str(line.get("item_id") or "") for line in payload["line_items"]}
+    if set(items) != wanted_items or any(
+        not isinstance(items[item_id], dict)
+        or items[item_id].get("item_id") != item_id
+        or items[item_id].get("status") != "active"
+        or not str(items[item_id].get("name") or "").strip()
+        for item_id in wanted_items
+    ):
+        raise DraftToolError("Quote item evidence does not exactly match the active payload items.")
+    wanted_taxes = {
+        str(line.get("tax_id") or "") for line in payload["line_items"] if line.get("tax_id")
+    }
+    if set(taxes) != wanted_taxes:
+        raise DraftToolError("Quote tax evidence does not exactly match the payload taxes.")
+    if totals != quote_totals(payload, canonical_summary, taxes):
+        raise DraftToolError("Quote totals are not the canonical projection of payload and tax evidence.")
+    expected_card = quote_approval_card(
+        payload, canonical_summary, evidence, str(plan["expires_utc"]),
+        str(plan.get("sha256") or "")
+    )
+    if plan.get("approval_card") != expected_card:
+        raise DraftToolError(
+            "Approval card does not exactly match the immutable Draft quote operation."
+        )
+
+
+def print_approval_card(card: dict[str, Any]) -> None:
+    """Stage output is one concise immutable card, never the expanded evidence."""
+    print(json.dumps({"approval_card": card}, ensure_ascii=False, indent=2))
 
 
 def command_stage_customer(args: argparse.Namespace) -> None:
@@ -464,6 +808,199 @@ def percentage_discount(value: Any, label: str) -> Decimal:
             f"{label} must be a percentage string between \"0%\" and \"100%\", e.g. \"10%\"."
         )
     return Decimal(value[:-1])
+
+
+def canonical_quote_summary(
+    payload: dict[str, Any], sources: dict[str, Any]
+) -> dict[str, Any]:
+    """Rebuild every displayed commercial number from the POST payload.
+
+    The saved summary is never trusted as an independent source. Stage and
+    commit both call this function, so a re-signed payload/card mismatch still
+    refuses before credentials or network.
+    """
+    lines = payload.get("line_items")
+    source_lines = sources.get("line_items") if isinstance(sources, dict) else None
+    if not isinstance(lines, list) or not lines or not isinstance(source_lines, list):
+        raise DraftToolError("Quote payload/source evidence has no complete line list.")
+    if len(lines) != len(source_lines):
+        raise DraftToolError("Quote payload and source evidence name different line counts.")
+    summary_lines: list[dict[str, Any]] = []
+    list_subtotal = Decimal("0")
+    line_discount_total = Decimal("0")
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict) or not isinstance(source_lines[index], dict):
+            raise DraftToolError(f"Quote line {index + 1} or its source evidence is invalid.")
+        quantity = live_decimal(line.get("quantity"), f"quote line {index + 1} quantity")
+        rate = live_decimal(line.get("rate"), f"quote line {index + 1} rate")
+        if quantity <= 0 or rate < 0:
+            raise DraftToolError(f"Quote line {index + 1} has an invalid quantity or rate.")
+        percent = percentage_discount(line.get("discount", 0), f"quote line {index + 1} discount")
+        gross = (quantity * rate).quantize(CENT, rounding=ROUND_HALF_UP)
+        discount_amount = (gross * percent / Decimal("100")).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+        list_subtotal += gross
+        line_discount_total += discount_amount
+        summary_lines.append({
+            "item_id": str(line.get("item_id") or ""),
+            "name": str(line.get("name") or line.get("description") or ""),
+            "quantity": line.get("quantity"),
+            "rate": line.get("rate"),
+            "discount": line.get("discount", 0),
+            "discount_is_percentage": bool(percent),
+            "line_gross": format(gross, "f"),
+            "line_discount_amount": format(discount_amount, "f"),
+            "line_net": format(gross - discount_amount, "f"),
+            "tax_id": line.get("tax_id"),
+            "sources": json_copy(source_lines[index]),
+        })
+    line_net_subtotal = list_subtotal - line_discount_total
+    header_percent = percentage_discount(payload.get("discount", 0), "discount")
+    header_discount = (line_net_subtotal * header_percent / Decimal("100")).quantize(
+        CENT, rounding=ROUND_HALF_UP
+    )
+    return {
+        "customer_id": str(payload.get("customer_id") or ""),
+        "reference_number": payload.get("reference_number"),
+        "discount_semantics": (
+            "A discount written as a string with % is a PERCENTAGE; a nonzero bare "
+            "number is refused because Zoho reads it as flat currency."
+        ),
+        "line_items": summary_lines,
+        "list_subtotal": format(list_subtotal, "f"),
+        "line_discount_total": format(line_discount_total, "f"),
+        # Backward-compatible name used by earlier reviewed plans/tests.
+        "discount_total": format(line_discount_total, "f"),
+        "net_subtotal_before_tax": format(line_net_subtotal, "f"),
+        "header_discount_percent": format(header_percent, "f"),
+        "header_discount_amount": format(header_discount, "f"),
+        "sub_total": format(line_net_subtotal - header_discount, "f"),
+        "shipping_charge": payload.get("shipping_charge", 0),
+        "adjustment": payload.get("adjustment", 0),
+        "discount": payload.get("discount", 0),
+    }
+
+
+def quote_customer_read(
+    access_token: str, vault: dict[str, Any], customer_id: str
+) -> dict[str, Any]:
+    query = urlencode({"organization_id": books_organization_id(vault)})
+    result = zoho_tool.api_get(
+        access_token, str(vault["api_domain"]), f"/books/v3/contacts/{customer_id}?{query}"
+    )
+    contact = result.get("contact")
+    if not isinstance(contact, dict) or str(contact.get("contact_id") or "") != customer_id:
+        raise DraftToolError(f"Zoho customer {customer_id} was not found. Nothing staged.")
+    status = str(contact.get("status") or "").casefold()
+    contact_type = str(contact.get("contact_type") or "").casefold()
+    if status != "active" or contact_type not in {"customer", "customer_vendor"}:
+        raise DraftToolError(
+            f"REFUSED: contact {customer_id} is {status or 'unknown'} / "
+            f"{contact_type or 'unknown'}, not an active customer. Nothing staged."
+        )
+    name = str(contact.get("contact_name") or contact.get("company_name") or "").strip()
+    if not name:
+        raise DraftToolError(f"Zoho customer {customer_id} has no readable name. Nothing staged.")
+    return {
+        "customer_id": customer_id,
+        "customer_name": name,
+        "status": status,
+        "contact_type": contact_type,
+        "currency_code": str(contact.get("currency_code") or "").strip(),
+        "currency_id": str(contact.get("currency_id") or "").strip(),
+    }
+
+
+def quote_item_read(
+    access_token: str, vault: dict[str, Any], item_id: str
+) -> dict[str, Any]:
+    query = urlencode({"organization_id": books_organization_id(vault)})
+    result = zoho_tool.api_get(
+        access_token, str(vault["api_domain"]), f"/books/v3/items/{item_id}?{query}"
+    )
+    item = result.get("item")
+    if not isinstance(item, dict) or str(item.get("item_id") or "") != item_id:
+        raise DraftToolError(f"Zoho item {item_id} was not found. Nothing staged.")
+    status = str(item.get("status") or "").casefold()
+    name = str(item.get("name") or "").strip()
+    if status != "active" or not name:
+        raise DraftToolError(
+            f"REFUSED: Zoho item {item_id} is {status or 'unknown'} or unnamed. Nothing staged."
+        )
+    return {
+        "item_id": item_id,
+        "name": name,
+        "sku": str(item.get("sku") or ""),
+        "status": status,
+    }
+
+
+def quote_totals(
+    payload: dict[str, Any], summary: dict[str, Any], taxes: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    sub_total = live_decimal(summary["sub_total"], "quote sub-total")
+    tax_total = Decimal("0")
+    tax_certainty = "deterministic_simple_tax"
+    for line in summary["line_items"]:
+        tax_id = str(line.get("tax_id") or "")
+        if not tax_id:
+            continue
+        tax = taxes[tax_id]
+        percentage = live_decimal(tax["tax_percentage"], f"tax {tax_id} percentage")
+        line_net = live_decimal(line["line_net"], "quote line net")
+        tax_total += (line_net * percentage / Decimal("100")).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+        if str(tax.get("tax_type") or "").casefold() in {"tax_group", "compound_tax"}:
+            tax_certainty = "disclosed_uncertain_tax_group_rounding"
+    shipping = live_decimal(payload.get("shipping_charge", 0), "shipping_charge")
+    adjustment = live_decimal(payload.get("adjustment", 0), "adjustment")
+    total = sub_total + tax_total + shipping + adjustment
+    return {
+        "sub_total": money_text(sub_total),
+        "tax_total": money_text(tax_total),
+        "shipping_charge": money_text(shipping),
+        "adjustment": money_text(adjustment),
+        "total": money_text(total),
+        "tax_certainty": tax_certainty,
+    }
+
+
+def quote_live_evidence(
+    access_token: str, vault: dict[str, Any], payload: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any]:
+    customer = quote_customer_read(access_token, vault, str(payload["customer_id"]))
+    item_ids = sorted({str(line["item_id"]) for line in payload["line_items"]})
+    items = {item_id: quote_item_read(access_token, vault, item_id) for item_id in item_ids}
+    live_taxes = get_active_taxes(access_token, vault)
+    wanted_taxes = sorted({
+        str(line.get("tax_id") or "") for line in payload["line_items"] if line.get("tax_id")
+    })
+    taxes = revision_tax_evidence(live_taxes, wanted_taxes)
+    currency_id = str(payload.get("currency_id") or customer["currency_id"])
+    currency_code = customer["currency_code"]
+    if payload.get("currency_id") and currency_id != customer["currency_id"]:
+        currency_code = f"Zoho currency ID {currency_id}"
+    customer = {**customer, "currency_id": currency_id, "currency_code": currency_code}
+    return {
+        "customer": customer,
+        "items": items,
+        "taxes": taxes,
+        "totals": quote_totals(payload, summary, taxes),
+    }
+
+
+def stage_quote_live_evidence(
+    payload: dict[str, Any], summary: dict[str, Any]
+) -> dict[str, Any]:
+    """GET-only staging evidence; no estimate is created or changed."""
+    vault = zoho_tool.load_vault()
+    zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    evidence = quote_live_evidence(access_token, vault, payload, summary)
+    zoho_tool.save_vault(vault)
+    return evidence
 
 
 def refuse_numeric_percentage_discounts(payload: dict[str, Any]) -> None:
@@ -587,68 +1124,35 @@ def command_stage_quote(args: argparse.Namespace) -> None:
         percent = percentage_discount(payload["discount"], "discount")
         if percent != 0:
             sources["discount"] = nonempty_source(raw.get("discount_source"), "discount_source")
-    for field in ("shipping_charge", "adjustment", "exchange_rate"):
+    for field in ("shipping_charge", "adjustment"):
         if field in payload:
             value = numeric(payload[field], field)
             payload[field] = value
             if value != 0:
                 source_field = f"{field}_source"
                 sources[field] = nonempty_source(raw.get(source_field), source_field)
-    # The summary states the SAME arithmetic Zoho will perform on this payload:
-    # each percentage is taken off that line's gross, half-up to CAD cents.
-    summary_lines = []
-    list_subtotal = Decimal("0")
-    discount_total = Decimal("0")
-    for index, line in enumerate(clean_lines):
-        gross = (Decimal(str(line["quantity"])) * Decimal(str(line["rate"]))).quantize(
-            CENT, rounding=ROUND_HALF_UP
-        )
-        discount_amount = (gross * line_percents[index] / Decimal("100")).quantize(
-            CENT, rounding=ROUND_HALF_UP
-        )
-        list_subtotal += gross
-        discount_total += discount_amount
-        summary_lines.append({
-            "item_id": line["item_id"],
-            "quantity": line["quantity"],
-            "rate": line["rate"],
-            "discount": line.get("discount", 0),
-            "discount_is_percentage": bool(line_percents[index]),
-            "line_gross": format(gross, "f"),
-            "line_discount_amount": format(discount_amount, "f"),
-            "line_net": format(gross - discount_amount, "f"),
-            "tax_id": line.get("tax_id"),
-            "sources": sources["line_items"][index],
-        })
-    summary = {
-        "customer_id": customer_id,
-        "reference_number": payload.get("reference_number"),
-        "discount_semantics": (
-            "A line discount written as a string with % is a PERCENTAGE of that line; a bare "
-            "number would be a flat CAD amount and is refused."
-        ),
-        "line_items": summary_lines,
-        "list_subtotal": format(list_subtotal, "f"),
-        "discount_total": format(discount_total, "f"),
-        "net_subtotal_before_tax": format(list_subtotal - discount_total, "f"),
-        "shipping_charge": payload.get("shipping_charge", 0),
-        "adjustment": payload.get("adjustment", 0),
-        "discount": payload.get("discount", 0),
-    }
-    path = stage_plan("quote", payload, sources, summary)
-    digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-    print(json.dumps({"plan": str(path), "summary": summary, "approval": APPROVAL_WORD}, indent=2))
+    summary = canonical_quote_summary(payload, sources)
+    evidence = stage_quote_live_evidence(payload, summary)
+    path = stage_quote_plan(payload, sources, summary, evidence)
+    plan = read_json(str(path))
+    print_approval_card(plan["approval_card"])
 
 
 def load_verified_plan(path: str, expected_kind: str) -> dict[str, Any]:
     plan = read_json(path)
-    saved_hash = str(plan.pop("sha256", ""))
-    actual_hash = plan_hash(plan)
-    if not saved_hash or saved_hash != actual_hash:
+    saved_hash = str(plan.get("sha256") or "")
+    if expected_kind == "quote" and isinstance(plan.get("approval_card"), dict):
+        actual_hash = approval_plan_digest(plan)
+    else:
+        legacy_core = dict(plan)
+        legacy_core.pop("sha256", None)
+        actual_hash = plan_hash(legacy_core)
+    if not HEX_64_RE.fullmatch(saved_hash) or not secrets.compare_digest(saved_hash, actual_hash):
         raise DraftToolError("Plan hash check failed. The plan may have changed after review.")
     if plan.get("tool") != TOOL_NAME or plan.get("kind") != expected_kind:
         raise DraftToolError("The plan belongs to a different tool or action.")
-    plan["sha256"] = saved_hash
+    if expected_kind == "quote" and isinstance(plan.get("approval_card"), dict):
+        validate_quote_approval_plan(plan)
     return plan
 
 
@@ -701,6 +1205,69 @@ def exact_customer_exists(access_token: str, vault: dict[str, Any], contact_name
     return None
 
 
+def verify_created_quote(after: dict[str, Any], plan: dict[str, Any]) -> None:
+    """Verify the fresh live Draft against the exact approved card and payload."""
+    payload = plan["payload"]
+    evidence = plan["live_evidence"]
+    estimate_id = str(after.get("estimate_id") or "")
+    if not ID_RE.fullmatch(estimate_id):
+        raise DraftToolError("Fresh read-back returned no usable estimate ID.")
+    for field, expected in (
+        ("status", "draft"),
+        ("customer_id", str(payload["customer_id"])),
+        ("reference_number", str(payload.get("reference_number") or "")),
+    ):
+        actual = str(after.get(field) or "").casefold() if field == "status" else str(after.get(field) or "")
+        if actual != expected:
+            raise DraftToolError(
+                f"Fresh Draft read-back {field} is {actual!r}, not the approved {expected!r}."
+            )
+    expected_currency = str(evidence["customer"].get("currency_code") or "")
+    actual_currency = str(after.get("currency_code") or "")
+    if expected_currency and not expected_currency.startswith("Zoho currency ID "):
+        if actual_currency != expected_currency:
+            raise DraftToolError(
+                f"Fresh Draft currency is {actual_currency!r}, not the approved {expected_currency!r}."
+            )
+    live_lines = after.get("line_items")
+    expected_lines = payload["line_items"]
+    if not isinstance(live_lines, list) or len(live_lines) != len(expected_lines):
+        raise DraftToolError("Fresh Draft read-back changed the approved line count.")
+    for index, (actual, expected) in enumerate(zip(live_lines, expected_lines, strict=True)):
+        if not isinstance(actual, dict):
+            raise DraftToolError(f"Fresh Draft line {index + 1} is unreadable.")
+        for field in ("item_id", "tax_id"):
+            if str(actual.get(field) or "") != str(expected.get(field) or ""):
+                raise DraftToolError(f"Fresh Draft line {index + 1} changed {field}.")
+        for field in ("quantity", "rate"):
+            if live_decimal(actual.get(field), f"fresh line {index + 1} {field}") != live_decimal(
+                expected.get(field), f"approved line {index + 1} {field}"
+            ):
+                raise DraftToolError(f"Fresh Draft line {index + 1} changed {field}.")
+        expected_discount = percentage_discount(
+            expected.get("discount", 0), f"approved line {index + 1} discount"
+        )
+        raw_live_discount = actual.get("discount", 0)
+        if isinstance(raw_live_discount, str) and raw_live_discount.endswith("%"):
+            live_discount = percentage_discount(raw_live_discount, f"fresh line {index + 1} discount")
+        else:
+            live_discount = live_decimal(raw_live_discount, f"fresh line {index + 1} discount")
+        if live_discount != expected_discount:
+            raise DraftToolError(f"Fresh Draft line {index + 1} changed discount.")
+    totals = evidence["totals"]
+    for field, expected in (
+        ("sub_total", totals["sub_total"]),
+        ("tax_total", totals["tax_total"]),
+        ("total", totals["total"]),
+    ):
+        if totals["tax_certainty"] != "deterministic_simple_tax" and field in {"tax_total", "total"}:
+            continue
+        if money_text(live_decimal(after.get(field), f"fresh Draft {field}")) != expected:
+            raise DraftToolError(
+                f"Fresh Draft {field} does not match the approved calculated {expected}."
+            )
+
+
 def command_commit(args: argparse.Namespace, kind: str) -> None:
     plan = load_verified_plan(args.plan, kind)
     if kind == "quote":
@@ -708,13 +1275,22 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
         # Before the vault, the token refresh and the network: a plan staged
         # before 2026-08-10 carries the numeric 10 that Zoho reads as CAD 10.
         refuse_numeric_percentage_discounts(plan["payload"])
+        if not isinstance(plan.get("approval_card"), dict):
+            raise DraftToolError(
+                "This legacy Quote plan has no immutable concise approval card and cannot be "
+                "approved. Stage a fresh Draft quote plan."
+            )
     digest = plan["sha256"]
-    if str(args.approval).strip().casefold() != APPROVAL_WORD.casefold():
-        raise DraftToolError(
-            f"Rachad must answer this staged plan with the one-word approval: "
-            f"{APPROVAL_WORD}. It must come from his own message (Hard Rule 3) — "
-            "never supplied by Dado."
-        )
+    require_exact_approval(args.approval)
+    quote_lock: Path | None = None
+    if kind == "quote":
+        require_active_approval_card(plan)
+        quote_lock = quote_commit_lock_path(digest)
+        if quote_lock.exists():
+            raise DraftToolError(
+                "REFUSED: this displayed Draft quote plan has already entered commit and cannot "
+                "be replayed. No Zoho write was attempted."
+            )
     vault = zoho_tool.load_vault()
     zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
     required_scope = "ZohoBooks.contacts.CREATE" if kind == "customer" else "ZohoBooks.estimates.CREATE"
@@ -728,6 +1304,63 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
             raise DraftToolError(
                 f"Customer already exists with Zoho ID {existing.get('contact_id')}; no duplicate was created."
             )
+    if kind == "quote":
+        assert quote_lock is not None
+        fresh_evidence = quote_live_evidence(
+            access_token, vault, plan["payload"], plan["summary"]
+        )
+        if fresh_evidence != plan["live_evidence"]:
+            raise DraftToolError(
+                "REFUSED: customer, item, tax, currency or calculated quote totals changed after "
+                "review. No POST was issued and the plan remains unlocked; stage a fresh card."
+            )
+        _write_json_durable(quote_lock, {
+            "plan_sha256": digest,
+            "kind": "quote",
+            "status": "in_flight",
+            "started_utc": utc_now().isoformat(),
+        }, exclusive=True)
+        try:
+            result = api_post_allowed(
+                access_token,
+                str(vault["api_domain"]),
+                kind,
+                str(vault["books_organization_id"]),
+                plan["payload"],
+            )
+            record = result.get("estimate") or {}
+            record_id = str(record.get("estimate_id") or "")
+            if not ID_RE.fullmatch(record_id):
+                raise DraftToolError("Zoho returned success without a usable estimate ID.")
+            verified = get_estimate(access_token, vault, record_id)
+            verify_created_quote(verified, plan)
+            zoho_tool.save_vault(vault)
+        except Exception as exc:
+            _write_json_durable(quote_lock, {
+                "plan_sha256": digest,
+                "kind": "quote",
+                "status": "indeterminate",
+                "write_attempted": True,
+                "no_retry": True,
+                "reason": str(exc)[:2000],
+                "updated_utc": utc_now().isoformat(),
+            })
+            raise
+        _write_json_durable(quote_lock, {
+            "plan_sha256": digest, "kind": "quote", "status": "committed_verified",
+            "estimate_id": record_id, "no_retry": True, "updated_utc": utc_now().isoformat(),
+        })
+        mark_active_card_attempted(plan)
+        zoho_tool.append_receipt(
+            "zoho_draft_estimate_created_by_named_tool",
+            f"estimate_id={record_id}; status=draft; plan={args.plan}; sha256={digest}",
+        )
+        print(json.dumps({
+            "created": "draft_estimate", "estimate_id": record_id,
+            "estimate_number": verified.get("estimate_number"), "status": "draft",
+            "sent": False, "fresh_read_back_verified": True,
+        }, indent=2))
+        return
     result = api_post_allowed(
         access_token,
         str(vault["api_domain"]),
@@ -736,42 +1369,15 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
         plan["payload"],
     )
     zoho_tool.save_vault(vault)
-    if kind == "customer":
-        record = result.get("contact") or {}
-        record_id = str(record.get("contact_id") or "")
-        if not record_id:
-            raise DraftToolError("Zoho returned success without a customer ID.")
-        zoho_tool.append_receipt(
-            "zoho_customer_created_by_named_tool",
-            f"contact_id={record_id}; plan={args.plan}; sha256={digest}",
-        )
-        print(json.dumps({"created": "customer", "contact_id": record_id, "contact_name": record.get("contact_name")}, indent=2))
-        return
-    record = result.get("estimate") or {}
-    record_id = str(record.get("estimate_id") or "")
-    status = str(record.get("status") or "").casefold()
-    zoho_tool.append_receipt(
-        "zoho_draft_estimate_created_by_named_tool",
-        f"estimate_id={record_id}; status={status}; plan={args.plan}; sha256={digest}",
-    )
+    record = result.get("contact") or {}
+    record_id = str(record.get("contact_id") or "")
     if not record_id:
-        raise DraftToolError("Zoho returned success without an estimate ID.")
-    if status != "draft":
-        raise DraftToolError(
-            f"Zoho created estimate {record_id} with unexpected status {status or 'unknown'}. No further action taken."
-        )
-    print(
-        json.dumps(
-            {
-                "created": "draft_estimate",
-                "estimate_id": record_id,
-                "estimate_number": record.get("estimate_number"),
-                "status": status,
-                "sent": False,
-            },
-            indent=2,
-        )
+        raise DraftToolError("Zoho returned success without a customer ID.")
+    zoho_tool.append_receipt(
+        "zoho_customer_created_by_named_tool",
+        f"contact_id={record_id}; plan={args.plan}; sha256={digest}",
     )
+    print(json.dumps({"created": "customer", "contact_id": record_id, "contact_name": record.get("contact_name")}, indent=2))
 
 
 # ===========================================================================
@@ -4022,6 +4628,1577 @@ def command_commit_shm_inv000051_customer(args: argparse.Namespace) -> None:
     }, ensure_ascii=False, indent=2))
 
 
+# ===========================================================================
+# GENERAL EXISTING-ESTIMATE REVISION -- commissioned by Rachad 2026-08-13
+#
+# Rachad's instruction: an ordinary quote revision must REVISE THE EXISTING
+# estimate in place, not create a replacement. Everything above this line is a
+# fixed one-off correction; this action is the reusable one, and it is still
+# narrow: ONE existing estimate, ONE atomic PUT, a closed input schema, an
+# explicit nonblank source per proposed value, and a preserved customer,
+# number, currency and status.
+#
+# The editable surface is exactly:
+#   header : reference_number, date, expiry_date, notes, terms
+#   line   : quantity, rate, discount, description, tax_id   (EXISTING lines)
+# Nothing else is reachable. Lines cannot be added, deleted, omitted,
+# reordered, substituted or duplicated: the complete live list is always resent
+# once, in live order, each carrying its own line_item_id and item_id.
+#
+# *** DISCOUNT SEMANTICS ARE THE 2026-08-10 LESSON, NOT A PREFERENCE. ***
+# Zoho reads a NUMERIC line discount as a flat CAD amount and only a STRING
+# carrying "%" as a percentage. This action therefore accepts a percentage
+# string or the exact integer 0 and refuses every other numeric discount, and
+# when it RESENDS an untouched live discount it proves the live line is a
+# percentage from its own discount_amount before echoing it back as a string.
+# An ambiguous nonzero numeric live discount refuses the whole revision for
+# free at staging rather than guessing.
+# ===========================================================================
+
+REVISION_KIND = "estimate_revision"
+REVISION_SCHEMA_VERSION = 2
+REVISION_PLAN_LIFETIME_HOURS = 24
+# Only these two live states may be revised in place. Every other state -- and
+# any state this build does not recognise -- is refused before any network call.
+REVISION_ELIGIBLE_STATUSES = ("draft", "sent")
+REVISION_HEADER_FIELDS = ("reference_number", "date", "expiry_date", "notes", "terms")
+REVISION_LINE_FIELDS = ("quantity", "rate", "discount", "description", "tax_id")
+REVISION_INPUT_KEYS = {"estimate_id", "reason", "header", "lines"}
+REVISION_REQUIRED_INPUT_KEYS = {"estimate_id", "reason"}
+REVISION_VALUE_KEYS = {"value", "source"}
+REVISION_LINE_ENTRY_KEYS = {"line_item_id", "fields"}
+REVISION_DATE_RE = re.compile(r"^[0-9]{4}-(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])$")
+REVISION_MAX_TEXT = 2000
+REVISION_MAX_QUANTITY = Decimal("1000000")
+REVISION_MAX_RATE = Decimal("10000000")
+REVISION_MAX_LINES = 500
+# The exact PUT surface for a revision. Every header key that is not being
+# changed carries the PRESERVED live value; the control keys exist so that a
+# full-record PUT cannot silently drop a template, salesperson, currency,
+# shipping charge or adjustment by omission.
+REVISION_PUT_HEADER_KEYS = (
+    "customer_id", "estimate_number", "reference_number", "date", "expiry_date",
+    "notes", "terms",
+)
+REVISION_PUT_CONTROL_KEYS = (
+    "discount_type", "is_discount_before_tax", "shipping_charge", "adjustment",
+    "adjustment_description", "template_id", "salesperson_id", "currency_id",
+    "exchange_rate",
+)
+REVISION_ALLOWED_PUT_KEYS = (
+    set(REVISION_PUT_HEADER_KEYS) | set(REVISION_PUT_CONTROL_KEYS) | {"line_items"}
+)
+REVISION_REQUIRED_PUT_KEYS = {
+    "customer_id", "estimate_number", "date", "discount_type",
+    "is_discount_before_tax", "line_items",
+}
+REVISION_LINE_PUT_KEYS = (
+    "line_item_id", "item_id", "name", "description", "quantity", "rate",
+    "unit", "discount", "tax_id", "item_order",
+)
+REVISION_REQUIRED_LINE_PUT_KEYS = {"line_item_id", "item_id", "name", "quantity", "rate"}
+# Header fields Zoho itself recomputes from the lines, plus pure telemetry. Each
+# money figure is verified by its own explicit rule after the PUT; EVERY other
+# returned field stays inside the byte-exact protected fingerprint.
+REVISION_DERIVED_KEYS = frozenset(ESTIMATE_DERIVED_KEYS) | frozenset(ITEM9_GROSS_SUBTOTAL_KEYS) | frozenset({
+    "sub_total_inclusive_of_tax", "discount_applied_on_amount", "roundoff_value",
+    "last_modified_by_id", "is_taxable", "tax_id", "tax_name", "tax_percentage",
+    "total_quantity", "shipping_charge_exclusive_of_tax",
+    "shipping_charge_inclusive_of_tax", "shipping_charge_exclusive_of_tax_formatted",
+    "shipping_charge_inclusive_of_tax_formatted",
+})
+# Companion fields Zoho regenerates beside a field this action changed. They are
+# dropped from the fingerprint ONLY for the exact line/field being changed, and
+# the changed value itself is then asserted explicitly.
+REVISION_LINE_FIELD_COMPANIONS = {
+    "quantity": ("quantity_formatted",),
+    "rate": ("rate_formatted", "bcy_rate", "bcy_rate_formatted", "pricing_scheme"),
+    "discount": (),
+    "description": (),
+    "tax_id": (
+        "tax_name", "tax_percentage", "tax_type", "tax_category_code",
+        "tax_category_name", "product_tax_category",
+    ),
+}
+REVISION_HEADER_FIELD_COMPANIONS = {
+    "reference_number": (),
+    "date": ("date_formatted",),
+    "expiry_date": ("expiry_date_formatted",),
+    "notes": (),
+    "terms": (),
+}
+REVISION_RISK_NOTE = (
+    "One PUT to one existing estimate, changing only the header and line values named in this "
+    "plan. The customer, estimate number, currency, exchange rate, template, salesperson, "
+    "shipping charge, adjustment, custom fields and status are preserved, and no status field "
+    "is sent at all. The complete live line list is resent once in live order with every "
+    "line_item_id and item_id, so no line can be added, removed, reordered, substituted or "
+    "dropped by omission. The plan is locked before the PUT and stays locked on any failure, "
+    "timeout or indeterminate result; there is no retry, no rollback, no lifecycle route and "
+    "no mail transport anywhere in this tool."
+)
+
+
+def percent_text(value: Decimal) -> str:
+    """A percentage as the exact string Zoho needs, never a bare number."""
+    text = format(value, "f")
+    if "." in text:
+        text = text.rstrip("0").rstrip(".")
+    result = (text or "0") + "%"
+    if not PERCENT_DISCOUNT_RE.fullmatch(result):
+        raise DraftToolError(f"REFUSED: {value} is not a percentage this tool can send safely.")
+    return result
+
+
+def number_json(value: Decimal) -> Any:
+    """A money/quantity value as a JSON number, never a formatted string."""
+    integral = value.to_integral_value()
+    return int(integral) if value == integral else float(value)
+
+
+def revision_text(value: Any, label: str) -> str:
+    if not isinstance(value, str):
+        raise DraftToolError(f"REFUSED: {label} must be text.")
+    if value != value.strip():
+        raise DraftToolError(f"REFUSED: {label} must not be padded with whitespace.")
+    if not value:
+        raise DraftToolError(
+            f"REFUSED: {label} must be nonblank. This action changes a field to a stated value; "
+            "it cannot clear one."
+        )
+    if len(value) > REVISION_MAX_TEXT:
+        raise DraftToolError(f"REFUSED: {label} is longer than {REVISION_MAX_TEXT} characters.")
+    return value
+
+
+def revision_value_entry(raw: Any, label: str) -> dict[str, Any]:
+    """Every proposed value is {value, source} with a nonblank explicit source."""
+    if not isinstance(raw, dict) or set(raw) != REVISION_VALUE_KEYS:
+        raise DraftToolError(
+            f"REFUSED: {label} must be exactly {{\"value\": ..., \"source\": \"...\"}}."
+        )
+    source = raw.get("source")
+    if not isinstance(source, str) or not source.strip():
+        raise DraftToolError(f"REFUSED: {label} needs a nonblank explicit source.")
+    if len(source) > REVISION_MAX_TEXT:
+        raise DraftToolError(f"REFUSED: {label} source is longer than {REVISION_MAX_TEXT} characters.")
+    return {"value": raw["value"], "source": source.strip()}
+
+
+def revision_header_value(field: str, value: Any) -> str:
+    label = f"header.{field}"
+    text = revision_text(value, label)
+    if field in ("date", "expiry_date") and not REVISION_DATE_RE.fullmatch(text):
+        raise DraftToolError(f"REFUSED: {label} must be an exact YYYY-MM-DD calendar date.")
+    return text
+
+
+def revision_discount_value(value: Any, label: str) -> Any:
+    """A percentage string, or the exact integer 0. Nothing else.
+
+    A nonzero NUMBER is refused: Zoho would read it as a flat CAD amount, which
+    is the 2026-08-10 defect. This tool has no strictly sourced flat-amount
+    representation, so it refuses rather than guessing which one was meant.
+    """
+    if isinstance(value, bool):
+        raise DraftToolError(f"REFUSED: {label} must be a percentage string or 0.")
+    if isinstance(value, str):
+        text = value.strip()
+        if not PERCENT_DISCOUNT_RE.fullmatch(text):
+            raise DraftToolError(
+                f"REFUSED: {label} must be a percentage string such as \"10%\" (0-100, up to two "
+                "decimals)."
+            )
+        return text
+    if isinstance(value, int) and value == 0:
+        return 0
+    if isinstance(value, float) and value == 0.0:
+        return 0
+    raise DraftToolError(
+        f"REFUSED: {label} is a nonzero number. Zoho reads a numeric line discount as a FLAT CAD "
+        "amount, not a percentage; write \"10%\" for ten percent. This tool has no commissioned "
+        "flat-amount discount representation."
+    )
+
+
+def revision_line_value(field: str, value: Any) -> Any:
+    label = f"line.{field}"
+    if field == "quantity":
+        quantity = live_decimal(value, label)
+        if quantity <= 0 or quantity > REVISION_MAX_QUANTITY:
+            raise DraftToolError(
+                f"REFUSED: {label} must be greater than 0 and at most {REVISION_MAX_QUANTITY}."
+            )
+        return quantity
+    if field == "rate":
+        rate = live_decimal(value, label)
+        if rate < 0 or rate > REVISION_MAX_RATE:
+            raise DraftToolError(
+                f"REFUSED: {label} must be 0 or more and at most {REVISION_MAX_RATE}."
+            )
+        if -rate.as_tuple().exponent > 6:
+            raise DraftToolError(f"REFUSED: {label} carries more than six decimal places.")
+        return rate
+    if field == "discount":
+        return revision_discount_value(value, label)
+    if field == "description":
+        return revision_text(value, label)
+    if field == "tax_id":
+        text = revision_text(value, label)
+        if not ID_RE.fullmatch(text):
+            raise DraftToolError(f"REFUSED: {label} must be a positive numeric Zoho tax ID.")
+        return text
+    raise DraftToolError(f"REFUSED: {label} is not an editable line field.")
+
+
+def revision_intent(raw: Any) -> dict[str, Any]:
+    """The closed input schema, normalized once so stage and commit agree."""
+    if not isinstance(raw, dict):
+        raise DraftToolError("REFUSED: the revision input must be one JSON object.")
+    unknown = sorted(set(raw) - REVISION_INPUT_KEYS)
+    if unknown:
+        raise DraftToolError(
+            "REFUSED: the revision input names uncommissioned field(s): " + ", ".join(unknown)
+            + ". The exact schema is: " + ", ".join(sorted(REVISION_INPUT_KEYS)) + "."
+        )
+    missing = sorted(REVISION_REQUIRED_INPUT_KEYS - set(raw))
+    if missing:
+        raise DraftToolError("REFUSED: the revision input is missing " + ", ".join(missing) + ".")
+    estimate_id = str(raw.get("estimate_id") if raw.get("estimate_id") is not None else "").strip()
+    if not ID_RE.fullmatch(estimate_id):
+        raise DraftToolError(
+            "REFUSED: estimate_id must be a positive numeric Zoho estimate ID. No Zoho call was made."
+        )
+    reason = revision_text(raw.get("reason"), "reason")
+    header_raw = raw.get("header", {})
+    if header_raw is None:
+        header_raw = {}
+    if not isinstance(header_raw, dict):
+        raise DraftToolError("REFUSED: header must be an object of field -> {value, source}.")
+    unknown = sorted(set(header_raw) - set(REVISION_HEADER_FIELDS))
+    if unknown:
+        raise DraftToolError(
+            "REFUSED: header names uneditable field(s): " + ", ".join(unknown)
+            + ". Editable header fields are: " + ", ".join(REVISION_HEADER_FIELDS) + "."
+        )
+    header: dict[str, Any] = {}
+    for field in REVISION_HEADER_FIELDS:
+        if field not in header_raw:
+            continue
+        entry = revision_value_entry(header_raw[field], f"header.{field}")
+        header[field] = {
+            "value": revision_header_value(field, entry["value"]),
+            "source": entry["source"],
+        }
+    lines_raw = raw.get("lines", [])
+    if lines_raw is None:
+        lines_raw = []
+    if not isinstance(lines_raw, list):
+        raise DraftToolError("REFUSED: lines must be a list of existing-line change objects.")
+    if len(lines_raw) > REVISION_MAX_LINES:
+        raise DraftToolError(f"REFUSED: at most {REVISION_MAX_LINES} line changes are accepted.")
+    lines: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for index, entry in enumerate(lines_raw):
+        label = f"lines[{index}]"
+        if not isinstance(entry, dict) or set(entry) != REVISION_LINE_ENTRY_KEYS:
+            raise DraftToolError(
+                f"REFUSED: {label} must be exactly {{\"line_item_id\": \"...\", \"fields\": {{...}}}}."
+            )
+        line_item_id = str(entry.get("line_item_id") if entry.get("line_item_id") is not None else "").strip()
+        if not ID_RE.fullmatch(line_item_id):
+            raise DraftToolError(f"REFUSED: {label}.line_item_id must be a positive numeric ID.")
+        if line_item_id in seen:
+            raise DraftToolError(
+                f"REFUSED: {label} names line_item_id {line_item_id} twice. One entry per existing line."
+            )
+        seen.add(line_item_id)
+        fields_raw = entry.get("fields")
+        if not isinstance(fields_raw, dict) or not fields_raw:
+            raise DraftToolError(f"REFUSED: {label}.fields must name at least one editable field.")
+        unknown = sorted(set(fields_raw) - set(REVISION_LINE_FIELDS))
+        if unknown:
+            raise DraftToolError(
+                f"REFUSED: {label}.fields names uneditable field(s): " + ", ".join(unknown)
+                + ". Editable line fields are: " + ", ".join(REVISION_LINE_FIELDS) + "."
+            )
+        fields: dict[str, Any] = {}
+        for field in REVISION_LINE_FIELDS:
+            if field not in fields_raw:
+                continue
+            value_entry = revision_value_entry(fields_raw[field], f"{label}.fields.{field}")
+            value = revision_line_value(field, value_entry["value"])
+            if isinstance(value, Decimal):
+                value = format(value, "f")
+            fields[field] = {"value": value, "source": value_entry["source"]}
+        lines.append({"line_item_id": line_item_id, "fields": fields})
+    if not header and not lines:
+        raise DraftToolError(
+            "REFUSED: the revision input proposes no change. Name at least one header or line field."
+        )
+    lines.sort(key=lambda item: int(item["line_item_id"]))
+    return {
+        "estimate_id": estimate_id,
+        "reason": reason,
+        "header": header,
+        "lines": lines,
+    }
+
+
+def revision_line_intent(intent: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    return {entry["line_item_id"]: entry["fields"] for entry in intent["lines"]}
+
+
+def get_active_taxes(access_token: str, vault: dict[str, Any]) -> dict[str, dict[str, Any]]:
+    """The organization's active tax list, read-only, used to price a tax change."""
+    query = urlencode({"organization_id": books_organization_id(vault)})
+    result = zoho_tool.api_get(
+        access_token, str(vault["api_domain"]), f"/books/v3/settings/taxes?{query}"
+    )
+    rows = result.get("taxes")
+    if not isinstance(rows, list):
+        raise DraftToolError("Zoho returned no readable tax list. Nothing staged.")
+    taxes: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            raise DraftToolError("Zoho returned an unreadable tax row. Nothing staged.")
+        tax_id = str(row.get("tax_id") or "")
+        if not ID_RE.fullmatch(tax_id):
+            continue
+        taxes[tax_id] = {
+            "tax_id": tax_id,
+            "tax_name": str(row.get("tax_name") or ""),
+            "tax_percentage": format(
+                live_decimal(row.get("tax_percentage"), f"tax {tax_id} percentage"), "f"
+            ),
+            "tax_type": str(row.get("tax_type") or ""),
+            "status": str(row.get("status") or ""),
+            "is_inactive": bool(row.get("is_inactive")),
+        }
+    return taxes
+
+
+def revision_tax_evidence(
+    taxes: dict[str, dict[str, Any]], tax_ids: list[str]
+) -> dict[str, dict[str, Any]]:
+    """Only the tax rows this revision actually needs, pinned into the plan."""
+    evidence: dict[str, dict[str, Any]] = {}
+    for tax_id in sorted(set(tax_ids)):
+        row = taxes.get(tax_id)
+        if row is None:
+            raise DraftToolError(
+                f"REFUSED: tax {tax_id} is not an active tax in this Zoho organization. Nothing staged."
+            )
+        if row["is_inactive"] or row["status"].casefold() != "active":
+            raise DraftToolError(f"REFUSED: tax {tax_id} is not active. Nothing staged.")
+        evidence[tax_id] = json_copy(row)
+    return evidence
+
+
+def revision_line_discount(
+    line: dict[str, Any], index: int, gross: Decimal, discount_type: str
+) -> Any:
+    """The SAFE re-send representation of a line's untouched live discount.
+
+    A live percentage is proven from discount_amount before it is echoed back as
+    a string; a live flat amount, or a value that could be either, refuses the
+    whole revision for free at staging.
+    """
+    if discount_type != "item_level":
+        return None
+    raw = line.get("discount")
+    amount = live_decimal(line.get("discount_amount"), f"live line {index + 1} discount_amount")
+    if isinstance(raw, str) and raw.strip().endswith("%"):
+        text = raw.strip()
+        if not PERCENT_DISCOUNT_RE.fullmatch(text):
+            raise DraftToolError(
+                f"REFUSED: live line {index + 1} carries the unusable discount {raw!r}. Nothing staged."
+            )
+        return text
+    value = live_decimal(raw, f"live line {index + 1} discount")
+    if value == 0:
+        if amount != 0:
+            raise DraftToolError(
+                f"REFUSED: live line {index + 1} shows a zero discount but a {amount} discount "
+                "amount. Nothing staged."
+            )
+        return 0
+    as_percent = (gross * value / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    if amount == as_percent and amount != value:
+        return percent_text(value)
+    raise DraftToolError(
+        f"REFUSED: live line {index + 1} carries the bare number {raw!r} as its discount and its "
+        f"{amount} discount amount does not prove it is a percentage. Zoho reads a bare number as a "
+        "flat CAD amount; this tool has no commissioned flat-amount representation, so it will not "
+        "guess. Nothing staged."
+    )
+
+
+def revision_live_lines(estimate: dict[str, Any]) -> list[dict[str, Any]]:
+    """Every live line, proven usable and uniquely identified. No sampling."""
+    lines = estimate.get("line_items")
+    if not isinstance(lines, list) or not lines:
+        raise DraftToolError("The live estimate carries no readable line list. Nothing staged.")
+    if len(lines) > REVISION_MAX_LINES:
+        raise DraftToolError(
+            f"REFUSED: the live estimate carries more than {REVISION_MAX_LINES} lines. Nothing staged."
+        )
+    seen: set[str] = set()
+    orders: set[Any] = set()
+    for index, line in enumerate(lines):
+        if not isinstance(line, dict):
+            raise DraftToolError(f"Live line_items[{index}] is not an object. Nothing staged.")
+        line_item_id = str(line.get("line_item_id") or "")
+        item_id = str(line.get("item_id") or "")
+        if not ID_RE.fullmatch(line_item_id):
+            raise DraftToolError(f"Live line_items[{index}] has no usable line_item_id.")
+        if not ID_RE.fullmatch(item_id):
+            raise DraftToolError(
+                f"Live line_items[{index}] is not linked to a Zoho item. This action resends every "
+                "line with its own item_id and refuses a free-text line."
+            )
+        if line_item_id in seen:
+            raise DraftToolError(f"Live line_items[{index}] repeats line_item_id {line_item_id}.")
+        seen.add(line_item_id)
+        if not str(line.get("name") or "").strip():
+            raise DraftToolError(f"Live line_items[{index}] has no item name.")
+        order = line.get("item_order")
+        if isinstance(order, bool) or not isinstance(order, int):
+            raise DraftToolError(f"Live line_items[{index}] has no integer item_order.")
+        if order in orders:
+            raise DraftToolError(f"Live line_items[{index}] repeats item_order {order}.")
+        orders.add(order)
+    return [json_copy(line) for line in lines]
+
+
+def validate_revision_live_estimate(
+    estimate: dict[str, Any], intent: dict[str, Any]
+) -> list[dict[str, Any]]:
+    """Exact identity, an eligible status and a revisable shape, or nothing."""
+    estimate_id = intent["estimate_id"]
+    if str(estimate.get("estimate_id") or "") != estimate_id:
+        raise DraftToolError(
+            f"Live estimate_id is {estimate.get('estimate_id')!r}, not the requested {estimate_id!r}."
+        )
+    status = str(estimate.get("status") or "")
+    if status not in REVISION_ELIGIBLE_STATUSES:
+        raise DraftToolError(
+            f"REFUSED: estimate {estimate.get('estimate_number')!r} is {status!r}. Only an estimate "
+            f"that is exactly {' or '.join(repr(value) for value in REVISION_ELIGIBLE_STATUSES)} may "
+            "be revised in place. Accepted, declined, invoiced, expired, void, deleted and unknown "
+            "states are refused. Nothing staged."
+        )
+    if not str(estimate.get("estimate_number") or "").strip():
+        raise DraftToolError("The live estimate has no estimate number. Nothing staged.")
+    if not ID_RE.fullmatch(str(estimate.get("customer_id") or "")):
+        raise DraftToolError("The live estimate has no usable customer ID. Nothing staged.")
+    discount_type = str(estimate.get("discount_type") or "")
+    if discount_type not in ("item_level", "entity_level"):
+        raise DraftToolError(
+            f"REFUSED: the live estimate discount_type is {discount_type!r}, which this action does "
+            "not know how to preserve. Nothing staged."
+        )
+    if not isinstance(estimate.get("is_discount_before_tax"), bool):
+        raise DraftToolError("The live estimate is_discount_before_tax is not a boolean.")
+    entity_discount = live_decimal(estimate.get("discount", 0), "live estimate discount")
+    if entity_discount != 0:
+        raise DraftToolError(
+            f"REFUSED: the live estimate carries an entity-level discount of {entity_discount}. This "
+            "action has no commissioned representation for it and will not risk restating it. "
+            "Nothing staged."
+        )
+    lines = revision_live_lines(estimate)
+    known = {str(line.get("line_item_id") or "") for line in lines}
+    unknown = sorted(set(revision_line_intent(intent)) - known)
+    if unknown:
+        raise DraftToolError(
+            "REFUSED: the revision names line_item_id(s) that are not on the live estimate: "
+            + ", ".join(unknown)
+            + ". This action cannot add, substitute or invent a line. Nothing staged."
+        )
+    return lines
+
+
+def revision_line_projection(
+    lines: list[dict[str, Any]], intent: dict[str, Any], discount_type: str
+) -> list[dict[str, Any]]:
+    """Before and after for every live line, in live order, exactly once each."""
+    changes = revision_line_intent(intent)
+    projection: list[dict[str, Any]] = []
+    for index, line in enumerate(lines):
+        line_item_id = str(line.get("line_item_id") or "")
+        fields = changes.get(line_item_id, {})
+        quantity_before = live_decimal(line.get("quantity"), f"live line {index + 1} quantity")
+        rate_before = live_decimal(line.get("rate"), f"live line {index + 1} rate")
+        gross_before = (quantity_before * rate_before).quantize(CENT, rounding=ROUND_HALF_UP)
+        discount_before = revision_line_discount(line, index, gross_before, discount_type)
+        description_before = str(line.get("description") or "")
+        tax_before = str(line.get("tax_id") or "")
+        quantity = (
+            live_decimal(fields["quantity"]["value"], f"line {index + 1} new quantity")
+            if "quantity" in fields else quantity_before
+        )
+        rate = (
+            live_decimal(fields["rate"]["value"], f"line {index + 1} new rate")
+            if "rate" in fields else rate_before
+        )
+        if "discount" in fields:
+            if discount_type != "item_level":
+                raise DraftToolError(
+                    f"REFUSED: line {index + 1} asks for a line discount, but the live estimate uses "
+                    f"a {discount_type} discount. Nothing staged."
+                )
+            discount = fields["discount"]["value"]
+        else:
+            discount = discount_before
+        description = (
+            fields["description"]["value"] if "description" in fields else description_before
+        )
+        tax_id = fields["tax_id"]["value"] if "tax_id" in fields else tax_before
+        gross = (quantity * rate).quantize(CENT, rounding=ROUND_HALF_UP)
+        if isinstance(discount, str):
+            percent = Decimal(discount[:-1])
+            discount_amount = (gross * percent / Decimal("100")).quantize(
+                CENT, rounding=ROUND_HALF_UP
+            )
+        else:
+            percent = Decimal("0")
+            discount_amount = Decimal("0")
+        net = gross - discount_amount
+        changed = sorted(fields)
+        projection.append({
+            "line_item_id": line_item_id,
+            "item_id": str(line.get("item_id") or ""),
+            "item_order": line.get("item_order"),
+            "name": str(line.get("name") or ""),
+            "changed_fields": changed,
+            "quantity_before": format(quantity_before, "f"),
+            "quantity": format(quantity, "f"),
+            "rate_before": format(rate_before, "f"),
+            "rate": format(rate, "f"),
+            "discount_before": discount_before,
+            "discount": discount,
+            "discount_percent": format(percent, "f"),
+            "description_before": description_before,
+            "description": description,
+            "tax_id_before": tax_before,
+            "tax_id": tax_id,
+            "line_gross": money_text(gross),
+            "discount_amount": money_text(discount_amount),
+            "item_total": money_text(net),
+        })
+    return projection
+
+
+def revision_totals(
+    projection: list[dict[str, Any]], taxes: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """Independent Decimal totals, with tax uncertainty disclosed rather than hidden.
+
+    Tax is computed per tax bucket on that bucket's net, which is how Zoho's
+    entity-level tax rounding behaves, and cross-checked against a per-line sum.
+    A tax group, a compound tax, an unknown tax row or a disagreement between the
+    two methods makes the tax and grand total NON-EXACT, and the plan says so
+    instead of asserting a figure this tool cannot prove.
+    """
+    zero = Decimal("0")
+    gross_total = discount_total = net_total = zero
+    buckets: dict[str, Decimal] = {}
+    per_line_tax = zero
+    uncertain: list[str] = []
+    for row in projection:
+        gross_total += Decimal(row["line_gross"])
+        discount_total += Decimal(row["discount_amount"])
+        net = Decimal(row["item_total"])
+        net_total += net
+        tax_id = row["tax_id"]
+        if not tax_id:
+            uncertain.append(f"line {row['line_item_id']} carries no tax")
+            continue
+        tax_row = taxes.get(tax_id)
+        if tax_row is None:
+            uncertain.append(f"tax {tax_id} is not in the pinned active tax list")
+            continue
+        if tax_row["tax_type"] != "tax":
+            uncertain.append(
+                f"tax {tax_row['tax_name']} ({tax_id}) is a {tax_row['tax_type']}, so its component "
+                "rounding is not predictable here"
+            )
+        percentage = Decimal(tax_row["tax_percentage"])
+        buckets[tax_id] = buckets.get(tax_id, zero) + net
+        per_line_tax += (net * percentage / Decimal("100")).quantize(CENT, rounding=ROUND_HALF_UP)
+    bucket_rows = []
+    bucket_tax = zero
+    for tax_id in sorted(buckets):
+        tax_row = taxes[tax_id]
+        percentage = Decimal(tax_row["tax_percentage"])
+        amount = (buckets[tax_id] * percentage / Decimal("100")).quantize(
+            CENT, rounding=ROUND_HALF_UP
+        )
+        bucket_tax += amount
+        bucket_rows.append({
+            "tax_id": tax_id,
+            "tax_name": tax_row["tax_name"],
+            "tax_percentage": tax_row["tax_percentage"],
+            "taxable_net": money_text(buckets[tax_id]),
+            "tax_amount": money_text(amount),
+        })
+    if bucket_tax != per_line_tax:
+        uncertain.append(
+            f"per-bucket tax {money_text(bucket_tax)} and per-line tax {money_text(per_line_tax)} "
+            "disagree on rounding"
+        )
+    exact = not uncertain
+    return {
+        "list_subtotal": money_text(gross_total),
+        "discount_total": money_text(discount_total),
+        "sub_total": money_text(net_total),
+        "tax_rows": bucket_rows,
+        "tax_total": money_text(bucket_tax),
+        "total": money_text(net_total + bucket_tax),
+        "tax_certainty": "exact" if exact else "disclosed_uncertain",
+        "tax_uncertainty_reasons": sorted(set(uncertain)),
+        "tax_total_asserted": exact,
+    }
+
+
+def revision_put_payload(
+    estimate: dict[str, Any], projection: list[dict[str, Any]], intent: dict[str, Any]
+) -> dict[str, Any]:
+    """The complete PUT body: preserved live values, the stated changes, nothing else.
+
+    Zoho deletes existing lines that a PUT omits, so the COMPLETE live line list
+    is always resent in live order, each carrying its own line_item_id and
+    item_id. There is no status key here and no key that could mail, convert or
+    restatus anything.
+    """
+    header = intent["header"]
+    payload: dict[str, Any] = {"customer_id": str(estimate.get("customer_id") or "")}
+    for key in REVISION_PUT_HEADER_KEYS:
+        if key == "customer_id":
+            continue
+        if key in header:
+            payload[key] = header[key]["value"]
+            continue
+        value = estimate.get(key)
+        if isinstance(value, str) and value.strip():
+            payload[key] = value
+    payload["discount_type"] = str(estimate.get("discount_type") or "")
+    payload["is_discount_before_tax"] = bool(estimate.get("is_discount_before_tax"))
+    shipping = live_decimal(estimate.get("shipping_charge", 0), "live shipping_charge")
+    if shipping != 0:
+        payload["shipping_charge"] = number_json(shipping)
+    adjustment = live_decimal(estimate.get("adjustment", 0), "live adjustment")
+    if adjustment != 0:
+        payload["adjustment"] = number_json(adjustment)
+        description = estimate.get("adjustment_description")
+        if isinstance(description, str) and description.strip():
+            payload["adjustment_description"] = description
+    for key in ("template_id", "salesperson_id", "currency_id"):
+        value = estimate.get(key)
+        if isinstance(value, str) and value.strip():
+            payload[key] = value
+    if "exchange_rate" in estimate:
+        payload["exchange_rate"] = number_json(
+            live_decimal(estimate.get("exchange_rate"), "live exchange_rate")
+        )
+    lines = estimate.get("line_items") or []
+    put_lines = []
+    for index, (line, row) in enumerate(zip(lines, projection)):
+        if str(line.get("line_item_id") or "") != row["line_item_id"]:
+            raise DraftToolError("The projected line order does not match the live line order.")
+        put_line: dict[str, Any] = {}
+        for key in REVISION_LINE_PUT_KEYS:
+            if key in ("quantity", "rate", "discount", "description", "tax_id"):
+                continue
+            value = line.get(key)
+            if value is None or value == "":
+                continue
+            put_line[key] = value
+        put_line["line_item_id"] = row["line_item_id"]
+        put_line["item_id"] = row["item_id"]
+        put_line["quantity"] = number_json(Decimal(row["quantity"]))
+        put_line["rate"] = number_json(Decimal(row["rate"]))
+        if row["discount"] is not None:
+            put_line["discount"] = row["discount"]
+        if row["description"]:
+            put_line["description"] = row["description"]
+        if row["tax_id"]:
+            put_line["tax_id"] = row["tax_id"]
+        missing = sorted(REVISION_REQUIRED_LINE_PUT_KEYS - set(put_line))
+        if missing:
+            raise DraftToolError(
+                f"Live line {index + 1} cannot be resent intact; missing {', '.join(missing)}."
+            )
+        put_lines.append(put_line)
+    if len(put_lines) != len(lines):
+        raise DraftToolError("The PUT body does not resend every live line exactly once.")
+    payload["line_items"] = put_lines
+    extra = sorted(set(payload) - REVISION_ALLOWED_PUT_KEYS)
+    if extra or not REVISION_REQUIRED_PUT_KEYS.issubset(payload):
+        raise DraftToolError("The revision payload is not the exact commissioned shape.")
+    return payload
+
+
+def revision_protected_state(
+    estimate: dict[str, Any], intent: dict[str, Any], tax_changed: bool
+) -> dict[str, Any]:
+    """Everything Zoho returns EXCEPT what this exact revision legitimately moves.
+
+    Each exemption is narrow -- a named header field the plan changes, a named
+    field of the one line that changes it, or a figure Zoho recomputes -- and
+    every exempted value is asserted explicitly by verify_revision_result.
+    """
+    result = {
+        key: value for key, value in estimate.items()
+        if key not in REVISION_DERIVED_KEYS and key not in ESTIMATE_PREWRITE_VOLATILE_KEYS
+    }
+    for field in intent["header"]:
+        result.pop(field, None)
+        for companion in REVISION_HEADER_FIELD_COMPANIONS[field]:
+            result.pop(companion, None)
+    if tax_changed:
+        # A tax change rewrites the header tax rows by construction, so they are
+        # asserted explicitly instead of being frozen.
+        result["taxes_protected_skipped_due_to_tax_change"] = True
+    else:
+        result["taxes_protected"] = [
+            {key: value for key, value in tax.items() if key not in ESTIMATE_TAX_AMOUNT_KEYS}
+            for tax in (estimate.get("taxes") or [])
+            if isinstance(tax, dict)
+        ]
+    changes = revision_line_intent(intent)
+    result["line_items_protected"] = []
+    for line in (estimate.get("line_items") or []):
+        if not isinstance(line, dict):
+            continue
+        protected_line = {
+            key: value for key, value in line.items() if key not in ESTIMATE_LINE_DERIVED_KEYS
+        }
+        fields = changes.get(str(line.get("line_item_id") or ""), {})
+        for field in fields:
+            protected_line.pop(field, None)
+            for companion in REVISION_LINE_FIELD_COMPANIONS[field]:
+                protected_line.pop(companion, None)
+        if "tax_id" in fields:
+            protected_line.pop("line_item_taxes_protected", None)
+        else:
+            protected_line["line_item_taxes_protected"] = [
+                {key: value for key, value in tax.items() if key not in ESTIMATE_TAX_AMOUNT_KEYS}
+                for tax in (line.get("line_item_taxes") or [])
+                if isinstance(tax, dict)
+            ]
+        result["line_items_protected"].append(protected_line)
+    return result
+
+
+def build_revision(
+    before: dict[str, Any], intent: dict[str, Any], taxes: dict[str, dict[str, Any]]
+) -> dict[str, Any]:
+    """The whole projection, derived from immutable inputs alone.
+
+    Commit re-runs this over the staged live state, the staged intent and the
+    staged tax rows and refuses unless the result is byte-identical to the
+    reviewed plan, so no figure, endpoint, payload key or fingerprint in a plan
+    file can be tampered with on its own.
+    """
+    lines = validate_revision_live_estimate(before, intent)
+    discount_type = str(before.get("discount_type") or "")
+    projection = revision_line_projection(lines, intent, discount_type)
+    current = revision_line_projection(lines, {"lines": [], "header": {}}, discount_type)
+    tax_changed = any("tax_id" in row["changed_fields"] for row in projection)
+    expected = revision_totals(projection, taxes)
+    before_totals = revision_totals(current, taxes)
+    changed_lines = [row for row in projection if row["changed_fields"]]
+    if len(changed_lines) != len(intent["lines"]):
+        raise DraftToolError("Every named line change must land on exactly one live line.")
+    protected = revision_protected_state(before, intent, tax_changed)
+    shipping = live_decimal(before.get("shipping_charge", 0), "live shipping_charge")
+    adjustment = live_decimal(before.get("adjustment", 0), "live adjustment")
+    return {
+        "estimate": {
+            "estimate_id": intent["estimate_id"],
+            "estimate_number": str(before.get("estimate_number") or ""),
+            "customer_id": str(before.get("customer_id") or ""),
+            "customer_name": str(before.get("customer_name") or ""),
+            "currency_code": str(before.get("currency_code") or ""),
+            "currency_id": str(before.get("currency_id") or ""),
+            "exchange_rate": format(
+                live_decimal(before.get("exchange_rate", 1), "live exchange_rate"), "f"
+            ),
+            "status": str(before.get("status") or ""),
+            "line_count": len(lines),
+            "discount_type": discount_type,
+            "shipping_charge": money_text(shipping),
+            "adjustment": money_text(adjustment),
+            "before_state": json_copy(before),
+            "before_state_sha256": digest_for(before),
+            "protected_state": protected,
+            "protected_state_sha256": digest_for(protected),
+        },
+        "reason": intent["reason"],
+        "header_changes": [
+            {
+                "field": field,
+                "from": str(before.get(field) or ""),
+                "to": intent["header"][field]["value"],
+                "source": intent["header"][field]["source"],
+            }
+            for field in REVISION_HEADER_FIELDS if field in intent["header"]
+        ],
+        "line_changes": [
+            {
+                "line_item_id": row["line_item_id"],
+                "item_id": row["item_id"],
+                "name": row["name"],
+                "fields": [
+                    {
+                        "field": field,
+                        "from": row[f"{field}_before"],
+                        "to": row[field],
+                        "source": revision_line_intent(intent)[row["line_item_id"]][field]["source"],
+                    }
+                    for field in REVISION_LINE_FIELDS if field in row["changed_fields"]
+                ],
+            }
+            for row in changed_lines
+        ],
+        "tax_rows_used": {tax_id: json_copy(taxes[tax_id]) for tax_id in sorted(taxes)},
+        "tax_changed": tax_changed,
+        "current": before_totals,
+        "expected": dict(expected, lines=projection),
+        # The subtotal identity is only asserted where it is deterministic. A
+        # shipping charge or adjustment brings its own tax and rounding rules,
+        # so the identity is disclosed as unasserted rather than asserted wrongly.
+        "total_identity_asserted": shipping == 0 and adjustment == 0,
+        "put_endpoint": f"PUT /books/v3/estimates/{intent['estimate_id']}",
+        "put_payload": revision_put_payload(before, projection, intent),
+        "status_unchanged": str(before.get("status") or ""),
+        "email_sent": False,
+    }
+
+
+def revision_stable_projection(evidence: dict[str, Any]) -> dict[str, Any]:
+    """Canonical reviewed projection with per-GET telemetry normalized out.
+
+    Full raw GET evidence remains immutable in the saved plan. For the fresh
+    pre-lock comparison, the before-state copy and its digest are replaced by
+    the same stable business state already used by the explicit drift gate.
+    This narrowly prevents a regenerated ``estimate_url`` from making two
+    otherwise equal projections differ, while every business field, projected
+    value, total, PUT key and protected fingerprint remains byte-exact.
+    """
+    stable = json_copy(evidence)
+    estimate = stable.get("estimate")
+    if not isinstance(estimate, dict) or not isinstance(estimate.get("before_state"), dict):
+        raise DraftToolError("Revision evidence has no stable before-state projection.")
+    before = correction_prewrite_state(estimate["before_state"])
+    estimate["before_state"] = before
+    estimate["before_state_sha256"] = digest_for(before)
+    return stable
+
+
+def revision_approval_card(
+    evidence: dict[str, Any], expires_utc: str,
+    plan_sha256: str = APPROVAL_CARD_HASH_PLACEHOLDER,
+) -> dict[str, Any]:
+    estimate = evidence["estimate"]
+    expected = evidence["expected"]
+    tax_names = {
+        str(row.get("tax_id") or ""): str(row.get("tax_name") or "")
+        for row in (expected.get("tax_rows") or []) if isinstance(row, dict)
+    }
+    change_details = {
+        str(change.get("line_item_id") or ""): {
+            str(field.get("field") or ""): {
+                "from": field.get("from"), "to": field.get("to")
+            }
+            for field in (change.get("fields") or []) if isinstance(field, dict)
+        }
+        for change in (evidence.get("line_changes") or []) if isinstance(change, dict)
+    }
+    lines = [
+        {
+            "item": row["name"],
+            "quantity": row["quantity"],
+            "rate": row["rate"],
+            "discount": row["discount"],
+            "tax": tax_names.get(row["tax_id"]) or row["tax_id"] or "none",
+            "net": row["item_total"],
+            "changes": row["changed_fields"],
+            "change_details": change_details.get(row["line_item_id"], {}),
+        }
+        for row in expected["lines"]
+    ]
+    risks = [
+        "One atomic PUT to this existing estimate; no retry after the write starts.",
+        "All live lines are resent in order with line_item_id and item_id preserved.",
+        "Customer, number, currency and status are preserved; no email or lifecycle route exists.",
+    ]
+    if expected["tax_certainty"] != "exact":
+        risks.append(
+            "Tax projection is not exact: " + "; ".join(expected["tax_uncertainty_reasons"])
+        )
+    return {
+        "version": APPROVAL_CARD_VERSION,
+        "card_id": approval_card_id(REVISION_OPERATION, plan_sha256),
+        "operation": REVISION_OPERATION,
+        "scope": {
+            "method": "PUT",
+            "route": f"/books/v3/estimates/{estimate['estimate_id']}",
+            "write_count": 1,
+            "existing_document_only": True,
+            "email_or_lifecycle_action": False,
+        },
+        "customer": {"id": estimate["customer_id"], "name": estimate["customer_name"]},
+        "document": {
+            "type": "quote/estimate",
+            "id": estimate["estimate_id"],
+            "number": estimate["estimate_number"],
+            "reference_number": str(
+                (estimate.get("before_state") or {}).get("reference_number") or ""
+            ),
+            "status": estimate["status"],
+        },
+        "currency": {
+            "code": estimate["currency_code"],
+            "currency_id": estimate["currency_id"],
+            "exchange_rate": estimate["exchange_rate"],
+        },
+        "lines": lines,
+        "totals": {
+            "subtotal": expected["sub_total"],
+            "tax": expected["tax_total"],
+            "total": expected["total"],
+            "tax_certainty": expected["tax_certainty"],
+        },
+        "risks": risks,
+        "expires_utc": expires_utc,
+        "plan_sha256": plan_sha256,
+        "approval": "Reply with exact one-word APPROVED to this displayed plan only.",
+    }
+
+
+def stage_revision_plan(
+    intent: dict[str, Any], evidence: dict[str, Any], organization_id: str, input_path: Path
+) -> Path:
+    created = utc_now()
+    core = {
+        "tool": TOOL_NAME,
+        "kind": REVISION_KIND,
+        "schema_version": REVISION_SCHEMA_VERSION,
+        "nonce": secrets.token_hex(16),
+        "created_utc": created.isoformat(),
+        "expires_utc": (created + timedelta(hours=REVISION_PLAN_LIFETIME_HOURS)).isoformat(),
+        "approval_required": APPROVAL_WORD,
+        "estimate_id": intent["estimate_id"],
+        "books_organization_id": organization_id,
+        "risk": {
+            "atomic": True,
+            "single_put": True,
+            "email_sent": False,
+            "status_unchanged": evidence["estimate"]["status"],
+            "write_attempted": False,
+            "note": REVISION_RISK_NOTE,
+        },
+        "input": {"path": str(input_path), "sha256": file_digest(input_path)},
+        "intent": intent,
+        "live_evidence": evidence,
+        "approval_card": revision_approval_card(
+            evidence, (created + timedelta(hours=REVISION_PLAN_LIFETIME_HOURS)).isoformat()
+        ),
+    }
+    plan = json_copy(core)
+    plan["sha256"] = approval_plan_digest(core)
+    plan["approval_card"]["plan_sha256"] = plan["sha256"]
+    plan["approval_card"]["card_id"] = approval_card_id(REVISION_OPERATION, plan["sha256"])
+    PLAN_DIR.mkdir(parents=True, exist_ok=True)
+    stamp = created.strftime("%Y%m%dT%H%M%SZ")
+    path = PLAN_DIR / f"{stamp}_{REVISION_KIND}_{plan['sha256'][:16]}.json"
+    path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    activate_approval_card(plan["approval_card"])
+    zoho_tool.append_receipt(
+        "zoho_estimate_revision_plan_staged_read_only",
+        f"estimate={evidence['estimate']['estimate_number']} ({intent['estimate_id']}); "
+        f"plan={path}; sha256={plan['sha256']}; writes=0; method=GET_ONLY",
+    )
+    return path
+
+
+def print_revision_summary(plan: dict[str, Any], path: Path) -> None:
+    """Compatibility name; the permanent stage presentation is one concise card."""
+    print_approval_card(plan["approval_card"])
+
+
+def command_stage_estimate_revision(args: argparse.Namespace) -> None:
+    """GET-only. Reads the input, the live estimate and the active tax list."""
+    input_path = Path(str(args.input))
+    intent = revision_intent(read_json(str(input_path)))
+    vault = zoho_tool.load_vault()
+    zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
+    organization_id = books_organization_id(vault)
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    before = get_estimate(access_token, vault, intent["estimate_id"])
+    lines = validate_revision_live_estimate(before, intent)
+    live_taxes = get_active_taxes(access_token, vault)
+    zoho_tool.save_vault(vault)
+    projection = revision_line_projection(
+        lines, intent, str(before.get("discount_type") or "")
+    )
+    taxes = revision_tax_evidence(
+        live_taxes,
+        [row["tax_id"] for row in projection if row["tax_id"]]
+        + [row["tax_id_before"] for row in projection if row["tax_id_before"]],
+    )
+    evidence = build_revision(before, intent, taxes)
+    path = stage_revision_plan(intent, evidence, organization_id, input_path)
+    plan = read_json(str(path))
+    print_revision_summary(plan, path)
+
+
+def validate_revision_plan(plan: dict[str, Any]) -> tuple[str, dict[str, Any], dict[str, Any]]:
+    if (
+        plan.get("tool") != TOOL_NAME
+        or plan.get("kind") != REVISION_KIND
+        or plan.get("schema_version") != REVISION_SCHEMA_VERSION
+        or plan.get("approval_required") != APPROVAL_WORD
+    ):
+        raise DraftToolError("The plan belongs to a different tool, action or schema version.")
+    if not NONCE_RE.fullmatch(str(plan.get("nonce") or "")):
+        raise DraftToolError("Plan nonce is invalid.")
+    created = parse_plan_time(plan.get("created_utc"), "creation time")
+    expires = parse_plan_time(plan.get("expires_utc"), "expiry")
+    if expires - created != timedelta(hours=REVISION_PLAN_LIFETIME_HOURS):
+        raise DraftToolError("Plan must have exactly a 24-hour lifetime.")
+    now = utc_now()
+    if created > now + timedelta(minutes=5):
+        raise DraftToolError("Plan creation time is in the future.")
+    if now >= expires:
+        raise DraftToolError("Plan expired. Stage a new plan for review.")
+    evidence = plan.get("live_evidence")
+    if not isinstance(evidence, dict):
+        raise DraftToolError("Plan evidence is invalid.")
+    staged_estimate = evidence.get("estimate")
+    if not isinstance(staged_estimate, dict):
+        raise DraftToolError("Plan estimate evidence is invalid.")
+    risk = plan.get("risk")
+    if not isinstance(risk, dict) or (
+        risk.get("atomic") is not True
+        or risk.get("single_put") is not True
+        or risk.get("email_sent") is not False
+        or risk.get("write_attempted") is not False
+        or risk.get("status_unchanged") != staged_estimate.get("status")
+        or risk.get("note") != REVISION_RISK_NOTE
+    ):
+        raise DraftToolError("Plan must disclose the exact single-atomic-PUT risk.")
+    # Re-normalizing through the same closed schema means a hand-edited intent
+    # cannot smuggle in an uneditable field, a bare numeric discount or a second
+    # entry for one line.
+    intent = revision_intent(plan.get("intent"))
+    if intent != plan.get("intent"):
+        raise DraftToolError("Plan intent is not the canonical normalized form of its own input.")
+    estimate_id = intent["estimate_id"]
+    if str(plan.get("estimate_id") or "") != estimate_id:
+        raise DraftToolError("Plan header and intent name different estimates.")
+    if not ID_RE.fullmatch(str(plan.get("books_organization_id") or "")):
+        raise DraftToolError("Plan organization ID is invalid.")
+    before = staged_estimate.get("before_state")
+    if not isinstance(before, dict):
+        raise DraftToolError("Plan before-state evidence must be an object.")
+    if not secrets.compare_digest(
+        str(staged_estimate.get("before_state_sha256") or ""), digest_for(before)
+    ):
+        raise DraftToolError("Plan before-state evidence hash is invalid.")
+    taxes = evidence.get("tax_rows_used")
+    if not isinstance(taxes, dict):
+        raise DraftToolError("Plan tax evidence is invalid.")
+    # Re-derive EVERYTHING from the staged live state, intent and tax rows. A
+    # tampered payload, endpoint, fingerprint or total cannot survive this.
+    if build_revision(before, intent, taxes) != evidence:
+        raise DraftToolError(
+            "Plan evidence is not the canonical projection of the staged live estimate state."
+        )
+    if evidence["put_endpoint"] != f"PUT /books/v3/estimates/{estimate_id}":
+        raise DraftToolError("Plan endpoint is not the one commissioned estimate route.")
+    expected_card = revision_approval_card(
+        evidence, str(plan["expires_utc"]), str(plan.get("sha256") or "")
+    )
+    if plan.get("approval_card") != expected_card:
+        raise DraftToolError(
+            "Approval card does not exactly match the immutable estimate revision operation."
+        )
+    return estimate_id, intent, evidence
+
+
+def load_revision_plan(path: Path) -> tuple[dict[str, Any], str, dict[str, Any], dict[str, Any]]:
+    plan = read_json(str(path))
+    saved = str(plan.get("sha256") or "")
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(
+        saved, approval_plan_digest(plan)
+    ):
+        raise DraftToolError("Plan hash check failed. The plan changed after review.")
+    estimate_id, intent, evidence = validate_revision_plan(plan)
+    return plan, estimate_id, intent, evidence
+
+
+def require_revision_put_allowed(
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+    evidence: dict[str, Any],
+) -> None:
+    """The complete write allowlist for a general estimate revision.
+
+    Only PUT. Only the estimate this reviewed plan names. Only the commissioned
+    keys, with the complete line list, every line_item_id and item_id present in
+    live order, and every value identical to the reviewed plan. Pure validation
+    -- it touches nothing. Commit runs it once BEFORE the replay lock (so a bad
+    payload is a free refusal, not a burned plan) and the write function runs it
+    again as the transport's own gate.
+    """
+    if method != "PUT":
+        raise DraftToolError("REFUSED: an estimate revision is a PUT and nothing else.")
+    estimate = evidence["estimate"]
+    match = ESTIMATE_PUT_PATH_RE.fullmatch(str(path))
+    if not match or match.group(1) != estimate["estimate_id"]:
+        raise DraftToolError(
+            "REFUSED: an estimate revision targets /books/v3/estimates/<the reviewed estimate id> "
+            "and nothing else. Creation, deletion, sending, mailing, acceptance, decline, "
+            "conversion, attachment, template, lifecycle and every bulk route are unreachable."
+        )
+    if not isinstance(payload, dict) or not isinstance(expected_payload, dict):
+        raise DraftToolError("REFUSED: the estimate PUT payload must be an object.")
+    extra = sorted(set(payload) - REVISION_ALLOWED_PUT_KEYS)
+    if extra:
+        raise DraftToolError(
+            "REFUSED: the estimate PUT payload names uncommissioned field(s): " + ", ".join(extra)
+        )
+    if not REVISION_REQUIRED_PUT_KEYS.issubset(payload):
+        raise DraftToolError(
+            "REFUSED: the estimate PUT payload must carry the preserved customer, number and date, "
+            "the live discount flags and the complete line list."
+        )
+    if str(payload.get("customer_id") or "") != estimate["customer_id"]:
+        raise DraftToolError("REFUSED: the estimate PUT names a different customer.")
+    if str(payload.get("estimate_number") or "") != estimate["estimate_number"]:
+        raise DraftToolError("REFUSED: the estimate PUT does not preserve the estimate number.")
+    if payload.get("discount_type") != estimate["discount_type"]:
+        raise DraftToolError("REFUSED: the estimate PUT does not preserve the live discount type.")
+    lines = payload.get("line_items")
+    if not isinstance(lines, list) or len(lines) != estimate["line_count"]:
+        raise DraftToolError("REFUSED: the estimate PUT must carry the complete live line list.")
+    expected_lines = expected_payload.get("line_items")
+    if not isinstance(expected_lines, list) or len(expected_lines) != estimate["line_count"]:
+        raise DraftToolError("REFUSED: the reviewed plan payload is not the commissioned shape.")
+    reviewed_rows = evidence["expected"]["lines"]
+    if len(reviewed_rows) != estimate["line_count"]:
+        raise DraftToolError("REFUSED: the reviewed plan does not project every live line.")
+    seen: set[str] = set()
+    for index, (line, reviewed, row) in enumerate(zip(lines, expected_lines, reviewed_rows)):
+        if not isinstance(line, dict) or not isinstance(reviewed, dict):
+            raise DraftToolError("REFUSED: every PUT line must be an object.")
+        unknown = sorted(set(line) - set(REVISION_LINE_PUT_KEYS))
+        if unknown:
+            raise DraftToolError(
+                "REFUSED: a PUT line names uncommissioned field(s): " + ", ".join(unknown)
+            )
+        if not REVISION_REQUIRED_LINE_PUT_KEYS.issubset(line):
+            raise DraftToolError("REFUSED: every PUT line must resend its own identity.")
+        line_item_id = str(line.get("line_item_id") or "")
+        if not ID_RE.fullmatch(line_item_id) or line_item_id in seen:
+            raise DraftToolError("REFUSED: the estimate PUT repeats or omits a line_item_id.")
+        seen.add(line_item_id)
+        # Order and identity are pinned line by line against the reviewed plan,
+        # so a line cannot be reordered, substituted or silently swapped.
+        if line_item_id != str(reviewed.get("line_item_id") or "") or line_item_id != row["line_item_id"]:
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} is not the reviewed line in the reviewed order."
+            )
+        if str(line.get("item_id") or "") != row["item_id"] or not ID_RE.fullmatch(row["item_id"]):
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} does not resend the reviewed Zoho item_id."
+            )
+        if isinstance(line.get("discount"), (int, float)) and not isinstance(
+            line.get("discount"), bool
+        ) and Decimal(str(line.get("discount"))) != 0:
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} carries a bare numeric discount, which Zoho reads "
+                "as a flat CAD amount."
+            )
+        if set(line) != set(reviewed):
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} does not carry the reviewed field set."
+            )
+        for key in line:
+            if line[key] == reviewed[key]:
+                continue
+            raise DraftToolError(
+                f"REFUSED: PUT line {index + 1} {key} does not match the reviewed plan."
+            )
+    for key in sorted(REVISION_ALLOWED_PUT_KEYS):
+        if key == "line_items":
+            continue
+        if payload.get(key) != expected_payload.get(key):
+            raise DraftToolError(
+                f"REFUSED: the estimate PUT {key} does not match the reviewed plan."
+            )
+    if set(payload) != set(expected_payload):
+        raise DraftToolError("REFUSED: the estimate PUT is not the reviewed payload.")
+    if not ID_RE.fullmatch(str(organization_id)):
+        raise DraftToolError("REFUSED: the organization ID is invalid.")
+
+
+def oauth_estimate_revision_write_allowed(
+    access_token: str,
+    api_domain: str,
+    method: str,
+    path: str,
+    organization_id: str,
+    payload: dict[str, Any],
+    expected_payload: dict[str, Any],
+    evidence: dict[str, Any],
+) -> dict[str, Any]:
+    """The ONE write path for a general estimate revision, gated by its allowlist."""
+    require_revision_put_allowed(
+        method, path, organization_id, payload, expected_payload, evidence
+    )
+    return send_estimate_put(
+        access_token, api_domain, path, organization_id, payload, "estimate revision"
+    )
+
+
+def verify_revision_result(
+    after: Any, evidence: dict[str, Any], label: str, *, full: bool = True
+) -> None:
+    """Post-state verification, applied to the PUT response AND a fresh GET.
+
+    `full` adds the byte-exact protected fingerprint and the preserved per-line
+    identity comparison. Those run against the FRESH GET, which is the
+    authoritative record.
+    """
+    if not isinstance(after, dict):
+        raise DraftToolError(f"{label} returned no estimate record.")
+    estimate = evidence["estimate"]
+    expected = evidence["expected"]
+    for key, want in (
+        ("estimate_id", estimate["estimate_id"]),
+        ("estimate_number", estimate["estimate_number"]),
+        ("customer_id", estimate["customer_id"]),
+        ("currency_code", estimate["currency_code"]),
+        ("currency_id", estimate["currency_id"]),
+        ("status", estimate["status"]),
+        ("discount_type", estimate["discount_type"]),
+    ):
+        actual = str(after.get(key) if after.get(key) is not None else "")
+        if actual != want:
+            raise DraftToolError(
+                f"{label} {key} is {actual!r}, not the preserved {want!r}. Stop and reconcile."
+            )
+    if str(after.get("status") or "") not in REVISION_ELIGIBLE_STATUSES:
+        raise DraftToolError(f"{label} left the estimate in an ineligible state. Stop and reconcile.")
+    for change in evidence["header_changes"]:
+        actual = after.get(change["field"])
+        if actual != change["to"]:
+            raise DraftToolError(
+                f"{label} {change['field']} is {actual!r}, not the approved {change['to']!r}. "
+                "Stop and reconcile."
+            )
+    lines = after.get("line_items")
+    if not isinstance(lines, list) or len(lines) != estimate["line_count"]:
+        raise DraftToolError(
+            f"{label} carries {len(lines) if isinstance(lines, list) else 'no'} lines, not the "
+            f"preserved {estimate['line_count']}. Stop and reconcile."
+        )
+    before_lines = estimate["before_state"].get("line_items") or []
+    for index, (line, want_line) in enumerate(zip(lines, expected["lines"])):
+        if not isinstance(line, dict):
+            raise DraftToolError(f"{label} line {index + 1} is not an object.")
+        for key, want in (
+            ("line_item_id", want_line["line_item_id"]),
+            ("item_id", want_line["item_id"]),
+        ):
+            if str(line.get(key) or "") != want:
+                raise DraftToolError(
+                    f"{label} line {index + 1} {key} is {line.get(key)!r}, not the preserved "
+                    f"{want!r}. Stop and reconcile."
+                )
+        for key in ("quantity", "rate"):
+            actual_value = live_decimal(line.get(key), f"{label} line {index + 1} {key}")
+            if actual_value != Decimal(want_line[key]):
+                raise DraftToolError(
+                    f"{label} line {index + 1} {key} is {actual_value}, not the approved "
+                    f"{want_line[key]}. Stop and reconcile."
+                )
+        if want_line["tax_id"] and str(line.get("tax_id") or "") != want_line["tax_id"]:
+            raise DraftToolError(
+                f"{label} line {index + 1} tax_id is {line.get('tax_id')!r}, not the approved "
+                f"{want_line['tax_id']!r}. Stop and reconcile."
+            )
+        if want_line["description"] and str(line.get("description") or "") != want_line["description"]:
+            raise DraftToolError(
+                f"{label} line {index + 1} description is not the approved text. Stop and reconcile."
+            )
+        for key, want in (
+            ("discount_amount", want_line["discount_amount"]),
+            ("item_total", want_line["item_total"]),
+        ):
+            actual_value = live_decimal(line.get(key), f"{label} line {index + 1} {key}")
+            if actual_value != Decimal(want):
+                raise DraftToolError(
+                    f"{label} line {index + 1} {key} is {actual_value}, not the approved {want}. "
+                    "Stop and reconcile."
+                )
+        if isinstance(want_line["discount"], str):
+            percent = returned_discount_percent(
+                line.get("discount"), f"{label} line {index + 1} discount"
+            )
+            if percent != Decimal(want_line["discount"][:-1]):
+                raise DraftToolError(
+                    f"{label} line {index + 1} discount is {line.get('discount')!r}, not the "
+                    f"approved {want_line['discount']}. Stop and reconcile."
+                )
+        if full:
+            before_line = before_lines[index] if index < len(before_lines) else {}
+            for key in ("unit", "item_order"):
+                if str(before_line.get(key) or "") != str(line.get(key) or ""):
+                    raise DraftToolError(
+                        f"{label} line {index + 1} {key} moved from {before_line.get(key)!r} to "
+                        f"{line.get(key)!r}. Stop and reconcile."
+                    )
+    for key in ("sub_total", "discount_total"):
+        actual_value = live_decimal(after.get(key), f"{label} {key}")
+        if actual_value != Decimal(expected[key]):
+            raise DraftToolError(
+                f"{label} {key} is {actual_value}, not the approved {expected[key]}. Stop and reconcile."
+            )
+    tax_total = live_decimal(after.get("tax_total"), f"{label} tax_total")
+    total = live_decimal(after.get("total"), f"{label} total")
+    if expected["tax_total_asserted"]:
+        if tax_total != Decimal(expected["tax_total"]):
+            raise DraftToolError(
+                f"{label} tax_total is {tax_total}, not the approved {expected['tax_total']}. "
+                "Stop and reconcile."
+            )
+        if total != Decimal(expected["total"]):
+            raise DraftToolError(
+                f"{label} total is {total}, not the approved {expected['total']}. Stop and reconcile."
+            )
+    if evidence["total_identity_asserted"]:
+        if total != Decimal(expected["sub_total"]) + tax_total:
+            raise DraftToolError(
+                f"{label} total {total} is not its own sub_total plus tax_total. Stop and reconcile."
+            )
+    tax_rows = after.get("taxes")
+    if isinstance(tax_rows, list) and tax_rows:
+        rows_total = Decimal("0")
+        for row in tax_rows:
+            if not isinstance(row, dict):
+                raise DraftToolError(f"{label} returned an invalid tax row.")
+            rows_total += live_decimal(row.get("tax_amount"), f"{label} tax row amount")
+        if rows_total != tax_total:
+            raise DraftToolError(
+                f"{label} tax rows sum to {rows_total}, not its own tax_total {tax_total}. "
+                "Stop and reconcile."
+            )
+    if not full:
+        return
+    protected = revision_protected_state(after, evidence_intent(evidence), evidence["tax_changed"])
+    if protected != estimate["protected_state"] or not secrets.compare_digest(
+        digest_for(protected), str(estimate["protected_state_sha256"])
+    ):
+        moved = sorted(
+            key for key in set(protected) | set(estimate["protected_state"])
+            if protected.get(key) != estimate["protected_state"].get(key)
+        )
+        raise DraftToolError(
+            f"{label} changed protected field(s) that must not move: {', '.join(moved) or 'unknown'}. "
+            "Stop and reconcile."
+        )
+
+
+def evidence_intent(evidence: dict[str, Any]) -> dict[str, Any]:
+    """The exact change set the reviewed plan describes, rebuilt from its evidence."""
+    return {
+        "header": {
+            change["field"]: {"value": change["to"], "source": change["source"]}
+            for change in evidence["header_changes"]
+        },
+        "lines": [
+            {
+                "line_item_id": change["line_item_id"],
+                "fields": {
+                    field["field"]: {"value": field["to"], "source": field["source"]}
+                    for field in change["fields"]
+                },
+            }
+            for change in evidence["line_changes"]
+        ],
+    }
+
+
+def command_commit_estimate_revision(args: argparse.Namespace) -> None:
+    plan_path = contained_correction_plan(args.plan)
+    plan, estimate_id, intent, evidence = load_revision_plan(plan_path)
+    # Approval is checked before the lock, the vault, the token and the network.
+    require_exact_approval(args.approval)
+    number = evidence["estimate"]["estimate_number"]
+    lock = correction_lock_path(plan["sha256"])
+    if lock.exists():
+        raise DraftToolError(
+            "REFUSED: this plan has already entered commit and cannot be replayed. "
+            "No Zoho call was made."
+        )
+    require_active_approval_card(plan)
+    try:
+        vault = zoho_tool.load_vault()
+        scopes = [str(scope) for scope in vault.get("scopes") or []]
+        zoho_tool.validate_scopes(scopes)
+        if ESTIMATE_UPDATE_SCOPE not in scopes:
+            raise DraftToolError(
+                f"Saved Zoho connection lacks {ESTIMATE_UPDATE_SCOPE}. Run "
+                "PREPARE_DADO_ZOHO_ACCESS.bat, create the grant in the Zoho API Console, then "
+                "REAUTHORIZE_DADO_ZOHO.bat and CHECK_DADO_ZOHO.bat. No PUT was issued."
+            )
+        organization_id = books_organization_id(vault)
+        if organization_id != str(plan["books_organization_id"]):
+            raise DraftToolError(
+                "REFUSED: the live FRP Depot Books organization does not match the plan."
+            )
+        access_token, vault = zoho_tool.refresh_access_token(vault)
+        current = get_estimate(access_token, vault, estimate_id)
+        staged_before = evidence["estimate"]["before_state"]
+        current_prewrite = correction_prewrite_state(current)
+        staged_prewrite = correction_prewrite_state(staged_before)
+        if current_prewrite != staged_prewrite or not secrets.compare_digest(
+            digest_for(current_prewrite), digest_for(staged_prewrite)
+        ):
+            moved = sorted(
+                key for key in set(current_prewrite) | set(staged_prewrite)
+                if current_prewrite.get(key) != staged_prewrite.get(key)
+            )
+            raise DraftToolError(
+                f"Estimate {number} changed after review ({', '.join(moved) or 'unknown'}). "
+                "No PUT was issued and this plan is not locked; stage a new plan."
+            )
+        # The pinned tax rows are re-read live, so a tax deactivated or repriced
+        # between review and approval stops this for free.
+        live_taxes = get_active_taxes(access_token, vault)
+        fresh_taxes = revision_tax_evidence(live_taxes, sorted(evidence["tax_rows_used"]))
+        if fresh_taxes != evidence["tax_rows_used"]:
+            raise DraftToolError(
+                "The active Zoho tax rows this plan priced have changed since review. "
+                "No PUT was issued and this plan is not locked; stage a new plan."
+            )
+        # Rebuild the whole projection from the FRESH live record.
+        fresh_evidence = build_revision(current, intent, fresh_taxes)
+        if revision_stable_projection(fresh_evidence) != revision_stable_projection(evidence):
+            raise DraftToolError(
+                f"The reviewed projection no longer matches what the live {number} would produce. "
+                "No PUT was issued and this plan is not locked; stage a new plan."
+            )
+        fresh_payload = fresh_evidence["put_payload"]
+        # The write allowlist runs here too, so a payload it would reject is a
+        # free refusal rather than a permanently locked plan.
+        require_revision_put_allowed(
+            "PUT", f"/books/v3/estimates/{estimate_id}", organization_id,
+            evidence["put_payload"], fresh_payload, evidence,
+        )
+    except Exception as exc:
+        zoho_tool.append_receipt(
+            "zoho_estimate_revision_refused_before_lock",
+            f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
+            f"write_attempted=false; locked=false; email_sent=false",
+        )
+        raise DraftToolError(
+            f"The estimate revision was refused BEFORE any write and BEFORE the replay lock. "
+            f"Estimate: {number} ({estimate_id}). No PUT was issued and no email was sent. "
+            f"Reason: {exc}"
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": REVISION_KIND,
+        "status": "in_flight",
+        "estimate_id": estimate_id,
+        "started_utc": utc_now().isoformat(),
+    }, exclusive=True)
+    write_attempted = False
+    try:
+        write_attempted = True
+        result = oauth_estimate_revision_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "PUT",
+            f"/books/v3/estimates/{estimate_id}",
+            organization_id,
+            evidence["put_payload"],
+            fresh_payload,
+            evidence,
+        )
+        verify_revision_result(result.get("estimate"), evidence, "PUT response", full=False)
+        verified = get_estimate(access_token, vault, estimate_id)
+        verify_revision_result(verified, evidence, "Fresh read-back", full=True)
+        zoho_tool.save_vault(vault)
+    except Exception as exc:
+        write_correction_lock(lock, {
+            "plan_sha256": plan["sha256"],
+            "kind": REVISION_KIND,
+            "status": "indeterminate",
+            "estimate_id": estimate_id,
+            "write_attempted": write_attempted,
+            "plan_locked_indeterminate": True,
+            "updated_utc": utc_now().isoformat(),
+            "reason": str(exc)[:2000],
+            "no_retry": True,
+        })
+        zoho_tool.append_receipt(
+            "zoho_estimate_revision_indeterminate_no_retry",
+            f"estimate={number} ({estimate_id}); write_attempted={str(write_attempted).lower()}; "
+            f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
+        )
+        raise DraftToolError(
+            f"The estimate revision is indeterminate and this plan is permanently locked against "
+            f"retry. Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live estimate "
+            f"state is unconfirmed. No email was sent; this tool has no mail transport. "
+            f"Reason: {exc} Read the live estimate in Zoho and reconcile before staging anything new."
+        ) from exc
+    write_correction_lock(lock, {
+        "plan_sha256": plan["sha256"],
+        "kind": REVISION_KIND,
+        "status": "committed_verified",
+        "estimate_id": estimate_id,
+        "updated_utc": utc_now().isoformat(),
+        "no_retry": True,
+    })
+    mark_active_card_attempted(plan)
+    zoho_tool.append_receipt(
+        "zoho_estimate_revision_committed_verified",
+        f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
+        f"status={evidence['estimate']['status']}; total={evidence['expected']['total']}; "
+        "email_sent=false",
+    )
+    print(json.dumps({
+        "status": "COMMITTED_AND_VERIFIED",
+        "kind": REVISION_KIND,
+        "estimate_id": estimate_id,
+        "estimate_number": number,
+        "estimate_status": evidence["estimate"]["status"],
+        "plan": str(plan_path),
+        "plan_sha256": plan["sha256"],
+        "header_changes": evidence["header_changes"],
+        "line_changes": evidence["line_changes"],
+        "sub_total": evidence["expected"]["sub_total"],
+        "tax_total": evidence["expected"]["tax_total"],
+        "tax_certainty": evidence["expected"]["tax_certainty"],
+        "total": evidence["expected"]["total"],
+        "lines_preserved": evidence["estimate"]["line_count"],
+        "email_sent": False,
+        "atomic": True,
+        "replay_locked": True,
+    }, ensure_ascii=False, indent=2))
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=TOOL_NAME)
     commands = parser.add_subparsers(dest="command", required=True)
@@ -4063,6 +6240,15 @@ def build_parser() -> argparse.ArgumentParser:
     commit_shm.add_argument("--plan", required=True)
     commit_shm.add_argument("--approval", required=True)
     commit_shm.set_defaults(func=command_commit_shm_inv000051_customer)
+    # The one GENERAL action: revise an existing estimate in place. Its business
+    # values come from a closed-schema input file, each with its own source.
+    stage_revision = commands.add_parser("stage-estimate-revision")
+    stage_revision.add_argument("--input", required=True)
+    stage_revision.set_defaults(func=command_stage_estimate_revision)
+    commit_revision = commands.add_parser("commit-estimate-revision")
+    commit_revision.add_argument("--plan", required=True)
+    commit_revision.add_argument("--approval", required=True)
+    commit_revision.set_defaults(func=command_commit_estimate_revision)
     return parser
 
 

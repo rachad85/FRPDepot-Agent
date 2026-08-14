@@ -1,4 +1,4 @@
-# FRP Depot — company fit profile (Dado's fact sheet)
+﻿# FRP Depot — company fit profile (Dado's fact sheet)
 
 Dado: read this at the start of every session. Add facts here the
 moment Rachad states them (dated). NEVER invent a fact not on this
@@ -10,6 +10,8 @@ sheet — ask instead.
   fittings, stub flanges, saddle tees, grating, profiles, and separately quoted
   coatings/unlisted items.
 - Resin standard (Rachad, confirmed 2026-08-08): use D411 unless Rachad explicitly requests another resin. Use `D411` in customer-facing selectors, item names, quotes, and catalog labels. In technical/manufacturer documents, use `Derakane 411-350 (D411)` on first mention when the exact grade matters. D411 and Derakane 411-350 are the same catalog option and must not be listed separately. Stock availability does not authorize changing the resin.
+- Hetron offering policy (Rachad, 2026-08-13): FRP Depot does not offer Hetron resin. Remove Hetron from every public website page, selector, guide link and catalogue presentation. Existing hidden/private historical records are not an offering and must not be published; deleting or changing them requires an exact separately approved write plan.
+- Public chemical-guide policy (Rachad, 2026-08-13): Derakane/Alta chemical guides are public and FRP Depot may use them for its searchable guide. Do not treat separate INEOS/Alta permission as a blocker. Data accuracy, complete footnotes, units, source attribution and technical limitations still must be proven before wider promotion. For broad or mixture chemical names, publish no normalized CAS unless the exact substance form is independently proven; keep the chemical name searchable and retain the guide's raw identifier internally.
 - Location / warehouse: Business/contact address repeatedly shown as 4507
   Ferguson Dr., Brockville, Ontario, Canada K6T 1A9. Warehouse status is not
   confirmed.
@@ -1111,3 +1113,48 @@ without restructuring attribution would have reported USD build-up money under
 A PROBE RUN ON 2026-08-12 WAS INCONCLUSIVE and is recorded as such: the feed was
 empty, so filtered and unfiltered reads matched trivially and the comparison
 proved nothing. The two production failures remain the evidence.
+
+## Zoho purchase orders and estimate revisions (2026-08-13)
+
+Durable company facts, measured read-only on 2026-08-13, not inferred.
+
+**Purchase orders.** FRP Depot has exactly SIX purchase orders in Zoho Books
+(PO-00001-R2 through PO-00006, complete pagination), and every one of them is to
+the same vendor, JRAIN FRP LIMITED (`96274000000027889`), in USD. Two carry a
+customer-style reference number in `reference_number` (`TDI PO#5046`,
+`TDI PO#5011`) and a real `delivery_date`; `expected_delivery_date` is empty on
+all six, so `delivery_date` is the field that actually holds FRP Depot's
+delivery dates. `ship_via` is used as free text ("Sea Shipping"). `terms` has
+never been populated on a purchase order here.
+
+**An existing quote is now revised in place, not replaced.** Before 2026-08-13
+the only way to change a quoted quantity was to create a second estimate, which
+leaves the customer holding two numbers for one job. `zoho_customer_quote_tool.py`
+now revises ONE existing `draft`-or-`sent` estimate with one atomic PUT,
+preserving the estimate number, the customer, the currency and the status.
+Prefer it for any ordinary revision; creating a replacement estimate is now the
+exception and needs a reason.
+
+**SCT (Structural Composites Technologies Ltd, `96274000000186533`) is taxed at
+GST 5%, not HST.** Their billing address is 200-100 Hoka St, Winnipeg, Manitoba,
+and their live quote QT-000031 carries tax `96274000000035512` GST 5%. This is
+worth keeping because a 2026-08-13 brief assumed HST for this customer. Ontario
+HST 13% (`96274000000035516`) is the right tax for Ontario-destined sales — that
+is the tax Rachad corrected the SCT PO26330 sales ORDER to on 2026-08-11 — so the
+two records genuinely differ and neither is a mistake to "fix" without asking.
+
+**The Catalog Classification dropdown has exactly three values and there is no
+`Non Website` option.** They are `Website Catalog`, `Custom / Customer-Specific`
+and `Review / Unclassified`. `Custom / Customer-Specific` IS the non-web
+classification — use it for customer-specific items such as the D441 nozzles and
+manways. Do not invent a fourth value and do not rename an option.
+
+**Creating a Zoho item publishes nothing to the website.** Item creation touches
+Zoho Inventory only; there is no WooCommerce or WordPress route in that tool.
+Catalog Classification is a SEPARATE approved plan that runs AFTER creation,
+because it needs the real item IDs creation returns.
+
+**The item-create input shape is FLAT.** Writable fields sit at the root of the
+JSON object beside `sources`; a top-level `payload` wrapper is refused. That
+wrapper — not any tool defect — is what stopped the four D441 item creations on
+2026-08-13.

@@ -27,6 +27,51 @@ class FakeResponse:
 
 
 class ZohoToolTests(unittest.TestCase):
+    @staticmethod
+    def quote_evidence(payload, summary):
+        customer_id = str(payload["customer_id"])
+        items = {
+            str(line["item_id"]): {
+                "item_id": str(line["item_id"]),
+                "name": f"Item {line['item_id']}",
+                "sku": "TEST-SKU",
+                "status": "active",
+            }
+            for line in payload["line_items"]
+        }
+        tax_ids = {
+            str(line.get("tax_id") or "") for line in payload["line_items"]
+            if line.get("tax_id")
+        }
+        taxes = {
+            tax_id: {
+                "tax_id": tax_id,
+                "tax_name": "Gst & Qst",
+                "tax_percentage": 14.975,
+                "tax_type": "tax",
+                "status": "active",
+            }
+            for tax_id in tax_ids
+        }
+        customer = {
+            "customer_id": customer_id,
+            "customer_name": (
+                "Troy Dualam Services Inc."
+                if customer_id == draft.TDS_CUSTOMER_ID
+                else f"Customer {customer_id}"
+            ),
+            "status": "active",
+            "contact_type": "customer",
+            "currency_code": "CAD",
+            "currency_id": "9988",
+        }
+        return {
+            "customer": customer,
+            "items": items,
+            "taxes": taxes,
+            "totals": draft.quote_totals(payload, summary, taxes),
+        }
+
     def test_scopes_are_read_or_exactly_commissioned_writes(self) -> None:
         tool.validate_scopes(tool.SCOPES)
         self.assertEqual(
@@ -55,6 +100,11 @@ class ZohoToolTests(unittest.TestCase):
                 # internal quote number instead of the customer's own PO. One
                 # field, reference_number, one record per approved plan.
                 "ZohoBooks.salesorders.UPDATE",
+                # Commissioned 2026-08-13 for zoho_purchase_order_tool.py only:
+                # create ONE new Purchase Order in exactly Draft status so
+                # Rachad can review and send it himself. The exact-set assertion
+                # is EXTENDED, not relaxed, so any further scope still fails.
+                "ZohoBooks.purchaseorders.CREATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
                 # Commissioned 2026-08-11 for zoho_backing_ring_stock_tool.py
@@ -82,6 +132,20 @@ class ZohoToolTests(unittest.TestCase):
             "ZohoInventory.salesorders.UPDATE",
             "ZohoInventory.salesorders.DELETE",
             "ZohoInventory.salesorders.ALL",
+            # The 2026-08-13 draft-PO commission gained CREATE and nothing else:
+            # a purchase order still cannot be updated, deleted, voided,
+            # cancelled, submitted, approved, received, billed, paid or mailed,
+            # and no Inventory purchase-order write scope exists at all.
+            "ZohoBooks.purchaseorders.UPDATE",
+            "ZohoBooks.purchaseorders.DELETE",
+            "ZohoBooks.purchaseorders.ALL",
+            "ZohoInventory.purchaseorders.CREATE",
+            "ZohoInventory.purchaseorders.UPDATE",
+            "ZohoInventory.purchaseorders.DELETE",
+            "ZohoInventory.purchaseorders.ALL",
+            "ZohoInventory.purchasereceives.CREATE",
+            "ZohoBooks.bills.CREATE",
+            "ZohoBooks.vendorpayments.CREATE",
         ):
             self.assertNotIn(forbidden, tool.SCOPES)
         self.assertEqual(
@@ -131,6 +195,18 @@ class ZohoToolTests(unittest.TestCase):
             if "sales-order" in lowered:
                 self.assertIn("sales-order delete", lowered)
                 self.assertNotIn("sales-order update", lowered)
+            # Since 2026-08-13 purchase-order CREATE is commissioned, so this
+            # line must name purchase-order UPDATE/DELETE as what stays absent
+            # and must never claim purchase-order writes are absent outright.
+            if "purchase-order" in lowered:
+                self.assertIn("purchase-order update/delete", lowered)
+                self.assertNotIn("purchase-order create", lowered)
+        self.assertIn("ZohoBooks.purchaseorders.CREATE", tool.SCOPES)
+        purchase = [line for line in lines if "Books purchase-order writes:" in line]
+        self.assertEqual(len(purchase), 3, "connect, reauthorize and check each state this")
+        for line in purchase:
+            self.assertIn("DRAFT PURCHASE ORDER", line)
+            self.assertIn("NAMED TOOL ONLY", line)
         disclosed = [line for line in lines if "Books sales-order writes:" in line]
         self.assertEqual(len(disclosed), 3)
         for line in disclosed:
@@ -238,6 +314,8 @@ class ZohoToolTests(unittest.TestCase):
             )
             with patch.object(draft, "PLAN_DIR", temp_path / "plans"), patch.object(
                 draft.zoho_tool, "append_receipt"
+            ), patch.object(
+                draft, "stage_quote_live_evidence", side_effect=self.quote_evidence
             ):
                 draft.command_stage_quote(argparse.Namespace(input=str(input_path)))
             plans = list((temp_path / "plans").glob("*.json"))
@@ -282,6 +360,8 @@ class ZohoToolTests(unittest.TestCase):
             )
             with patch.object(draft, "PLAN_DIR", temp_path / "plans"), patch.object(
                 draft.zoho_tool, "append_receipt"
+            ), patch.object(
+                draft, "stage_quote_live_evidence", side_effect=self.quote_evidence
             ):
                 draft.command_stage_quote(argparse.Namespace(input=str(input_path)))
             plan_path = next((temp_path / "plans").glob("*.json"))

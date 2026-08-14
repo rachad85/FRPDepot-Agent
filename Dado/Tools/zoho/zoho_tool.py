@@ -12,6 +12,18 @@ rewrite the line discount of the two fixed draft estimates QT-000029 and
 QT-000030 from the numeric 10 Zoho read as CAD 10.00 into the string "10%".
 No scope here can send, mark, convert or delete an estimate.
 
+Estimates.UPDATE also carries the GENERAL in-place estimate revision Rachad
+commissioned on 2026-08-13 in that same named tool: ONE existing estimate that
+is exactly draft or sent, header reference/date/expiry/notes/terms and existing
+line quantity/rate/discount/description/tax only, one atomic PUT per approved
+plan. No scope here can send, mark, convert or delete an estimate.
+
+Purchase orders got exactly ONE new scope on 2026-08-13,
+ZohoBooks.purchaseorders.CREATE, for zoho_purchase_order_tool.py ONLY: create
+one NEW Purchase Order in exactly Draft status so Rachad can review and send it
+himself. No scope here can update, delete, void, cancel, submit, approve,
+mark-issued, receive, bill, pay, attach to or mail a purchase order.
+
 Invoices are NOT permanently unreachable: zoho_invoice_revision_tool.py may
 revise an EXISTING invoice's customer, reference number, dates, addresses,
 notes, terms and existing line values, and may create ONE new invoice in Draft
@@ -130,6 +142,14 @@ ALLOWED_WRITE_SCOPES = (
     # DELETE/ALL/fullaccess scope and nothing that can restatus, void, convert,
     # mail or delete an order.
     "ZohoBooks.salesorders.UPDATE",
+    # Commissioned 2026-08-13 for zoho_purchase_order_tool.py ONLY: create ONE
+    # NEW Books Purchase Order in exactly Draft status, ready for Rachad to
+    # review and send himself. Zoho's own numbering assigns the PO number. There
+    # is deliberately no purchase-order UPDATE, DELETE, ALL or fullaccess scope,
+    # no ZohoInventory purchase-order write scope, and no scope of any kind that
+    # could submit, approve, mark-issued, receive, bill, pay, attach, void,
+    # cancel, restatus or mail a purchase order.
+    "ZohoBooks.purchaseorders.CREATE",
     "ZohoInventory.items.CREATE",
     "ZohoInventory.items.UPDATE",
     # ONE fixed backing-ring merge through zoho_backing_ring_stock_tool.py ONLY:
@@ -404,12 +424,13 @@ def command_connect(_: argparse.Namespace) -> None:
     print("Zoho Books: CONNECTED AND VERIFIED")
     print("Zoho Inventory: CONNECTED AND VERIFIED RESTRICTED")
     print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION")
-    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
+    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS + THE GENERAL IN-PLACE REVISION OF ONE EXISTING DRAFT/SENT ESTIMATE THROUGH THE NAMED TOOL ONLY")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
     print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books purchase-order writes: ONE NEW DRAFT PURCHASE ORDER PER APPROVED PLAN THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, purchase-order UPDATE/DELETE, status/send/void/approval/payment/receive/bill/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_scope_list(args: argparse.Namespace) -> None:
@@ -475,7 +496,8 @@ def command_reauthorize(_: argparse.Namespace) -> None:
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
     print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books purchase-order writes: ONE NEW DRAFT PURCHASE ORDER PER APPROVED PLAN THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, purchase-order UPDATE/DELETE, status/send/void/approval/payment/receive/bill/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def command_check(_: argparse.Namespace) -> None:
@@ -523,12 +545,13 @@ def command_check(_: argparse.Namespace) -> None:
     for label, count in probe_results:
         print(f"{label}: VERIFIED ({count} sample row(s))")
     print("Books writes: CUSTOMER CREATE + DRAFT ESTIMATE CREATE + NAMED BANKING RECONCILIATION")
-    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS THROUGH THE NAMED TOOL ONLY")
+    print("Books estimate updates: THE TWO FIXED DRAFT DISCOUNT CORRECTIONS + THE GENERAL IN-PLACE REVISION OF ONE EXISTING DRAFT/SENT ESTIMATE THROUGH THE NAMED TOOL ONLY")
     print("Books invoice writes: DRAFT INVOICE CREATE + RESTRICTED EXISTING-INVOICE REVISION THROUGH THE NAMED TOOL ONLY")
     print("Inventory writes: ITEM CREATE + ITEM NAME/SKU UPDATE THROUGH NAMED TOOL ONLY")
     print("Books sales-order writes: THE ONE FIXED SCT PO26330 DRAFT SALES ORDER + ITS PO ATTACHMENT THROUGH THE NAMED TOOL ONLY")
     print("Books sales-order updates: THE SIX FIXED HISTORICAL CLIENT-PO REFERENCE REPAIRS THROUGH THE NAMED TOOL ONLY")
-    print("Estimate/invoice/sales-order DELETE, status/send/void/approval/payment/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
+    print("Books purchase-order writes: ONE NEW DRAFT PURCHASE ORDER PER APPROVED PLAN THROUGH THE NAMED TOOL ONLY")
+    print("Estimate/invoice/sales-order DELETE, purchase-order UPDATE/DELETE, status/send/void/approval/payment/receive/bill/convert and inventory-adjustment UPDATE/DELETE/approval scopes: ABSENT; ONE FIXED inventory-adjustment CREATE through the named backing-ring tool only")
 
 
 def build_parser() -> argparse.ArgumentParser:

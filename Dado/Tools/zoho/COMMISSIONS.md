@@ -1,4 +1,4 @@
-# Zoho commission records — FRP Depot (Dado)
+﻿# Zoho commission records — FRP Depot (Dado)
 
 Split out of `CLAUDE.md` on 2026-08-11. **Nothing here was edited** — these are the
 commission records verbatim as they stood in CLAUDE.md, de-indented only.
@@ -1000,3 +1000,253 @@ unchanged but were not written. Exactly six Zoho business writes, zero Sales Ord
 writes and zero emails. The plans are permanently replay-locked. Commit result:
 `Dado\20_Working\historical_client_po_six_invoice_commit_result_20260813.json`,
 SHA-256 `210dc268e7d069e462256dd19115ed7ce7df6863571f9fda4ff288718ddf013d`.
+
+---
+
+## 2026-08-13 -- GENERAL EXISTING-ESTIMATE REVISION + DRAFT PURCHASE ORDER CREATION
+### CURRENT REUSABLE BUILD: BUILD AND TESTS ONLY. ZERO Zoho business writes, ZERO emails, ZERO website writes and ZERO browser interactions from the implementation/tests. Two earlier SCT revision plans were staged and approved, but both commit commands refused before the PUT and before a replay lock; the live estimate remained unchanged. Those approvals are superseded and cannot authorize a later plan.
+
+Rachad's instruction, as recorded in the commissioning brief
+`Dado\20_Working\zoho_capability_repair_brief_20260813.md`: existing estimates must be
+REVISED IN PLACE rather than replaced for ordinary revisions; Dado must be able to create
+Draft Purchase Orders ready for him to review/send; item creation and web/non-web
+classification must work as previously commissioned.
+
+### 1. General existing-estimate revision -- `zoho_customer_quote_tool.py`
+
+Two new actions and no third: `stage-estimate-revision --input <json>` and
+`commit-estimate-revision --plan <absolute contained immutable plan> --approval APPROVED`.
+It lives inside the existing customer/quote tool because estimates already live there, and
+it reuses that module's ONE `send_estimate_put` transport, so the module still holds exactly
+one PUT, two POSTs and three `urlopen` call sites (a test asserts those counts).
+
+WHY IT EXISTS: on 2026-08-13 the only way Dado could change a quoted quantity was to create
+a REPLACEMENT estimate, which is what produced the unwanted plan
+`20260813T133339Z_quote_bff39a8d.json`. That plan was NOT used, NOT approved and NOT
+committed; it is left on disk unmodified as a record.
+
+THE CONTRACT, exactly:
+- ELIGIBILITY. Only a live estimate whose status is EXACTLY `draft` or `sent`. `accepted`,
+  `declined`, `invoiced`, `expired`, `void`, `deleted`, an empty status and any status this
+  build does not recognise are refused before any network call. The status is preserved and
+  NO status field appears in the PUT at all -- `status` is not in `REVISION_ALLOWED_PUT_KEYS`.
+- EDITABLE SURFACE. Header `reference_number`, `date`, `expiry_date`, `notes`, `terms`; per
+  EXISTING line `quantity`, `rate`, `discount`, `description`, `tax_id`. Nothing else.
+  Customer is preserved and cannot change (`customer_id` is refused as an uneditable field).
+- PRESERVED. Estimate number, customer ID, currency ID/code, exchange rate, template,
+  salesperson, shipping charge, adjustment (+ description), custom fields, attachments,
+  conversion/invoice links and every lifecycle and mail field. The control keys are resent
+  explicitly so a full-record PUT cannot drop them by omission.
+- LINES. Every live line is resent EXACTLY ONCE in LIVE ORDER with its own `line_item_id`
+  and `item_id`. No line may be added, deleted, omitted, reordered, substituted or
+  duplicated; the allowlist pins each line against the reviewed plan position by position.
+  A line with no `item_id` (a free-text line) refuses staging.
+- SOURCES. Every proposed value is `{"value": ..., "source": "..."}` with a NONBLANK source.
+  Unstated values are preserved. A blank header value is refused rather than clearing a field.
+- DISCOUNT SEMANTICS, the 2026-08-10 lesson kept intact. A caller may supply a percentage
+  STRING matching `PERCENT_DISCOUNT_RE` or the exact 0; every other numeric discount is
+  refused, because Zoho reads a bare number as a FLAT CAD amount. There is deliberately NO
+  strictly sourced flat-amount representation in this tool. When an UNTOUCHED live discount
+  is resent, the tool proves it is a percentage from the live `discount_amount` before
+  echoing it back as a string; a live bare number whose amount does not prove a percentage
+  refuses the whole revision FOR FREE at staging rather than guessing. A nonzero
+  entity-level header discount also refuses the whole revision.
+- ARITHMETIC. Independent Decimal ROUND_HALF_UP. Tax is computed per tax bucket on that
+  bucket's net and cross-checked against a per-line sum. A tax GROUP, an unknown tax row or
+  a disagreement between the two methods marks the prediction `disclosed_uncertain`, and
+  then `tax_total`/`total` are NOT asserted at read-back -- only the deterministic
+  `sub_total`, `discount_total`, each line's `item_total`, and the identity
+  `total == sub_total + tax_total`. That grand-total identity is itself only asserted when
+  shipping charge and adjustment are both zero; otherwise the plan says so. Nothing is
+  falsely asserted anywhere.
+  FOR THE PRESENT SCT CASE the approved target is exactly derivable: QT-000031
+  (`96274000001566055`, status `sent`), single line `96274000001566056` /
+  item `96274000000019583` FRP STUB FLANGE-1"/150PSI/D411 at CAD 50.40, quantity 2 -> 10,
+  and tax changes from live GST 5% (`96274000000035512`) to Ontario HST 13%
+  (`96274000000035516`). The target is sub_total CAD 504.00, tax CAD 65.52 and total
+  CAD 569.52. Rachad explicitly selected Ontario HST; the live GST record is the protected
+  starting state, not the target tax. A fresh staged schema-2 plan and his fresh approval are
+  still required before any PUT.
+- STAGE is read-only: one estimate GET plus one active-tax-list GET. It captures the whole
+  live record as `before_state` plus a protected projection whose ONLY exemptions are the
+  named header fields this plan changes, the named fields of the exact lines it changes,
+  and the figures Zoho recomputes. Every exemption is then asserted explicitly.
+- COMMIT validates the plan offline (hash over the whole plan, canonical re-projection from
+  the staged `before_state` + intent + pinned tax rows, 24-hour immutable lifetime, exact
+  risk disclosure), checks the byte-exact `APPROVED` BEFORE the vault/token/network,
+  re-reads the full live estimate and the active tax rows and refuses drift FOR FREE before
+  locking, locks immediately before ONE atomic PUT, attempts once, then verifies the PUT
+  response and a FRESH FULL GET: same estimate ID/number/customer/currency/status/discount
+  type, same line IDs, order and item IDs, the exact intended values, the computed totals,
+  and the byte-exact protected fingerprint. Any failure, timeout or indeterminate result
+  permanently locks the plan `indeterminate` with `no_retry: true`; there is no retry,
+  rollback or cleanup.
+- UNREACHABLE: send, email, accept, decline, convert, invoice, delete, void, status,
+  attachment, template, reminder and every bulk route; no generic endpoint/method/payload
+  route; no mail transport of any kind.
+- SCOPE: reuses the already prepared and LIVE `ZohoBooks.estimates.UPDATE`. Nothing wider.
+- The two fixed TDS correction actions and the fixed SHM customer action are BYTE-IDENTICAL
+  and remain permanently replay-locked.
+
+### Permanent concise quote approval system -- `zoho_customer_quote_tool.py`
+
+The reusable engine remains permanent; every concrete create/revision still stages a fresh,
+immutable 24-hour plan from current live state. The complete payload, source map, live GET
+evidence, arithmetic and protected projections remain in that internal JSON. The user-facing
+stage output is ONE concise card only:
+- deterministic card ID (`QC-<12 hash chars>` for a new Draft estimate,
+  `QR-<12 hash chars>` for an in-place revision), operation, exact method/route/write count,
+  customer, document/reference, customer currency, concise lines, subtotal/tax/total, risks,
+  expiry, full plan SHA-256 and the exact one-word `APPROVED` instruction;
+- the card is canonically regenerated from the actual immutable payload and live evidence;
+  changing the payload, summary, operation, scope, card, hash or live business state refuses;
+- bare `APPROVED` is accepted only when this is the sole active, unexpired card. A newer card
+  supersedes the older one; an expired, consumed, attempted or replayed card refuses;
+- explicit batches are permitted only when every included operation, consequence and full
+  plan hash is enumerated; approval never expands from quote/revision to email or lifecycle;
+- new Draft estimate staging is GET-only over the existing active customer, active linked
+  items and active taxes. Caller currency/exchange-rate overrides are refused: the live
+  customer currency is preserved. Commit repeats those reads before locking and refuses free
+  on any customer/item/tax/currency/total drift;
+- create locks before its ONE POST. Any timeout, malformed result or indeterminate outcome is
+  permanently `no_retry`; success is followed by a fresh full GET proving Draft status,
+  customer, reference, currency, lines, discounts, taxes and totals. No send/status/mail route
+  exists;
+- in-place revision preserves estimate ID/number/customer/currency/status and every untouched
+  business field. Its fresh projection comparison excludes exactly one proven per-GET telemetry
+  field, `estimate_url`; raw immutable evidence is retained in the plan and every business
+  field remains compared. This repairs the two SCT false refusals without weakening drift
+  protection. Revision schema 2 invalidates the earlier schema-1 approvals.
+
+Focused permanent-card/revision verification: 177 tests passed, zero failures, using temporary
+plans and mocked/blocked transports only. It includes the real SCT QT-000031 identity and
+quantity 2 -> 10 / Ontario HST 13% projection, re-signed payload/card tampering, sole-active-card
+ambiguity, exact approval, expiry, live drift before lock, lock-before-POST, timeout/no-retry,
+fresh Draft read-back and replay refusal. Full Zoho suite: 1,519 tests passed with 4 expected
+environment skips and zero failures in 56.701 seconds (job `20260813T162237-2899d0`, exit 0).
+The suite used temporary plans and mocked/blocked business transports; it made zero live Zoho
+business writes, zero emails, zero website writes and zero browser actions.
+
+### 2. Draft Purchase Order creation -- `Dado\Tools\zoho\zoho_purchase_order_tool.py` (NEW)
+
+Two commands and no third: `stage-create --input <closed-schema JSON>` and
+`commit --plan <absolute contained immutable plan> --approval APPROVED`. Tool version
+1.0.0 / schema 1; a plan whose recorded `tool_version` is not the running build fails closed.
+
+THE COMPLETE WRITE SURFACE is one verb and one route: `POST /books/v3/purchaseorders`,
+creating ONE NEW purchase order in exactly Draft status. There is no PUT, PATCH or DELETE
+anywhere in the module (an AST test proves the single `Request` is a POST and that there is
+exactly one `urlopen` call site), no route that could submit, approve, mark-issued, receive,
+bill, pay, void, cancel, restatus, convert, attach to, template or MAIL a purchase order, no
+browser path, no Graph/Outlook/SMTP and no mail transport.
+
+*** THE WRITABLE FIELD SET IS PROVEN FROM LIVE RECORDS, NOT INVENTED. *** On 2026-08-13
+every purchase order in the FRP Depot organization was read read-only -- complete
+pagination, six records, all vendor JRAIN FRP LIMITED. `delivery_date` carries a real value
+on PO-00001-R2 (2026-02-28) and PO-00002-R1 (2026-01-15) while `expected_delivery_date` is
+EMPTY on all six, so `delivery_date` is the delivery key this tool sets and
+`expected_delivery_date` is refused by name. The same read proved `reference_number`
+(`TDI PO#5046`, `TDI PO#5011`), `ship_via` (`Sea Shipping`), `notes`
+(`Replacing TDI PO#5011`), `contact_persons`, and the line keys `item_id`, `name`,
+`description`, `quantity`, `rate`, `unit`, `tax_id`.
+STATED BLOCKERS RATHER THAN GUESSES:
+- `terms` and line `description` are returned keys that NO live FRP Depot purchase order
+  populates, so Zoho's acceptance of them on create is UNPROVEN. They are accepted because
+  Rachad commissioned them, every plan says they are unproven, and the read-back is strict --
+  a value Zoho silently ignores locks the plan `indeterminate` instead of being reported as
+  landed. A test drives exactly that case.
+- There is NO vendor-owned ADDRESS id in the proven contract (`delivery_org_address_id` is
+  an ORGANIZATION address, not a vendor one), so no address field is writable at all and
+  `delivery_org_address_id` / `billing_address_id` are refused by name.
+- Shipment preference is `ship_via` free text only; `ship_via_id` is not reachable.
+
+REST OF THE CONTRACT:
+- STAGE IS GET-ONLY over five bounded, allowlisted read routes and nothing else:
+  `/books/v3/purchaseorders` (list), `/books/v3/purchaseorders/{id}`,
+  `/books/v3/contacts/{id}`, `/books/v3/items/{id}`, `/books/v3/settings/taxes`.
+- VENDOR must ALREADY EXIST, be `status: active` and carry `contact_type: vendor`, and its
+  live name must match the stated name. A CUSTOMER record is never treated as a vendor by
+  inference. No vendor, item or tax can be created anywhere in the module.
+- LINES must each name an EXISTING ACTIVE Zoho item; there is no free-text or unlinked line
+  and no line `name` input field at all (the name comes from the live item).
+- CURRENCY: the vendor's own live currency is preserved and `currency_id`, `currency_code`
+  and `exchange_rate` are refused by name; the created order's currency is verified against
+  the vendor's.
+- AUTO-NUMBERING: `purchaseorder_number` is refused by name with that exact explanation, and
+  the number Zoho assigns is read back and recorded.
+- ARITHMETIC: Decimal ROUND_HALF_UP per line, tax per bucket cross-checked against a
+  per-line sum, with the same `disclosed_uncertain` discipline as the estimate revision. A
+  purchase-order discount is deliberately NOT supported (`discount_supported: false`).
+- DUPLICATE PREFLIGHT: bounded COMPLETE pagination proven by Zoho's own
+  `page_context.has_more_page` and its echoed page number; a missing or non-boolean
+  `has_more_page`, a missing page context, a wrong page number, an unreadable list or any
+  ceiling (200 pages / 40,000 rows) is a REFUSAL, never a partial scan reported clean. It
+  refuses a non-void purchase order for the SAME vendor whose `reference_number` matches
+  after conservative normalization (case and whitespace only -- punctuation is deliberately
+  NOT stripped, so `J26-403` and `J26403` do not collide). Cancelled/void/deleted orders do
+  not block. A matching TOTAL is NEVER treated as a duplicate. The whole walk is repeated
+  FRESH immediately before the write.
+- COMMIT: byte-exact `APPROVED` before the vault/token/network; immutable 24-hour plan with
+  a full-plan hash and a canonical re-projection; a fresh full preflight whose vendor, items,
+  tax rows, lines, totals and payload must all still match the reviewed plan; ONE exclusive
+  plan lock immediately before ONE POST; no retry; then a fresh full GET by the returned new
+  ID. Verification proves status is EXACTLY `draft` (every non-draft state is named and
+  refused), `is_emailed` is false, nothing is submitted/approved/billed/received, the vendor,
+  currency, every header value, every line item/quantity/rate/tax and every total match, and
+  the grand total is its own sub-total plus tax. Any failure, timeout or indeterminate
+  result permanently locks with `no_retry: true` and NO cleanup, delete, void, cancel or
+  rollback -- a created draft REMAINS, and every plan says so before Rachad approves it.
+- SCOPE: exactly one new prepared scope, `ZohoBooks.purchaseorders.CREATE`, added to
+  `zoho_tool.py` with a comment naming this tool.
+  `ZohoBooks.purchaseorders.UPDATE/DELETE/ALL`, every `ZohoInventory.purchaseorders.*`
+  write, `ZohoInventory.purchasereceives.CREATE`, `ZohoBooks.bills.CREATE`,
+  `ZohoBooks.vendorpayments.CREATE` and every fullaccess scope are ABSENT and asserted
+  absent. The tool additionally REFUSES TO RUN AT ALL -- at stage and at commit, before any
+  write -- if the saved connection holds one of those widening scopes, and refuses with the
+  exact reauthorization steps if it lacks CREATE. The three connector status lines were
+  updated accurately.
+- *** OPEN BLOCKER, RACHAD'S CALL: `ZohoBooks.purchaseorders.CREATE` IS NOT LIVE YET. *** The
+  saved connection held 54 scopes on 2026-08-13 and this was not among them, so
+  `stage-create` refuses today with the reauthorization steps. Nothing that worked before is
+  blocked by this.
+
+### 3. Item creation and catalog classification -- diagnosed, not widened
+
+`zoho_inventory_item_tool.py` was NEVER broken; it created eight backing-ring items on
+2026-08-12. The 2026-08-13 D441 failure was the INPUT SHAPE: the four generated inputs
+wrapped every writable field in a top-level `payload` object, so the closed schema saw one
+unknown field and refused with the unhelpful message
+`Unsupported create-item field(s): payload`. `prepare_d441_working_artifacts.py` had already
+been patched to emit root-level fields plus `sources`.
+FIXED HERE (the small defect that caused the misunderstanding, nothing widened):
+- the refusal now names the wrapper explicitly, says the shape is FLAT with fields at the
+  ROOT beside `sources`, and lists every writable field; and
+- the module docstring now states outright that item creation NEVER publishes to the website
+  and NEVER sets a Catalog Classification.
+PROVEN BY TEST: the wrapped shape is refused (and so is any other wrapper name); the
+flattened shape is accepted entirely OFFLINE, opening no vault and issuing no call; the four
+real generated D441 inputs are flat, carry a source per field and name no forbidden field;
+`custom_fields` remains in `FORBIDDEN_CREATE_FIELDS`, so a classification cannot ride along
+with a create; the module contains no WooCommerce/WordPress/storefront/CDP route in its
+executable surface; and its single transport reaches only the fixed Zoho Inventory item and
+item-group routes.
+CLASSIFICATION VALUES, confirmed exact and unchanged:
+`Website Catalog`, `Custom / Customer-Specific`, `Review / Unclassified`. THERE IS NO
+LITERAL `Non Website` VALUE anywhere. **`Custom / Customer-Specific` is the commissioned
+non-web classification for the D441 customer-specific items.** No dropdown option was
+renamed or created and no live item was classified in this build. Classification stays a
+SEPARATE post-create plan because `ITEM_PATH_RE` requires a positive item ID, which only
+exists after creation.
+
+### Verification for this build
+`python -m py_compile` clean on all four changed modules and all five changed/added test
+files. Focused: 92 estimate-revision + 92 draft-purchase-order + 19 D441/classification + 15
+connector = 218. Full Zoho suite: 1,504 tests, all passing, 4 pre-existing environment skips
+(2 missing cached workbook, 2 symlink privilege). Three pre-existing exact-set tests were
+EXTENDED, never relaxed -- the parser-action set in
+`test_zoho_quote_item9_quantity_correction.py`, and the write-scope set plus the status-line
+narration in `test_zoho_tool.py` -- so a thirteenth action or an unlisted scope still fails.
+Build result: `Dado\20_Working\zoho_capability_repair_build_result_20260813.json`.
+Disclosed rather than reported as zero calls: the read-only contract rehearsals and
+`refresh_access_token`'s POST to the Zoho accounts token endpoint, which is credential
+refresh for an authenticated read and changes no business record.

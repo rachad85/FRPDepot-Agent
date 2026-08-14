@@ -1564,6 +1564,10 @@ class SourceContainmentTests(unittest.TestCase):
                 "stage-tds-item9-quantity-correction", "commit-tds-item9-quantity-correction",
                 # Commissioned 2026-08-12: the ONE fixed SHM customer.
                 "stage-shm-inv000051-customer", "commit-shm-inv000051-customer",
+                # Commissioned 2026-08-13: the one GENERAL in-place estimate
+                # revision. The exact-set assertion is EXTENDED, not relaxed, so
+                # a thirteenth action still fails this test.
+                "stage-estimate-revision", "commit-estimate-revision",
             },
         )
         item9 = {c for c in choices if "item9" in c}
