@@ -5,15 +5,16 @@ Commissioned by Rachad Homsi on 2026-08-09. Commissioning authorises building an
 testing this tool. It is NOT approval of any site change: every write still needs
 Rachad's own one-word APPROVED against one exact staged plan.
 
-SCOPE -- ONE PLUGIN, FOUR WRITE ROUTES, NOTHING ELSE.
+SCOPE -- ONE PLUGIN, FIVE WRITE ROUTES, NOTHING ELSE.
 
     plugin_replace      Upload Plugin -> replace the installed copy, leave INACTIVE
     plugin_activate     Plugins row -> Activate, then anonymous public validation
     plugin_deactivate   Plugins row -> Deactivate, stays installed
-    plugin_ups_repair   Active 2.0.4 -> exact frozen 2.0.5 hidden-panel CSS repair
+    plugin_fnpt_display_repair   Active 2.0.6 -> exact frozen 2.0.7 presentation repair
+    plugin_freight_contact_preserve_repair   Active 2.0.7 -> exact frozen 2.0.8 repair
 
-The plugin identity, the site origin, the artifact path, the artifact version and
-the artifact SHA-256 are all hard-coded constants. A caller supplies no URL, no
+The plugin identity, site origin, and each commissioned route's exact artifact
+path, version and SHA-256 are hard-coded constants. A caller supplies no URL, no
 path, no slug, no ZIP, no PHP, no selector and no free-form action, so no other
 plugin, file or page can be reached through this tool.
 
@@ -123,7 +124,7 @@ import secrets
 import sys
 import time
 from typing import Any, Callable, Iterator
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlencode, urljoin, urlsplit
 import zipfile
 
 # One writer at a time on the shared authenticated WordPress window. Added
@@ -155,8 +156,8 @@ def holds_wordpress_browser(purpose: str):
     return decorate
 
 TOOL_NAME = "FRP Depot WordPress Plugin Deployment Tool"
-TOOL_VERSION = "1.4.0"
-SCHEMA_VERSION = 5
+TOOL_VERSION = "1.9.0"
+SCHEMA_VERSION = 10
 PREFLIGHT_SCHEMA_VERSION = 2
 
 ROOT = Path(r"C:\FRPDepot")
@@ -192,48 +193,88 @@ ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/ups-allowlist.json",
 )
 
-# Fixed active-plugin UPS repair commissioned by Rachad's "Fix UPS" / "RESUME UPS"
-# instructions on 2026-08-13/14. The artifact is frozen from the exact deployed
-# 2.0.4 ZIP and changes only two version tokens, the disclosed readme and the
-# exact one-rule CSS fix. The 64-variation allowlist remains byte-identical.
-# It is deliberately a separate action:
-# the older inactive 1.0.0 -> 1.0.1 deployment routes remain scoped as before.
-UPS_REPAIR_ARTIFACT_PATH = (
-    ROOT / "Dado" / "20_Working" / "ups_repair_2_0_5"
-    / "frpdepot-freight-checkout-guard-2.0.5.zip"
+# Fixed active-plugin FNPT presentation correction commissioned by Rachad on
+# 2026-08-14. The artifact is an exact narrow transform of the active 2.0.6 ZIP:
+# version/disclosure metadata, one plugin-owned native-button concealment class
+# added in freight/fail-closed render and removed on restore, and one exact CSS
+# rule for that class. The allowlist, server cart/checkout safeguards, quote form
+# and transaction remain unchanged.
+FNPT_REPAIR_ARTIFACT_PATH = (
+    ROOT / "Dado" / "20_Working" / "fnpt_display_repair_2_0_7"
+    / "frpdepot-freight-checkout-guard-2.0.7.zip"
 )
-UPS_REPAIR_VERSION = "2.0.5"
-UPS_REPAIR_FROM_VERSION = "2.0.4"
-UPS_REPAIR_SHA256 = "0955d21163c5cc96f5f9eea7e71935807f8433450904ac2f815baa8d6cbe8d10"
-UPS_REPAIR_ALLOWLIST_SHA256 = "a8051de3e7c99a3d8285c3199f1f0a32bb525ff8ca3dac56acbf7132f8e154a8"
-UPS_REPAIR_BASELINE_PATH = (
-    ROOT / "Dado" / "20_Working" / "ups_repair_2_0_5"
-    / "frpdepot-freight-checkout-guard-2.0.4.zip"
+FNPT_REPAIR_VERSION = "2.0.7"
+FNPT_REPAIR_FROM_VERSION = "2.0.6"
+FNPT_REPAIR_SHA256 = "8490974d64d23407384208785e56f4205fc4acac8657c7d677bca2ab7330613f"
+FNPT_REPAIR_BYTES = 28586
+FNPT_REPAIR_ALLOWLIST_SHA256 = "a8051de3e7c99a3d8285c3199f1f0a32bb525ff8ca3dac56acbf7132f8e154a8"
+FNPT_REPAIR_BASELINE_PATH = (
+    ROOT / "Dado" / "20_Working" / "fnpt_display_repair_2_0_6"
+    / "frpdepot-freight-checkout-guard-2.0.6.zip"
 )
-UPS_REPAIR_BASELINE_SHA256 = "9f4d1917b99a1a75de8a2549375e8e262cdbb3bd2353bc09560636821f1e4f75"
-UPS_REPAIR_MEASUREMENT_STATUS = (
+FNPT_REPAIR_BASELINE_SHA256 = "2b21cf9e9a4455458fc1d35a0d5a23d8da3692bc44fe58314fafa06a9e8afef0"
+FNPT_REPAIR_MEASUREMENT_STATUS = (
     "RESEARCH-BASED ESTIMATE - NOT PHYSICALLY VERIFIED - NOT UPS APPROVED"
 )
-UPS_REPAIR_MEMBERS = (
+FNPT_REPAIR_MEMBERS = (
     f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css",
     f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js",
     f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php",
     f"{PLUGIN_SLUG}/readme.txt",
     f"{PLUGIN_SLUG}/ups-allowlist.json",
 )
-UPS_REPAIR_CSS_SUFFIX = (
-    "\n/* The active theme gives section elements display:block even when hidden. */\n"
-    ".frpdepot-fqj-product[hidden] {\n"
-    "\tdisplay: none !important;\n"
-    "}\n"
-).encode("utf-8")
+FNPT_REPAIR_MEMBER_SHA256 = {
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css":
+        "93fd319ef5bb91e6fdffd1b62a33f3647684f307d3272f86f2a6875355790c15",
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js":
+        "43dddd42314f9ea4f4a53b33f78ab25f255f3548a9b956acbc07b98ae761f663",
+    f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php":
+        "5ad8574db1bfa58d4a38488fe1b9fe8d92f594808e94a9620a888126438a7acd",
+    f"{PLUGIN_SLUG}/readme.txt":
+        "89e44482639b6be768a17ea5d560bf38ad85676872f0265df18fb656e2341739",
+    f"{PLUGIN_SLUG}/ups-allowlist.json":
+        "a8051de3e7c99a3d8285c3199f1f0a32bb525ff8ca3dac56acbf7132f8e154a8",
+}
+
+# Fixed active-plugin Contact preservation repair. 2.0.8 changes only the exact
+# PHP/readme contract needed to accept the already-correct strong-formatted
+# Contact sentence without writing Contact page 469. The source ZIP is the exact
+# currently active 2.0.7 artifact pinned above; aliases are intentional so the
+# baseline cannot silently diverge from the FNPT constants that established it.
+CONTACT_PRESERVE_ARTIFACT_PATH = (
+    ROOT / "Dado" / "20_Working" / "freight_quote_contact_preserve_2_0_8"
+    / "frpdepot-freight-checkout-guard-2.0.8.zip"
+)
+CONTACT_PRESERVE_VERSION = "2.0.8"
+CONTACT_PRESERVE_FROM_VERSION = FNPT_REPAIR_VERSION
+CONTACT_PRESERVE_SHA256 = "f2b74b5e935f8f953297b94eef8408173f74366092e7fe99657994b527bc15f5"
+CONTACT_PRESERVE_BYTES = 29735
+CONTACT_PRESERVE_MEMBERS = FNPT_REPAIR_MEMBERS
+CONTACT_PRESERVE_MEMBER_SHA256 = {
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css":
+        "93fd319ef5bb91e6fdffd1b62a33f3647684f307d3272f86f2a6875355790c15",
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js":
+        "43dddd42314f9ea4f4a53b33f78ab25f255f3548a9b956acbc07b98ae761f663",
+    f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php":
+        "dbe9688810266c63dce71a6077b9489b8ee9cbf70918c97a8aff1d353344c1cd",
+    f"{PLUGIN_SLUG}/readme.txt":
+        "b156a215e95fcfea05f12194a4dc4a052ad2cc581a04ea0e7349443c50221311",
+    f"{PLUGIN_SLUG}/ups-allowlist.json":
+        "a8051de3e7c99a3d8285c3199f1f0a32bb525ff8ca3dac56acbf7132f8e154a8",
+}
+CONTACT_PRESERVE_BASELINE_PATH = FNPT_REPAIR_ARTIFACT_PATH
+CONTACT_PRESERVE_BASELINE_SHA256 = FNPT_REPAIR_SHA256
+CONTACT_PRESERVE_BASELINE_BYTES = FNPT_REPAIR_BYTES
+CONTACT_PRESERVE_BASELINE_MEMBERS = FNPT_REPAIR_MEMBERS
+CONTACT_PRESERVE_BASELINE_MEMBER_SHA256 = FNPT_REPAIR_MEMBER_SHA256
 
 # Permanently refused. Withdrawn after the 2026-08-09 production failure.
 WITHDRAWN_VERSION = "1.0.0"
 WITHDRAWN_SHA256 = "4d8396d95baf0907754730e578ad4c41b98908f77992718c41b293434e07fe25"
 
-# The only version this tool may ever put on the site, and the only version it
-# may ever activate.
+# The only version the legacy replace/activate/deactivate routes may put on the
+# site or activate. The later named active-to-active repair routes pin their own
+# exact source and target versions independently above.
 REPLACE_FROM_VERSION = WITHDRAWN_VERSION
 REPLACE_TO_VERSION = ARTIFACT_VERSION
 
@@ -246,13 +287,122 @@ ALLOWED_ADMIN_PATHS = frozenset({
     "/wp-admin/plugins.php",
     "/wp-admin/plugin-install.php",
     "/wp-admin/update.php",
+    "/wp-admin/plugin-editor.php",
+    "/wp-admin/tools.php",
+    "/wp-admin/admin.php",
 })
+# WordPress core's fixed replace-current destination. Query values are checked
+# in memory only; nonce/package values are never logged, planned or returned.
+OVERWRITE_QUERY_KEYS = frozenset({"action", "overwrite", "package", "_wpnonce"})
+OVERWRITE_SUCCESS_MARKER = "Plugin updated successfully."
+PLUGIN_EDITOR_TEXTAREA_SELECTOR = "textarea#newcontent"
+FREIGHT_STATUS_URL = (
+    f"{EXACT_ORIGIN}/wp-admin/tools.php?page=frpdepot-freight-quote-journey"
+)
+FREIGHT_STATUS_SELECTOR = "#frpdepot-fqj-status"
+SOURCE_CONTACT_FORM_ID = 1
+SOURCE_CONTACT_FORM_EDITOR_URL = (
+    f"{EXACT_ORIGIN}/wp-admin/admin.php?page=gf_edit_forms&id={SOURCE_CONTACT_FORM_ID}"
+    "&view=settings&subview=notification"
+)
+SOURCE_CONTACT_NOTIFICATION_NAME = "Admin Notification"
+SOURCE_CONTACT_NOTIFICATION_LINK_SELECTOR = 'a[href*="subview=notification"]'
+PLUGIN_EDITOR_URL_BY_MEMBER = {
+    member: f"{EXACT_ORIGIN}/wp-admin/plugin-editor.php?" + urlencode({
+        "file": member,
+        "plugin": PLUGIN_FILE,
+    })
+    for member in CONTACT_PRESERVE_MEMBERS
+}
 
 HOME_URL = f"{EXACT_ORIGIN}/"
 PRODUCT_URL = f"{EXACT_ORIGIN}/product/frp-fw-pipe/"
 CART_URL = f"{EXACT_ORIGIN}/cart/"
 CHECKOUT_URL = f"{EXACT_ORIGIN}/checkout/"
 ALLOWED_PUBLIC_PATHS = frozenset({"/", "/product/frp-fw-pipe/", "/cart/", "/checkout/"})
+
+CONTACT_URL = f"{EXACT_ORIGIN}/contact/"
+REQUEST_QUOTE_URL = f"{EXACT_ORIGIN}/request-a-quote/"
+CONTACT_READ_ONLY_URLS = frozenset({CONTACT_URL, REQUEST_QUOTE_URL})
+CONTACT_READ_ONLY_PATHS = frozenset({"/contact/", "/request-a-quote/"})
+CONTACT_TARGET_STRONG_TEXT = "Request a Freight Quote"
+CONTACT_TARGET_SENTENCE = (
+    "Product selections approved for direct shipping can be purchased online. "
+    "Selections requiring packing or freight review will show Request a Freight Quote. "
+    "Submitting a quote request does not place an order or authorize payment."
+)
+CONTACT_OLD_SENTENCE = (
+    "If your item is listed in the Products section, you can add it to cart; otherwise "
+    "use the contact form for custom or non-standard requests."
+)
+FREIGHT_SPEC_SHA256 = "5348ef3f357676f5629cf72696fd3fe0be718a3847854974f20cf28cc7047400"
+FREIGHT_CONTACT_ID = 469
+FREIGHT_PRIVACY_STATUS = {
+    "recipient_values_projected": False,
+    "customer_values_projected": False,
+    "artifact_content_projected": False,
+    "route_hash_only": True,
+}
+FREIGHT_BACKUP_STATUS_KEYS = (
+    "form_backup_present", "quote_page_backup_present",
+    "contact_backup_present", "route_backup_present",
+)
+FREIGHT_STATUS_KEYS = frozenset({
+    "spec_sha256", "status", "deployment_id", "source_form_id",
+    "source_notification_name_match", "route_sha256", "form_id", "form_owned",
+    "form_sha256", "page_id", "page_owned", "page_sha256", "contact_id",
+    "contact_new_count", "contact_old_count", "contact_sha256",
+    *FREIGHT_BACKUP_STATUS_KEYS, "receipt_count", "receipt_schema_valid",
+    "receipt_chain_valid", "receipt_append_only", "receipt_head_sha256",
+    "apply_receipt_head_sha256", "rollback_drift_free", "rollback_blocked_artifact",
+    "form_before_sha256", "quote_page_before_sha256", "contact_before_sha256",
+    "privacy",
+})
+HEX_SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+# Fixed customer pages used by the active 2.0.6 -> 2.0.7 FNPT presentation correction. The
+# approved command may open exactly two throwaway contexts. Context one starts
+# from a unique fixed-shape cache-busting FNPT URL and context two starts from
+# the canonical bare FNPT URL. Each context checks the exact FNPT, Stub and Pipe
+# matrix. No cart,
+# checkout, quote/contact page or admin path is in this allowlist.
+FNPT_PRODUCT_URL = f"{EXACT_ORIGIN}/product/fnpt-coupling-threaded-on-both-ends/"
+STUB_PRODUCT_URL = f"{EXACT_ORIGIN}/product/frp-stub-flange/"
+PIPE_PRODUCT_URL = PRODUCT_URL
+FNPT_CACHE_BUSTER_KEY = "frpdepot_fnpt_verify"
+FNPT_PUBLIC_PATHS = frozenset({
+    "/product/fnpt-coupling-threaded-on-both-ends/",
+    "/product/frp-stub-flange/",
+    "/product/frp-fw-pipe/",
+})
+FNPT_STATIC_PATH_PREFIXES = ("/wp-content/", "/wp-includes/")
+
+# Exact live published FNPT IDs established by the read-only WooCommerce and
+# public-page evidence. Four historical draft/private children are deliberately
+# absent; broadening or shrinking this tuple makes staging and commit fail closed.
+FNPT_PUBLISHED_VARIATION_IDS = (
+    2062, 2063, 2064, 2065, 2066, 2067, 2068, 2069,
+    2070, 2071, 2072, 2073, 2074, 2075, 2076, 2077,
+    2078, 2079, 2080, 2081, 2082, 2083, 2084, 2085,
+    2086, 2087, 2088, 2089, 2090, 2091, 2092, 2093,
+    2155, 2156, 2157, 2158, 2159, 2160, 2161, 2162,
+    2167, 2168, 2169, 2170, 2171, 2172, 2173, 2174,
+    2175, 2176, 2177, 2178, 2179, 2180, 2181, 2182,
+    2183, 2184, 2185, 2186,
+)
+FNPT_PUBLIC_CONTROL_IDS = (2028, 2044, 2057, 2088)
+FNPT_JS_PATH = (
+    f"/wp-content/plugins/{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+)
+FNPT_CSS_PATH = (
+    f"/wp-content/plugins/{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+)
+FNPT_JS_SHA256 = FNPT_REPAIR_MEMBER_SHA256[
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+]
+FNPT_CSS_SHA256 = FNPT_REPAIR_MEMBER_SHA256[
+    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+]
 
 # The preflight rehearsal is read-only and must never reach a cart or a checkout,
 # so it gets a STRICTLY NARROWER allowlist than the post-activation validation.
@@ -293,7 +443,10 @@ FATAL_MARKERS = (
 )
 MIN_RENDERED_TEXT = 40  # Below this a storefront page is treated as blank.
 
-ACTIONS = ("plugin_replace", "plugin_activate", "plugin_deactivate", "plugin_ups_repair")
+ACTIONS = (
+    "plugin_replace", "plugin_activate", "plugin_deactivate",
+    "plugin_fnpt_display_repair", "plugin_freight_contact_preserve_repair",
+)
 
 
 def _select_step(label: str) -> str:
@@ -354,6 +507,70 @@ STEP_BY_FAILURE_REASON = {
     "checkout_form_available": "checkout_assertions",
     "payment_form_available": "checkout_assertions",
 }
+
+# The FNPT replacement has its own closed post-write vocabulary. These are the
+# only step/code values that may reach its permanent lock/result after an upload;
+# no exception text, URL, HTML, selector value or customer-facing copy is kept.
+FNPT_PUBLIC_VALIDATION_STEPS = (
+    "cache_buster_fnpt_load",
+    "cache_buster_fnpt_contract",
+    "cache_buster_fnpt_variations",
+    "cache_buster_fail_closed_cases",
+    "cache_buster_stub_controls",
+    "cache_buster_pipe_control",
+    "cache_buster_page_errors",
+    "canonical_fnpt_load",
+    "canonical_fnpt_contract",
+    "canonical_fnpt_variations",
+    "canonical_page_errors",
+    "anonymous_network_guard",
+)
+FNPT_PUBLIC_VALIDATION_CODES = frozenset({
+    "unexpected_exception",
+    "page_status",
+    "page_url",
+    "page_blank",
+    "page_fatal",
+    "page_error",
+    "page_error_unclassified",
+    "page_error_guard_attribution",
+    "page_error_guard_repeated",
+    "form_missing",
+    "form_ambiguous",
+    "parent_identity",
+    "variation_dataset_missing",
+    "variation_dataset_malformed",
+    "variation_dataset_ids",
+    "variation_dataset_identity",
+    "variation_dataset_attributes",
+    "panel_count",
+    "asset_count",
+    "asset_version",
+    "asset_response",
+    "asset_hash",
+    "config_missing",
+    "config_shape",
+    "selection_control",
+    "selection_timeout",
+    "selection_identity",
+    "freight_state",
+    "direct_state",
+    "quote_handoff",
+    "stale_state",
+    "context_count",
+    "network_guard",
+})
+
+FNPT_PANEL_SELECTOR = ".frpdepot-fqj-product"
+FNPT_QUOTE_BUTTON_SELECTOR = ".frpdepot-fqj-product-button"
+FNPT_VARIATION_SELECT_SELECTOR = '.variations select[name^="attribute_"]'
+FNPT_RESET_SELECTOR = ".reset_variations"
+FNPT_QUANTITY_SELECTOR = "input.qty"
+FNPT_SCRIPT_SELECTOR = "script[src]"
+FNPT_STYLE_SELECTOR = 'link[rel="stylesheet"][href]'
+FNPT_NATIVE_CONCEALMENT_CLASS = "frpdepot-fqj-native-button-concealed"
+FNPT_NATIVE_BUTTON_SELECTOR = "button.single_add_to_cart_button"
+FNPT_NATIVE_CONCEALMENT_SELECTOR = f".{FNPT_NATIVE_CONCEALMENT_CLASS}"
 
 # Row-action selectors are scoped to the fixed plugin row. `.delete` is
 # deliberately absent: this tool has no path that can reach a Delete link.
@@ -440,6 +657,32 @@ class ValidationStepError(IndeterminateError):
         )
 
 
+class FnptPublicRefusal(IndeterminateError):
+    """One fixed public-validation refusal code; never page-derived text."""
+
+    def __init__(self, code: str):
+        if code not in FNPT_PUBLIC_VALIDATION_CODES:
+            raise DeploymentError("Internal: an unknown FNPT public-validation code was used.")
+        self.code = code
+        super().__init__(code)
+
+
+class FnptPublicValidationError(IndeterminateError):
+    """Bounded FNPT public failure attribution safe for permanent records."""
+
+    def __init__(self, step: str, exception_class: str, code: str):
+        if step not in FNPT_PUBLIC_VALIDATION_STEPS:
+            raise DeploymentError("Internal: an unknown FNPT public-validation step was used.")
+        if code not in FNPT_PUBLIC_VALIDATION_CODES:
+            raise DeploymentError("Internal: an unknown FNPT public-validation code was used.")
+        self.step = step
+        self.exception_class = str(exception_class)
+        self.code = code
+        super().__init__(
+            f"FNPT public-validation step {step} failed with {self.exception_class} ({code})."
+        )
+
+
 # ---------------------------------------------------------------------------
 # Small shared helpers
 # ---------------------------------------------------------------------------
@@ -490,11 +733,56 @@ def assert_origin(url: str) -> None:
 
 def assert_admin_url(url: str) -> None:
     assert_origin(url)
-    path = urlsplit(str(url)).path or "/"
+    parsed = urlsplit(str(url))
+    path = parsed.path or "/"
     if path not in ALLOWED_ADMIN_PATHS:
         raise DeploymentError(
-            "REFUSED: the WordPress admin page is not one of the three allowlisted "
+            "REFUSED: the WordPress admin page is not one of the fixed allowlisted "
             "plugin pages. Sign-in, settings and every other admin screen are out of scope."
+        )
+    values = parse_qs(parsed.query, keep_blank_values=True)
+    if parsed.fragment:
+        raise DeploymentError("REFUSED: WordPress admin fragments are outside the fixed routes.")
+    if path == "/wp-admin/plugin-editor.php":
+        if values.get("plugin") != [PLUGIN_FILE] or len(values.get("file") or []) != 1 \
+                or values["file"][0] not in CONTACT_PRESERVE_MEMBERS \
+                or set(values) != {"file", "plugin"}:
+            raise DeploymentError("REFUSED: only the five fixed read-only plugin-editor files are allowed.")
+    elif path == "/wp-admin/tools.php":
+        if values != {"page": ["frpdepot-freight-quote-journey"]}:
+            raise DeploymentError("REFUSED: only the fixed freight status page is allowed.")
+    elif path == "/wp-admin/admin.php":
+        if values != {
+            "page": ["gf_edit_forms"],
+            "id": [str(SOURCE_CONTACT_FORM_ID)],
+            "view": ["settings"],
+            "subview": ["notification"],
+        }:
+            raise DeploymentError(
+                "REFUSED: only the read-only Contact Form 1 notification list is allowed."
+            )
+
+
+def assert_source_contact_notification_detail_url(url: str) -> None:
+    """Allow only the exact notification detail link discovered on Contact Form 1.
+
+    Gravity Forms owns the opaque notification ID, so it is validated structurally
+    and never planned, emitted, or retained in a result artifact.
+    """
+    assert_origin(url)
+    parsed = urlsplit(str(url))
+    values = parse_qs(parsed.query, keep_blank_values=True)
+    nid = values.get("nid") or []
+    if (parsed.path != "/wp-admin/admin.php" or parsed.fragment
+            or set(values) != {"page", "id", "view", "subview", "nid"}
+            or values.get("page") != ["gf_edit_forms"]
+            or values.get("id") != [str(SOURCE_CONTACT_FORM_ID)]
+            or values.get("view") != ["settings"]
+            or values.get("subview") != ["notification"]
+            or len(nid) != 1 or not isinstance(nid[0], str)
+            or not nid[0].strip() or len(nid[0]) > 256):
+        raise DeploymentError(
+            "REFUSED: the Contact Form 1 Admin Notification detail route is not exact."
         )
 
 
@@ -552,130 +840,300 @@ def verify_artifact(path: Path | None = None) -> dict[str, Any]:
     }
 
 
-def verify_ups_repair_artifact(path: Path | None = None) -> dict[str, Any]:
-    """Independently prove the one frozen active 2.0.4 -> 2.0.5 CSS repair ZIP."""
-    artifact = Path(path or UPS_REPAIR_ARTIFACT_PATH)
-    if artifact.resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve():
-        raise DeploymentError("REFUSED: only the fixed UPS repair artifact may be used.")
+def verify_fnpt_display_repair_artifact(path: Path | None = None) -> dict[str, Any]:
+    """Independently prove the fixed active 2.0.6 -> 2.0.7 presentation ZIP."""
+    artifact = Path(path or FNPT_REPAIR_ARTIFACT_PATH)
+    if artifact.resolve() != Path(FNPT_REPAIR_ARTIFACT_PATH).resolve():
+        raise DeploymentError("REFUSED: only the fixed FNPT display repair artifact may be used.")
     if not artifact.is_file():
-        raise DeploymentError(f"The fixed UPS repair artifact is missing: {artifact}")
+        raise DeploymentError(f"The fixed FNPT display repair artifact is missing: {artifact}")
     data = artifact.read_bytes()
     digest = hashlib.sha256(data).hexdigest()
-    if digest != UPS_REPAIR_SHA256:
-        raise DeploymentError("REFUSED: the fixed UPS repair artifact SHA-256 does not match.")
+    if digest != FNPT_REPAIR_SHA256:
+        raise DeploymentError("REFUSED: the fixed FNPT display repair SHA-256 does not match.")
+    if len(data) != FNPT_REPAIR_BYTES:
+        raise DeploymentError("REFUSED: the fixed FNPT display repair byte size does not match.")
 
-    baseline = Path(UPS_REPAIR_BASELINE_PATH)
+    baseline = Path(FNPT_REPAIR_BASELINE_PATH)
     if not baseline.is_file():
-        raise DeploymentError("REFUSED: the frozen deployed 2.0.4 baseline is missing.")
+        raise DeploymentError("REFUSED: the frozen deployed 2.0.6 baseline is missing.")
     baseline_data = baseline.read_bytes()
-    if hashlib.sha256(baseline_data).hexdigest() != UPS_REPAIR_BASELINE_SHA256:
-        raise DeploymentError("REFUSED: the frozen deployed 2.0.4 baseline SHA-256 changed.")
+    if hashlib.sha256(baseline_data).hexdigest() != FNPT_REPAIR_BASELINE_SHA256:
+        raise DeploymentError("REFUSED: the frozen deployed 2.0.6 baseline SHA-256 changed.")
 
     try:
         with zipfile.ZipFile(artifact) as repair_zip, zipfile.ZipFile(baseline) as baseline_zip:
             members = tuple(sorted(repair_zip.namelist()))
             baseline_members = tuple(sorted(baseline_zip.namelist()))
-            php_member = f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php"
-            allowlist_member = f"{PLUGIN_SLUG}/ups-allowlist.json"
-            readme_member = f"{PLUGIN_SLUG}/readme.txt"
-            repair_php = repair_zip.read(php_member)
-            baseline_php = baseline_zip.read(php_member)
-            allowlist_bytes = repair_zip.read(allowlist_member)
-            readme = repair_zip.read(readme_member).decode("utf-8")
-            js_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
-            if repair_zip.read(js_member) != baseline_zip.read(js_member):
-                raise DeploymentError(
-                    "REFUSED: the CSS-only UPS repair changed protected JavaScript."
-                )
-            css_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
-            if repair_zip.read(css_member) != baseline_zip.read(css_member) + UPS_REPAIR_CSS_SUFFIX:
-                raise DeploymentError(
-                    "REFUSED: the UPS repair is not the exact fixed hidden-panel CSS rule."
-                )
-    except (KeyError, OSError, UnicodeDecodeError, zipfile.BadZipFile) as exc:
-        raise DeploymentError("REFUSED: the fixed UPS repair artifact is unreadable.") from exc
+            if members != tuple(sorted(FNPT_REPAIR_MEMBERS)) or baseline_members != members:
+                raise DeploymentError("REFUSED: the FNPT repair ZIP members are not the fixed set.")
+            repair = {member: repair_zip.read(member) for member in members}
+            prior = {member: baseline_zip.read(member) for member in members}
+    except (KeyError, OSError, zipfile.BadZipFile) as exc:
+        raise DeploymentError("REFUSED: the fixed FNPT display artifact is unreadable.") from exc
 
-    if members != tuple(sorted(UPS_REPAIR_MEMBERS)) or baseline_members != members:
-        raise DeploymentError("REFUSED: the UPS repair ZIP members are not the fixed set.")
-    header = repair_php.decode("utf-8", errors="strict")
+    for member, expected in FNPT_REPAIR_MEMBER_SHA256.items():
+        if hashlib.sha256(repair[member]).hexdigest() != expected:
+            raise DeploymentError(f"REFUSED: fixed FNPT repair member changed: {member}")
+
+    php_member = f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php"
+    js_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+    css_member = f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+    allowlist_member = f"{PLUGIN_SLUG}/ups-allowlist.json"
+    readme_member = f"{PLUGIN_SLUG}/readme.txt"
+    if repair[allowlist_member] != prior[allowlist_member]:
+        raise DeploymentError("REFUSED: the FNPT display repair changed the UPS allowlist.")
+
+    try:
+        header = repair[php_member].decode("utf-8", errors="strict")
+        prior_header = prior[php_member].decode("utf-8", errors="strict")
+        javascript = repair[js_member].decode("utf-8", errors="strict")
+        prior_javascript = prior[js_member].decode("utf-8", errors="strict")
+        stylesheet = repair[css_member].decode("utf-8", errors="strict")
+        prior_stylesheet = prior[css_member].decode("utf-8", errors="strict")
+        readme = repair[readme_member].decode("utf-8", errors="strict")
+        prior_readme = prior[readme_member].decode("utf-8", errors="strict")
+        allowlist = json.loads(repair[allowlist_member])
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise DeploymentError("REFUSED: the fixed FNPT display source is unreadable.") from exc
+
     found = re.search(r"(?im)^\s*\*\s*Version:\s*(\S+)\s*$", header)
     version = found.group(1) if found else ""
-    if version != UPS_REPAIR_VERSION or f"FRPDEPOT_FQJ_VERSION = '{UPS_REPAIR_VERSION}'" not in header:
-        raise DeploymentError("REFUSED: the UPS repair does not declare fixed version 2.0.5.")
+    if version != FNPT_REPAIR_VERSION or f"FRPDEPOT_FQJ_VERSION = '{FNPT_REPAIR_VERSION}'" not in header:
+        raise DeploymentError("REFUSED: the FNPT repair does not declare fixed version 2.0.7.")
     if f"Plugin Name: {PLUGIN_NAME}" not in header:
-        raise DeploymentError("REFUSED: the UPS repair is not the fixed FRP Depot plugin.")
+        raise DeploymentError("REFUSED: the FNPT repair is not the fixed FRP Depot plugin.")
     if "register_activation_hook" in header or "admin_post_frpdepot_fqj_fixed_apply" not in header:
-        raise DeploymentError("REFUSED: the UPS repair changed the fixed activation/apply trigger contract.")
+        raise DeploymentError("REFUSED: the fixed activation/apply trigger contract changed.")
 
-    normalized_php = header.replace(
-        " * Version:     2.0.5", " * Version:     2.0.4", 1
-    ).replace(
-        "const FRPDEPOT_FQJ_VERSION = '2.0.5';",
-        "const FRPDEPOT_FQJ_VERSION = '2.0.4';",
-        1,
-    ).encode("utf-8")
-    if normalized_php != baseline_php:
-        raise DeploymentError("REFUSED: the UPS repair PHP changed beyond the two version tokens.")
+    expected_php = prior_header
+    php_changes = (
+        (" * Version:     2.0.6", " * Version:     2.0.7"),
+        ("const FRPDEPOT_FQJ_VERSION = '2.0.6';",
+         "const FRPDEPOT_FQJ_VERSION = '2.0.7';"),
+    )
+    for old, new in php_changes:
+        if expected_php.count(old) != 1:
+            raise DeploymentError("REFUSED: frozen 2.0.6 PHP baseline relation changed.")
+        expected_php = expected_php.replace(old, new, 1)
+    if header != expected_php:
+        raise DeploymentError("REFUSED: PHP changed beyond 2.0.7 version metadata.")
 
-    if hashlib.sha256(allowlist_bytes).hexdigest() != UPS_REPAIR_ALLOWLIST_SHA256:
-        raise DeploymentError("REFUSED: the UPS repair allowlist SHA-256 changed.")
-    try:
-        allowlist = json.loads(allowlist_bytes)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise DeploymentError("REFUSED: the UPS repair allowlist is unreadable.") from exc
+    expected_javascript = prior_javascript
+    js_changes = (
+        (
+            "\tvar firedLeadKeys = Object.create( null );",
+            "\tvar firedLeadKeys = Object.create( null );\n"
+            "\tvar nativeConcealmentClass = 'frpdepot-fqj-native-button-concealed';",
+        ),
+        (
+            "\tfunction restoreNativeButton( button ) {\n"
+            "\t\tif ( ! button || ! button.frpdepotFqjOriginal ) {\n"
+            "\t\t\treturn;\n"
+            "\t\t}",
+            "\tfunction restoreNativeButton( button ) {\n"
+            "\t\tif ( ! button ) {\n"
+            "\t\t\treturn;\n"
+            "\t\t}\n"
+            "\t\tbutton.classList.remove( nativeConcealmentClass );\n"
+            "\t\tif ( ! button.frpdepotFqjOriginal ) {\n"
+            "\t\t\treturn;\n"
+            "\t\t}",
+        ),
+        (
+            "\t\t\tif ( nativeButton ) {\n\t\t\t\tnativeButton.hidden = true;",
+            "\t\t\tif ( nativeButton ) {\n"
+            "\t\t\t\tnativeButton.classList.add( nativeConcealmentClass );\n"
+            "\t\t\t\tnativeButton.hidden = true;",
+        ),
+    )
+    for old, new in js_changes:
+        if expected_javascript.count(old) != 1:
+            raise DeploymentError("REFUSED: frozen 2.0.6 JavaScript baseline relation changed.")
+        expected_javascript = expected_javascript.replace(old, new, 1)
+    if javascript != expected_javascript:
+        raise DeploymentError("REFUSED: JavaScript changed beyond the owned-class presentation correction.")
+    if (javascript.count("frpdepot-fqj-native-button-concealed") != 1
+            or javascript.count("classList.add( nativeConcealmentClass )") != 1
+            or javascript.count("classList.remove( nativeConcealmentClass )") != 1
+            or javascript.count("config.cartQuoteRequired !== true") != 2):
+        raise DeploymentError("REFUSED: the fixed native-button or preserved cart consumer contract changed.")
+
+    expected_css_suffix = (
+        "\nform.variations_form button.single_add_to_cart_button."
+        "frpdepot-fqj-native-button-concealed {\n"
+        "\tdisplay: none !important;\n"
+        "}\n"
+    )
+    if stylesheet != prior_stylesheet + expected_css_suffix:
+        raise DeploymentError("REFUSED: CSS changed beyond one exact owned-class concealment rule.")
+
+    expected_readme = prior_readme
+    readme_changes = (
+        ("Stable tag: 2.0.6", "Stable tag: 2.0.7"),
+        ("Version 2.0.6 preserves", "Version 2.0.7 preserves"),
+        (
+            "== Changelog ==\n",
+            "== Changelog ==\n\n"
+            "= 2.0.7 =\n"
+            "* Conceals the native Add to Cart button in freight and fail-closed product states with one plugin-owned class and exact display rule, even when the active theme overrides the hidden attribute.\n"
+            "* Removes that owned class in direct and unresolved product states so reset, hide, quantity and blocked/direct transitions cannot leak stale presentation.\n"
+            "* Changes no allowlist, eligibility, rate, cart, checkout, quote-form or business-transaction behavior.\n",
+        ),
+    )
+    for old, new in readme_changes:
+        if expected_readme.count(old) != 1:
+            raise DeploymentError("REFUSED: frozen 2.0.6 readme baseline relation changed.")
+        expected_readme = expected_readme.replace(old, new, 1)
+    if readme != expected_readme:
+        raise DeploymentError("REFUSED: readme changed beyond 2.0.7 disclosure.")
+
+    if hashlib.sha256(repair[allowlist_member]).hexdigest() != FNPT_REPAIR_ALLOWLIST_SHA256:
+        raise DeploymentError("REFUSED: the fixed allowlist SHA-256 changed.")
     required = {
         "schema_version": 2,
-        "measurement_status": UPS_REPAIR_MEASUREMENT_STATUS,
+        "measurement_status": FNPT_REPAIR_MEASUREMENT_STATUS,
         "verified_packing_groups": 0,
         "researched_candidate_groups": 30,
         "oversized_groups_excluded": 7,
     }
     for key, expected in required.items():
         if allowlist.get(key) != expected:
-            raise DeploymentError(f"REFUSED: the UPS repair allowlist field {key!r} changed.")
+            raise DeploymentError(f"REFUSED: fixed allowlist field {key!r} changed.")
     items = allowlist.get("items")
     if not isinstance(items, list) or len(items) != 64:
-        raise DeploymentError("REFUSED: the UPS repair must allowlist exactly 64 variations.")
+        raise DeploymentError("REFUSED: the fixed allowlist must contain exactly 64 variations.")
     identities: set[tuple[int, int, str]] = set()
     for item in items:
         if not isinstance(item, dict) or set(item) != {
             "product_id", "variation_id", "sku", "packing_group_id", "source_status",
         }:
-            raise DeploymentError("REFUSED: a UPS repair allowlist entry is not the fixed projection.")
+            raise DeploymentError("REFUSED: a fixed allowlist row changed shape.")
         identity = (item["product_id"], item["variation_id"], item["sku"])
         if (item["product_id"] not in (1368, 1423) or not item["variation_id"]
-                or not item["sku"] or item["source_status"] != UPS_REPAIR_MEASUREMENT_STATUS):
-            raise DeploymentError("REFUSED: a UPS repair allowlist identity or disclosure changed.")
+                or not item["sku"] or item["source_status"] != FNPT_REPAIR_MEASUREMENT_STATUS):
+            raise DeploymentError("REFUSED: a fixed allowlist identity or disclosure changed.")
         identities.add(identity)
     if len(identities) != 64:
-        raise DeploymentError("REFUSED: UPS repair allowlist identities are duplicated.")
-    oversized = {1444, 1445, 1446, 1447, 2044, 2045, 2046, 2047,
-                 2048, 2049, 2050, 2051, 2052, 2053}
-    if any(identity[1] in oversized for identity in identities):
-        raise DeploymentError("REFUSED: the UPS repair includes an oversized variation.")
+        raise DeploymentError("REFUSED: fixed allowlist identities are duplicated.")
+    protected_quote_ids = {2044, 2045, 2046, 2047, 2048, 2049, 2050, 2051, 2052, 2053,
+                           2057, 2088}
+    if any(identity[1] in protected_quote_ids for identity in identities):
+        raise DeploymentError("REFUSED: an oversized, Pipe or FNPT variation entered the allowlist.")
+    if not any(identity[1] == 2028 for identity in identities):
+        raise DeploymentError("REFUSED: direct-checkout control variation 2028 left the allowlist.")
     try:
         expires = datetime.fromisoformat(str(allowlist["expires_utc"]))
     except (KeyError, TypeError, ValueError) as exc:
-        raise DeploymentError("REFUSED: the UPS repair allowlist expiry is invalid.") from exc
+        raise DeploymentError("REFUSED: the fixed allowlist expiry is invalid.") from exc
     if utc_now() >= expires:
-        raise DeploymentError("REFUSED: the UPS repair allowlist has expired.")
+        raise DeploymentError("REFUSED: the fixed allowlist has expired.")
 
     for marker in (
-        "Stable tag: 2.0.5",
-        "honor its hidden state",
+        "Stable tag: 2.0.7",
+        "plugin-owned class and exact display rule",
+        "blocked/direct transitions",
+        "FNPT Coupling parent 2061",
+        "selected variation_id",
+        "Changes no allowlist, eligibility, rate, cart, checkout, quote-form",
         "64-variation UPS",
         "NOT physical packing measurements",
         "14 variations",
         "60 published FNPT",
     ):
         if marker not in readme:
-            raise DeploymentError(f"REFUSED: the UPS repair disclosure is missing {marker!r}.")
+            raise DeploymentError(f"REFUSED: FNPT repair disclosure is missing {marker!r}.")
     return {
         "path": str(artifact),
         "sha256": digest,
         "version": version,
         "members": list(members),
-        "bytes": artifact.stat().st_size,
+        "member_sha256": dict(FNPT_REPAIR_MEMBER_SHA256),
+        "allowlist_sha256": FNPT_REPAIR_ALLOWLIST_SHA256,
+        "baseline_path": str(baseline),
+        "baseline_sha256": FNPT_REPAIR_BASELINE_SHA256,
+        "bytes": FNPT_REPAIR_BYTES,
+    }
+
+
+def verify_contact_preserve_artifact(path: Path | None = None) -> dict[str, Any]:
+    """Prove exact target and exact active 2.0.7 baseline, including member order."""
+    artifact = Path(path or CONTACT_PRESERVE_ARTIFACT_PATH)
+    if artifact.resolve() != Path(CONTACT_PRESERVE_ARTIFACT_PATH).resolve():
+        raise DeploymentError("REFUSED: only the fixed 2.0.8 Contact preservation artifact is allowed.")
+    baseline = Path(CONTACT_PRESERVE_BASELINE_PATH)
+    for label, candidate, expected_bytes, expected_hash in (
+        ("2.0.8 target", artifact, CONTACT_PRESERVE_BYTES, CONTACT_PRESERVE_SHA256),
+        ("2.0.7 baseline", baseline, CONTACT_PRESERVE_BASELINE_BYTES,
+         CONTACT_PRESERVE_BASELINE_SHA256),
+    ):
+        if not candidate.is_file():
+            raise DeploymentError(f"REFUSED: the fixed {label} ZIP is missing.")
+        raw = candidate.read_bytes()
+        if len(raw) != expected_bytes \
+                or not secrets.compare_digest(hashlib.sha256(raw).hexdigest(), expected_hash):
+            raise DeploymentError(f"REFUSED: the fixed {label} bytes or SHA-256 changed.")
+    try:
+        with zipfile.ZipFile(artifact) as target_zip, zipfile.ZipFile(baseline) as baseline_zip:
+            target_names = tuple(target_zip.namelist())
+            baseline_names = tuple(baseline_zip.namelist())
+            target_data = {name: target_zip.read(name) for name in target_names}
+            baseline_data = {name: baseline_zip.read(name) for name in baseline_names}
+    except (OSError, KeyError, zipfile.BadZipFile) as exc:
+        raise DeploymentError("REFUSED: the fixed Contact preservation ZIP pair is unreadable.") from exc
+    if target_names != tuple(CONTACT_PRESERVE_MEMBERS):
+        raise DeploymentError("REFUSED: the 2.0.8 ZIP member order or set changed.")
+    if baseline_names != tuple(CONTACT_PRESERVE_BASELINE_MEMBERS):
+        raise DeploymentError("REFUSED: the 2.0.7 baseline ZIP member order or set changed.")
+    target_hashes = {name: hashlib.sha256(target_data[name]).hexdigest() for name in target_names}
+    baseline_hashes = {
+        name: hashlib.sha256(baseline_data[name]).hexdigest() for name in baseline_names
+    }
+    if target_hashes != CONTACT_PRESERVE_MEMBER_SHA256:
+        raise DeploymentError("REFUSED: a fixed 2.0.8 member SHA-256 changed.")
+    if baseline_hashes != CONTACT_PRESERVE_BASELINE_MEMBER_SHA256:
+        raise DeploymentError("REFUSED: a fixed 2.0.7 baseline member SHA-256 changed.")
+
+    php_name = f"{PLUGIN_SLUG}/frpdepot-freight-checkout-guard.php"
+    readme_name = f"{PLUGIN_SLUG}/readme.txt"
+    protected = set(target_names) - {php_name, readme_name}
+    if any(target_data[name] != baseline_data[name] for name in protected):
+        raise DeploymentError("REFUSED: 2.0.8 changed a protected CSS, JavaScript or allowlist member.")
+    try:
+        php = target_data[php_name].decode("utf-8", errors="strict")
+        readme = target_data[readme_name].decode("utf-8", errors="strict")
+    except UnicodeDecodeError as exc:
+        raise DeploymentError("REFUSED: fixed 2.0.8 source is not strict UTF-8.") from exc
+    required_php = (
+        " * Version:     2.0.8",
+        "const FRPDEPOT_FQJ_VERSION = '2.0.8';",
+        f"const FRPDEPOT_FQJ_SPEC_SHA256 = '{FREIGHT_SPEC_SHA256}';",
+        "function frpdepot_fqj_contact_mode(",
+        "'preserve' !== $after_mode",
+        "'before_version' => '2.0.7'",
+        f"'rollback_sha256' => '{CONTACT_PRESERVE_BASELINE_SHA256}'",
+    )
+    if any(php.count(marker) != 1 for marker in required_php):
+        raise DeploymentError("REFUSED: fixed 2.0.8 PHP preservation contract changed.")
+    if "register_activation_hook" in php:
+        raise DeploymentError("REFUSED: fixed 2.0.8 gained an activation write trigger.")
+    if (readme.count("Stable tag: 2.0.8") != 1
+            or readme.count("already-correct strong-formatted sentence") != 1
+            or readme.count("zero Contact post writes") != 1):
+        raise DeploymentError("REFUSED: fixed 2.0.8 disclosure changed.")
+    return {
+        "path": str(artifact),
+        "version": CONTACT_PRESERVE_VERSION,
+        "sha256": CONTACT_PRESERVE_SHA256,
+        "bytes": CONTACT_PRESERVE_BYTES,
+        "members": list(target_names),
+        "member_sha256": dict(target_hashes),
+        "baseline_path": str(baseline),
+        "baseline_version": CONTACT_PRESERVE_FROM_VERSION,
+        "baseline_sha256": CONTACT_PRESERVE_BASELINE_SHA256,
+        "baseline_bytes": CONTACT_PRESERVE_BASELINE_BYTES,
+        "baseline_members": list(baseline_names),
+        "baseline_member_sha256": dict(baseline_hashes),
     }
 
 
@@ -786,6 +1244,125 @@ class AdminPage:
         )
         return project_row(True, by_class_active, found.group(1), update_marker)
 
+    def read_installed_member_projection(self) -> dict[str, Any]:
+        """GET the five fixed editor screens and retain hashes only, never source."""
+        hashes: dict[str, str] = {}
+        for member in CONTACT_PRESERVE_MEMBERS:
+            self._goto(PLUGIN_EDITOR_URL_BY_MEMBER[member])
+            editors = self._page.query_selector_all(PLUGIN_EDITOR_TEXTAREA_SELECTOR)
+            if len(editors) != 1:
+                raise DeploymentError("REFUSED: one fixed plugin-editor member is unavailable.")
+            source = editors[0].input_value(timeout=ACTION_TIMEOUT_MS)
+            if not isinstance(source, str):
+                raise DeploymentError("REFUSED: one fixed installed plugin member is unreadable.")
+            hashes[member] = hashlib.sha256(source.encode("utf-8")).hexdigest()
+        return {
+            "members": list(CONTACT_PRESERVE_MEMBERS),
+            "member_sha256": hashes,
+            "source_projected": False,
+            "read_only": True,
+        }
+
+    def read_freight_status(self) -> dict[str, Any]:
+        """Read only the plugin's fixed privacy-preserving status projection."""
+        self._goto(FREIGHT_STATUS_URL)
+        rows = self._page.query_selector_all(FREIGHT_STATUS_SELECTOR)
+        if len(rows) != 1:
+            raise DeploymentError("REFUSED: fixed freight status projection is unavailable.")
+        raw = str(rows[0].get_attribute("data-projection") or "")
+        try:
+            status = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise DeploymentError("REFUSED: fixed freight status projection is invalid JSON.") from exc
+        if not isinstance(status, dict) or set(status) != FREIGHT_STATUS_KEYS:
+            raise DeploymentError("REFUSED: fixed freight status projection schema changed.")
+        return status
+
+    def read_source_notification_route_projection(self) -> dict[str, Any]:
+        """Validate Contact Form 1's route in-page and return no recipient values."""
+        self._goto(SOURCE_CONTACT_FORM_EDITOR_URL)
+        candidates = self._page.query_selector_all(SOURCE_CONTACT_NOTIFICATION_LINK_SELECTOR)
+        matches = [
+            item for item in candidates
+            if str(item.inner_text() or "").strip() == SOURCE_CONTACT_NOTIFICATION_NAME
+        ]
+        if len(matches) != 1:
+            raise DeploymentError(
+                "REFUSED: Contact Form 1 does not expose exactly one Admin Notification link."
+            )
+        href = str(matches[0].get_attribute("href") or "")
+        detail_url = urljoin(self.url, href)
+        assert_source_contact_notification_detail_url(detail_url)
+        self._page.goto(
+            detail_url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+        )
+        assert_source_contact_notification_detail_url(self.url)
+        projection = self._page.evaluate(
+            """async expected => {
+              const source=(window.form && typeof window.form==='object' && !Array.isArray(window.form))
+                ? window.form : null;
+              if (!source) return null;
+              const sourceId=Number(source.id || source.ID || 0);
+              const values=source.notifications && typeof source.notifications==='object'
+                ? Object.values(source.notifications) : [];
+              const active=n => n && (n.isActive===undefined || n.isActive===true
+                || n.isActive===1 || n.isActive==='1');
+              const matches=values.filter(n => n && n.name===expected.notification && active(n));
+              if (sourceId!==expected.formId || source.title!==expected.title || matches.length!==1)
+                return null;
+              const item=matches[0];
+              const keys=['to','toType','routing','bcc','from','fromName','replyTo'];
+              if (!keys.every(key => Object.prototype.hasOwnProperty.call(item,key))) return null;
+              const route={}; keys.forEach(key => { route[key]=item[key]; });
+              const emptyRouting=route.routing===null
+                || (Array.isArray(route.routing) && route.routing.length===0)
+                || (route.routing && typeof route.routing==='object'
+                    && !Array.isArray(route.routing) && Object.keys(route.routing).length===0);
+              if (typeof route.to!=='string' || route.to.trim()===''
+                  || route.toType!=='email' || typeof route.bcc!=='string'
+                  || typeof route.from!=='string' || typeof route.fromName!=='string'
+                  || typeof route.replyTo!=='string' || !emptyRouting) return null;
+              const canonical=value => {
+                if (Array.isArray(value)) return value.map(canonical);
+                if (value && typeof value==='object') {
+                  const out={}; Object.keys(value).sort().forEach(key => { out[key]=canonical(value[key]); });
+                  return out;
+                }
+                return value;
+              };
+              const bytes=new TextEncoder().encode(JSON.stringify(canonical(route)));
+              const digest=await crypto.subtle.digest('SHA-256',bytes);
+              const routeHash=Array.from(new Uint8Array(digest))
+                .map(value => value.toString(16).padStart(2,'0')).join('');
+              return {
+                source_form_id:sourceId,
+                source_form_title_match:true,
+                source_notification_name_match:true,
+                active_notification_match_count:matches.length,
+                route_shape_valid:true,
+                route_sha256:routeHash,
+                privacy:{recipient_values_projected:false,customer_values_projected:false,
+                  artifact_content_projected:false,route_hash_only:true}
+              };
+            }""",
+            {"formId": SOURCE_CONTACT_FORM_ID, "title": "Contact",
+             "notification": "Admin Notification"},
+        )
+        expected = {
+            "source_form_id": SOURCE_CONTACT_FORM_ID,
+            "source_form_title_match": True,
+            "source_notification_name_match": True,
+            "active_notification_match_count": 1,
+            "route_shape_valid": True,
+            "privacy": FREIGHT_PRIVACY_STATUS,
+        }
+        if (not isinstance(projection, dict)
+                or set(projection) != {*expected, "route_sha256"}
+                or any(projection.get(key) != value for key, value in expected.items())
+                or not HEX_SHA256.fullmatch(str(projection.get("route_sha256") or ""))):
+            raise DeploymentError("REFUSED: Contact Form 1 notification route is not exact and valid.")
+        return projection
+
     # -- acting -------------------------------------------------------------
     def _click_row_action(self, selector: str, expect_active_before: bool) -> None:
         before = self.read_row()
@@ -829,11 +1406,31 @@ class AdminPage:
             raise DeploymentError("REFUSED: only the one hard-coded plugin artifact may be uploaded.")
         return self._upload_fixed_replace(artifact, ARTIFACT_VERSION)
 
-    def upload_ups_repair(self, artifact: Path) -> dict[str, Any]:
-        """Upload only the exact frozen 2.0.5 UPS repair ZIP."""
-        if Path(artifact).resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve():
-            raise DeploymentError("REFUSED: only the fixed UPS repair artifact may be uploaded.")
-        return self._upload_fixed_replace(artifact, UPS_REPAIR_VERSION)
+    def upload_fnpt_display_repair(self, artifact: Path) -> dict[str, Any]:
+        """Upload only the exact frozen 2.0.7 FNPT presentation correction ZIP."""
+        if Path(artifact).resolve() != Path(FNPT_REPAIR_ARTIFACT_PATH).resolve():
+            raise DeploymentError("REFUSED: only the fixed FNPT display repair artifact may be uploaded.")
+        return self._upload_fixed_replace(artifact, FNPT_REPAIR_VERSION)
+
+    def upload_freight_contact_preserve_repair(
+        self, artifact: Path, eligible_snapshot: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Final shared eligibility gate before the one exact active overwrite."""
+        require_contact_preserve_eligibility(eligible_snapshot)
+        if Path(artifact).resolve() != Path(CONTACT_PRESERVE_ARTIFACT_PATH).resolve():
+            raise DeploymentError("REFUSED: only the fixed 2.0.8 Contact preservation ZIP may upload.")
+        return self._upload_fixed_replace(artifact, CONTACT_PRESERVE_VERSION)
+
+    def _require_upload_comparison_destination(self, url: str) -> None:
+        absolute = urljoin(self.url, str(url or ""))
+        assert_admin_url(absolute)
+        parsed = urlsplit(absolute)
+        values = parse_qs(parsed.query, keep_blank_values=True)
+        if parsed.fragment or parsed.path != "/wp-admin/update.php" \
+                or values != {"action": ["upload-plugin"]}:
+            raise IndeterminateError(
+                "The upload submission did not reach the exact WordPress comparison route."
+            )
 
     def _upload_fixed_replace(self, artifact: Path, expected_version: str) -> dict[str, Any]:
         self.goto_upload()
@@ -845,9 +1442,23 @@ class AdminPage:
         if submit is None:
             raise DeploymentError("REFUSED: the Install Now control was not found.")
         assert_admin_url(self.url)
-        submit.click(timeout=ACTION_TIMEOUT_MS)
-        self._page.wait_for_load_state("domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS)
+        try:
+            with self._page.expect_navigation(
+                wait_until="domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS
+            ) as pending_navigation:
+                submit.click(timeout=ACTION_TIMEOUT_MS)
+            response = pending_navigation.value
+        except Exception as exc:
+            raise IndeterminateError(
+                "The upload submission did not produce one proven bounded comparison navigation."
+            ) from exc
+        if response is None or int(response.status) != 200:
+            raise IndeterminateError(
+                "The upload comparison navigation did not return one proven HTTP 200 response."
+            )
         assert_admin_url(self.url)
+        self._require_upload_comparison_destination(str(response.url))
+        self._require_upload_comparison_destination(self.url)
         return self._confirm_and_overwrite(expected_version)
 
     def _comparison_cells(self, table: Any, label_pattern: str) -> str:
@@ -861,9 +1472,44 @@ class AdminPage:
                 return str(cells[-1].inner_text() or "").strip()
         return ""
 
+    def _require_overwrite_destination(
+        self, url: str, *, expected_identity: tuple[str, str] | None = None
+    ) -> tuple[str, str]:
+        """Require WordPress core's exact replace-current destination without exposing secrets."""
+        absolute = urljoin(self.url, str(url or ""))
+        assert_admin_url(absolute)
+        parsed = urlsplit(absolute)
+        values = parse_qs(parsed.query, keep_blank_values=True)
+        if parsed.fragment or parsed.path != "/wp-admin/update.php" \
+                or set(values) != OVERWRITE_QUERY_KEYS:
+            raise DeploymentError(
+                "REFUSED: the replace-current control does not target the exact WordPress "
+                "overwrite route. Nothing was replaced."
+            )
+        if values.get("action") != ["upload-plugin"] \
+                or values.get("overwrite") != ["update-plugin"]:
+            raise DeploymentError(
+                "REFUSED: the replace-current action is not the fixed upload-plugin overwrite. "
+                "Nothing was replaced."
+            )
+        package_values = values.get("package") or []
+        nonce_values = values.get("_wpnonce") or []
+        if len(package_values) != 1 or not package_values[0] or len(package_values[0]) > 512:
+            raise DeploymentError("REFUSED: the fixed overwrite package identity is missing.")
+        if len(nonce_values) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{8,64}", nonce_values[0]):
+            raise DeploymentError("REFUSED: the fixed overwrite authorization shape is invalid.")
+        identity = (package_values[0], nonce_values[0])
+        if expected_identity is not None and identity != expected_identity:
+            raise IndeterminateError(
+                "WordPress navigated with a different overwrite identity than the reviewed control."
+            )
+        return identity
+
     def _confirm_and_overwrite(self, expected_version: str) -> dict[str, Any]:
-        """Verify the comparison screen is the fixed plugin at the fixed version."""
-        if expected_version not in (ARTIFACT_VERSION, UPS_REPAIR_VERSION):
+        """Verify the comparison, prove overwrite navigation, then verify WordPress success."""
+        if expected_version not in (
+            ARTIFACT_VERSION, FNPT_REPAIR_VERSION, CONTACT_PRESERVE_VERSION
+        ):
             raise DeploymentError("Internal: a non-fixed replacement version was requested.")
         tables = self._page.query_selector_all("table.update-from-upload-comparison")
         if len(tables) != 1:
@@ -894,11 +1540,41 @@ class AdminPage:
                 "REFUSED: the replace-current control is missing or ambiguous. "
                 "Nothing was replaced."
             )
+        href = links[0].get_attribute("href")
+        reviewed_identity = self._require_overwrite_destination(str(href or ""))
         assert_admin_url(self.url)
-        links[0].click(timeout=ACTION_TIMEOUT_MS)
-        self._page.wait_for_load_state("domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS)
+        try:
+            with self._page.expect_navigation(
+                wait_until="domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS
+            ) as pending_navigation:
+                links[0].click(timeout=ACTION_TIMEOUT_MS)
+            response = pending_navigation.value
+        except Exception as exc:  # Playwright class is imported only inside session creation.
+            raise IndeterminateError(
+                "The replace-current click did not produce one proven bounded navigation."
+            ) from exc
+        if response is None or int(response.status) != 200:
+            raise IndeterminateError(
+                "The replace-current navigation did not return one proven HTTP 200 response."
+            )
         assert_admin_url(self.url)
-        return {"comparison_name": uploaded_name, "comparison_uploaded_version": uploaded_version}
+        self._require_overwrite_destination(str(response.url), expected_identity=reviewed_identity)
+        self._require_overwrite_destination(self.url, expected_identity=reviewed_identity)
+        success_notices = [
+            " ".join(str(node.inner_text() or "").split())
+            for node in self._page.query_selector_all(".wrap p")
+        ]
+        if success_notices.count(OVERWRITE_SUCCESS_MARKER) != 1:
+            raise IndeterminateError(
+                "WordPress did not show exactly one fixed structured plugin-update success marker."
+            )
+        return {
+            "comparison_name": uploaded_name,
+            "comparison_uploaded_version": uploaded_version,
+            "overwrite_navigation_proven": True,
+            "overwrite_http_status": 200,
+            "wordpress_success_marker_exact": True,
+        }
 
 
 class StepRecorder:
@@ -1242,6 +1918,814 @@ class PublicPage:
         return sum(len(self._page.query_selector_all(selector)) for selector in selectors)
 
 
+class FnptNetworkGuard:
+    """Abort/record every non-read request and every possible analytics read.
+
+    Only GET/HEAD documents for the three fixed product paths and passive static
+    resources on the exact origin may proceed. Off-origin reads and same-origin
+    fetch/xhr/beacon-style reads are aborted, so no analytics endpoint can receive
+    even a read-shaped submission. Records contain counts and fixed method buckets
+    only -- never URLs, payloads, headers or customer/page text.
+    """
+
+    _METHOD_BUCKETS = ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "CONNECT", "TRACE", "OTHER")
+    _PASSIVE_RESOURCE_TYPES = frozenset({"script", "stylesheet", "image", "font", "media"})
+
+    def __init__(self, allowed_documents: frozenset[str]):
+        self.allowed_documents = allowed_documents
+        self.non_read_method_counts = {method: 0 for method in self._METHOD_BUCKETS}
+        self.off_origin_reads_aborted = 0
+        self.disallowed_same_origin_reads_aborted = 0
+        self.allowed_read_requests = 0
+        self.aborted_requests = 0
+
+    @staticmethod
+    def _method_bucket(method: str) -> str:
+        return method if method in FnptNetworkGuard._METHOD_BUCKETS[:-1] else "OTHER"
+
+    def handle(self, route: Any) -> None:
+        request = route.request
+        method = str(request.method or "").upper()
+        if method not in {"GET", "HEAD"}:
+            self.non_read_method_counts[self._method_bucket(method)] += 1
+            self.aborted_requests += 1
+            route.abort("blockedbyclient")
+            return
+
+        parsed = urlsplit(str(request.url or ""))
+        exact_origin = (
+            parsed.scheme == "https"
+            and (parsed.hostname or "").casefold() == ALLOWED_HOST
+            and parsed.port in (None, 443)
+            and not parsed.username
+            and not parsed.password
+        )
+        if not exact_origin:
+            self.off_origin_reads_aborted += 1
+            self.aborted_requests += 1
+            route.abort("blockedbyclient")
+            return
+
+        path = parsed.path or "/"
+        resource_type = str(getattr(request, "resource_type", "") or "")
+        is_document = (
+            resource_type == "document"
+            and str(request.url or "") in self.allowed_documents
+            and path in FNPT_PUBLIC_PATHS
+        )
+        is_passive_static = (
+            resource_type in self._PASSIVE_RESOURCE_TYPES
+            and any(path.startswith(prefix) for prefix in FNPT_STATIC_PATH_PREFIXES)
+        )
+        if is_document or is_passive_static:
+            self.allowed_read_requests += 1
+            route.continue_()
+            return
+
+        self.disallowed_same_origin_reads_aborted += 1
+        self.aborted_requests += 1
+        route.abort("blockedbyclient")
+
+    def projection(self) -> dict[str, Any]:
+        return {
+            "allowed_methods": ["GET", "HEAD"],
+            "allowed_read_requests": self.allowed_read_requests,
+            "non_read_requests_aborted": sum(self.non_read_method_counts.values()),
+            "non_read_method_counts": dict(self.non_read_method_counts),
+            "off_origin_reads_aborted": self.off_origin_reads_aborted,
+            "disallowed_same_origin_reads_aborted": self.disallowed_same_origin_reads_aborted,
+            "total_requests_aborted": self.aborted_requests,
+            "analytics_submission_performed": False,
+            "business_write_performed": False,
+        }
+
+
+class FnptCustomerPage:
+    """Narrow anonymous reader and local-DOM exerciser for fixed product pages."""
+
+    _CONFIG_KEYS = (
+        "button", "cartHeading", "cartQuoteRequired", "cartQuoteUrl", "cartText",
+        "formId", "formMarker", "quoteUrl",
+    )
+
+    def __init__(self, page: Any, guard: FnptNetworkGuard, *,
+                 release_version: str = FNPT_REPAIR_VERSION,
+                 js_sha256: str = FNPT_JS_SHA256,
+                 css_sha256: str = FNPT_CSS_SHA256):
+        self._page = page
+        self.guard = guard
+        self.release_version = release_version
+        self.js_sha256 = js_sha256
+        self.css_sha256 = css_sha256
+        self._asset_responses: dict[str, list[Any]] = {FNPT_JS_PATH: [], FNPT_CSS_PATH: []}
+        self._page_error_count = 0
+        self._guard_induced_stripe_page_error_count = 0
+        self._page_error_category: str | None = None
+        self._page_error_off_origin_start = 0
+        self._page_error_pages: list[dict[str, Any]] = []
+        self._unresolved_native_baseline: dict[str, Any] | None = None
+        page.on("response", self._capture_asset_response)
+        page.on("pageerror", self._capture_page_error)
+
+    def _capture_page_error(self, error: Any) -> None:
+        if str(error or "") == "Stripe is not defined":
+            self._guard_induced_stripe_page_error_count += 1
+            return
+        self._page_error_count += 1
+
+    @staticmethod
+    def _fixed_page_category(path: str) -> str:
+        categories = {
+            urlsplit(FNPT_PRODUCT_URL).path: "fnpt_product",
+            urlsplit(STUB_PRODUCT_URL).path: "stub_control",
+            urlsplit(PIPE_PRODUCT_URL).path: "pipe_control",
+        }
+        category = categories.get(path)
+        if category is None:
+            raise FnptPublicRefusal("page_url")
+        return category
+
+    def _begin_page_error_scope(self, category: str) -> None:
+        if (self._page_error_category is not None
+                or category not in {"fnpt_product", "stub_control", "pipe_control"}):
+            raise FnptPublicRefusal("page_error_guard_attribution")
+        guard_aborts = getattr(self.guard, "off_origin_reads_aborted", None)
+        if type(guard_aborts) is not int or guard_aborts < 0:
+            raise FnptPublicRefusal("page_error_guard_attribution")
+        self._page_error_category = category
+        self._page_error_off_origin_start = guard_aborts
+        self._page_error_count = 0
+        self._guard_induced_stripe_page_error_count = 0
+
+    def _finish_current_page_errors(self) -> None:
+        if self._page_error_category is None:
+            return
+        guard_aborts = getattr(self.guard, "off_origin_reads_aborted", None)
+        if type(guard_aborts) is not int or guard_aborts < self._page_error_off_origin_start:
+            raise FnptPublicRefusal("page_error_guard_attribution")
+        abort_delta = guard_aborts - self._page_error_off_origin_start
+        if self._page_error_count != 0:
+            raise FnptPublicRefusal("page_error_unclassified")
+        if self._guard_induced_stripe_page_error_count > 1:
+            raise FnptPublicRefusal("page_error_guard_repeated")
+        if self._guard_induced_stripe_page_error_count == 1 and abort_delta < 1:
+            raise FnptPublicRefusal("page_error_guard_attribution")
+        self._page_error_pages.append({
+            "page_category": self._page_error_category,
+            "accepted_fixed_guard_error_count": self._guard_induced_stripe_page_error_count,
+            "unclassified_error_count": 0,
+            "off_origin_reads_aborted_delta": abort_delta,
+            "status": "passed",
+        })
+        self._page_error_category = None
+
+    def page_error_projection(self) -> list[dict[str, Any]]:
+        return [dict(row) for row in self._page_error_pages]
+
+    def _capture_asset_response(self, response: Any) -> None:
+        path = urlsplit(str(response.url or "")).path
+        if path in self._asset_responses:
+            self._asset_responses[path].append(response)
+
+    @property
+    def url(self) -> str:
+        return str(self._page.url)
+
+    @staticmethod
+    def _same_url(actual: str, expected: str) -> bool:
+        left, right = urlsplit(actual), urlsplit(expected)
+        return (
+            left.scheme == right.scheme == "https"
+            and (left.hostname or "").casefold() == (right.hostname or "").casefold() == ALLOWED_HOST
+            and left.port in (None, 443)
+            and right.port in (None, 443)
+            and left.path == right.path
+            and parse_qs(left.query, keep_blank_values=True) == parse_qs(right.query, keep_blank_values=True)
+            and not left.fragment
+        )
+
+    def load(self, url: str) -> None:
+        parsed = urlsplit(url)
+        if parsed.path not in FNPT_PUBLIC_PATHS:
+            raise FnptPublicRefusal("page_url")
+        self._finish_current_page_errors()
+        self._begin_page_error_scope(self._fixed_page_category(parsed.path))
+        self._unresolved_native_baseline = None
+        self._asset_responses = {FNPT_JS_PATH: [], FNPT_CSS_PATH: []}
+        response = self._page.goto(
+            url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+        )
+        self._page.wait_for_load_state("load", timeout=LOAD_STATE_TIMEOUT_MS)
+        if response is None or int(response.status) != 200:
+            raise FnptPublicRefusal("page_status")
+        if not self._same_url(self.url, url):
+            raise FnptPublicRefusal("page_url")
+        text = str(self._page.inner_text("body", timeout=ACTION_TIMEOUT_MS) or "")
+        lowered = text.casefold()
+        if len(text.strip()) < MIN_RENDERED_TEXT:
+            raise FnptPublicRefusal("page_blank")
+        if any(marker in lowered for marker in FATAL_MARKERS):
+            raise FnptPublicRefusal("page_fatal")
+
+    def form(self, parent_id: int) -> Any:
+        forms = self._page.query_selector_all(VARIATION_FORM_SELECTOR)
+        if not forms:
+            raise FnptPublicRefusal("form_missing")
+        if len(forms) != 1:
+            raise FnptPublicRefusal("form_ambiguous")
+        form = forms[0]
+        if str(form.get_attribute("data-product_id") or "") != str(parent_id):
+            raise FnptPublicRefusal("parent_identity")
+        return form
+
+    def variation_rows(self, parent_id: int, expected_ids: tuple[int, ...], *,
+                       expected_freight: bool | None) -> dict[int, dict[str, Any]]:
+        form = self.form(parent_id)
+        raw = form.get_attribute("data-product_variations")
+        if not isinstance(raw, str) or not raw or len(raw) > 2_000_000:
+            raise FnptPublicRefusal("variation_dataset_missing")
+        try:
+            values = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise FnptPublicRefusal("variation_dataset_malformed") from exc
+        if not isinstance(values, list):
+            raise FnptPublicRefusal("variation_dataset_malformed")
+        rows: dict[int, dict[str, Any]] = {}
+        for value in values:
+            if not isinstance(value, dict) or type(value.get("variation_id")) is not int:
+                raise FnptPublicRefusal("variation_dataset_identity")
+            variation_id = value["variation_id"]
+            if variation_id in rows:
+                raise FnptPublicRefusal("variation_dataset_ids")
+            attributes = value.get("attributes")
+            if (not isinstance(attributes, dict) or not attributes
+                    or any(not isinstance(key, str) or not key.startswith("attribute_")
+                           or not isinstance(option, str) or not option
+                           for key, option in attributes.items())):
+                raise FnptPublicRefusal("variation_dataset_attributes")
+            if expected_freight is not None and (
+                value.get("frpdepot_quote_required") is not expected_freight
+                or type(value.get("frpdepot_product_id")) is not int
+                or value.get("frpdepot_product_id") != parent_id
+                or type(value.get("frpdepot_variation_id")) is not int
+                or value.get("frpdepot_variation_id") != variation_id
+            ):
+                raise FnptPublicRefusal("variation_dataset_identity")
+            rows[variation_id] = value
+        if tuple(sorted(rows)) != tuple(expected_ids):
+            raise FnptPublicRefusal("variation_dataset_ids")
+        return rows
+
+    def fixed_control_row(self, parent_id: int, variation_id: int,
+                          expected_freight: bool | None) -> dict[str, Any]:
+        """Read one exact comparator row without pretending its siblings are fixed here."""
+        form = self.form(parent_id)
+        raw = form.get_attribute("data-product_variations")
+        if not isinstance(raw, str) or not raw or len(raw) > 2_000_000:
+            raise FnptPublicRefusal("variation_dataset_missing")
+        try:
+            values = json.loads(raw)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise FnptPublicRefusal("variation_dataset_malformed") from exc
+        if not isinstance(values, list):
+            raise FnptPublicRefusal("variation_dataset_malformed")
+        matches = [value for value in values if isinstance(value, dict)
+                   and value.get("variation_id") == variation_id]
+        if len(matches) != 1:
+            raise FnptPublicRefusal("variation_dataset_ids")
+        row = matches[0]
+        attributes = row.get("attributes")
+        if (type(row.get("variation_id")) is not int
+                or not isinstance(attributes, dict) or not attributes
+                or any(not isinstance(key, str) or not key.startswith("attribute_")
+                       or not isinstance(option, str) or not option
+                       for key, option in attributes.items())):
+            raise FnptPublicRefusal("variation_dataset_attributes")
+        if expected_freight is not None and (
+            row.get("frpdepot_quote_required") is not expected_freight
+            or type(row.get("frpdepot_product_id")) is not int
+            or row.get("frpdepot_product_id") != parent_id
+            or type(row.get("frpdepot_variation_id")) is not int
+            or row.get("frpdepot_variation_id") != variation_id
+        ):
+            raise FnptPublicRefusal("variation_dataset_identity")
+        return row
+
+    def _fixed_asset_url(self, url: str, path: str) -> bool:
+        parsed = urlsplit(str(url or ""))
+        return (
+            parsed.scheme == "https"
+            and (parsed.hostname or "").casefold() == ALLOWED_HOST
+            and parsed.port in (None, 443)
+            and parsed.path == path
+            and parse_qs(parsed.query, keep_blank_values=True) == {"ver": [self.release_version]}
+            and not parsed.fragment
+        )
+
+    def _require_asset(self, selector: str, attribute: str, path: str, expected_hash: str) -> None:
+        matching_path: list[str] = []
+        exact: list[str] = []
+        for element in self._page.query_selector_all(selector):
+            url = str(element.get_attribute(attribute) or "")
+            if urlsplit(url).path == path:
+                matching_path.append(url)
+                if self._fixed_asset_url(url, path):
+                    exact.append(url)
+        if len(matching_path) != 1:
+            raise FnptPublicRefusal("asset_count")
+        if len(exact) != 1:
+            raise FnptPublicRefusal("asset_version")
+        responses = [response for response in self._asset_responses[path]
+                     if self._fixed_asset_url(str(response.url or ""), path)]
+        if len(responses) != 1 or int(responses[0].status) != 200:
+            raise FnptPublicRefusal("asset_response")
+        try:
+            body = responses[0].body()
+        except Exception as exc:  # noqa: BLE001 - converted to a fixed code
+            raise FnptPublicRefusal("asset_response") from exc
+        if hashlib.sha256(body).hexdigest() != expected_hash:
+            raise FnptPublicRefusal("asset_hash")
+
+    def require_release_shell(self) -> None:
+        if len(self._page.query_selector_all(FNPT_PANEL_SELECTOR)) != 1:
+            raise FnptPublicRefusal("panel_count")
+        self._require_asset(FNPT_SCRIPT_SELECTOR, "src", FNPT_JS_PATH, self.js_sha256)
+        self._require_asset(FNPT_STYLE_SELECTOR, "href", FNPT_CSS_PATH, self.css_sha256)
+        config = self._page.evaluate(
+            """keys => {
+              const value=window.FRPDepotFreightQuoteJourney;
+              if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+              const types={};
+              keys.forEach(key => { types[key]=typeof value[key]; });
+              return {keys:Object.keys(value).sort(), types:types};
+            }""",
+            list(self._CONFIG_KEYS),
+        )
+        if not isinstance(config, dict):
+            raise FnptPublicRefusal("config_missing")
+        expected_types = {key: "string" for key in self._CONFIG_KEYS}
+        if (tuple(config.get("keys") or ()) != tuple(sorted(self._CONFIG_KEYS))
+                or config.get("types") != expected_types):
+            raise FnptPublicRefusal("config_shape")
+
+    def require_release_contract(self, parent_id: int, expected_ids: tuple[int, ...], *,
+                                 expected_freight: bool | None) -> dict[int, dict[str, Any]]:
+        self.require_release_shell()
+        rows = self.variation_rows(
+            parent_id, expected_ids, expected_freight=expected_freight
+        )
+        self.capture_unresolved_baseline(parent_id)
+        return rows
+
+    def require_selection_controls(self, parent_id: int, row: dict[str, Any]) -> None:
+        form = self.form(parent_id)
+        selects = form.query_selector_all(FNPT_VARIATION_SELECT_SELECTOR)
+        for name, value in row["attributes"].items():
+            matches = [select for select in selects
+                       if str(select.get_attribute("name") or "") == name]
+            if len(matches) != 1:
+                raise FnptPublicRefusal("selection_control")
+            options = [str(option.get_attribute("value") or "")
+                       for option in matches[0].query_selector_all("option")]
+            if options.count(value) != 1:
+                raise FnptPublicRefusal("selection_control")
+
+    def _reset(self, parent_id: int) -> None:
+        form = self.form(parent_id)
+        resets = form.query_selector_all(FNPT_RESET_SELECTOR)
+        if len(resets) != 1:
+            raise FnptPublicRefusal("selection_control")
+        for select in form.query_selector_all(FNPT_VARIATION_SELECT_SELECTOR):
+            select.select_option("", force=True, timeout=ACTION_TIMEOUT_MS)
+        self._page.evaluate(
+            """() => {
+              const form=document.querySelector('form.variations_form');
+              if (form && window.jQuery) window.jQuery(form).trigger('reset_data');
+            }"""
+        )
+        self._require_unresolved_state(parent_id)
+
+    def select_row(self, parent_id: int, row: dict[str, Any]) -> None:
+        self._reset(parent_id)
+        form = self.form(parent_id)
+        selects = form.query_selector_all(FNPT_VARIATION_SELECT_SELECTOR)
+        for name, value in row["attributes"].items():
+            matches = [select for select in selects
+                       if str(select.get_attribute("name") or "") == name]
+            if len(matches) != 1:
+                raise FnptPublicRefusal("selection_control")
+            matches[0].select_option(value, force=True, timeout=ACTION_TIMEOUT_MS)
+        expected = str(row["variation_id"])
+        deadline = time.monotonic() + (READINESS_TIMEOUT_MS / 1000)
+        while True:
+            controls = form.query_selector_all(VARIATION_ID_SELECTOR)
+            if len(controls) == 1:
+                actual = str(controls[0].input_value(timeout=ACTION_TIMEOUT_MS) or "")
+                if actual == expected:
+                    return
+            if time.monotonic() >= deadline:
+                raise FnptPublicRefusal("selection_timeout")
+            time.sleep(READINESS_POLL_SECONDS)
+
+    def _state(self) -> dict[str, Any]:
+        self._page.evaluate(
+            "() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)))"
+        )
+        value = self._page.evaluate(
+            """() => {
+              const forms=document.querySelectorAll('form.variations_form');
+              const form=forms.length===1 ? forms[0] : null;
+              const input=form && form.querySelector('input.variation_id');
+              const nativeButtons=form ? form.querySelectorAll('button.single_add_to_cart_button') : [];
+              const add=nativeButtons.length===1 ? nativeButtons[0] : null;
+              const owned=document.querySelectorAll('.frpdepot-fqj-native-button-concealed');
+              const panels=document.querySelectorAll('.frpdepot-fqj-product');
+              const panel=panels.length===1 ? panels[0] : null;
+              const quote=panel && panel.querySelector('.frpdepot-fqj-product-button');
+              const visible=el => {
+                if (!el) return false;
+                const style=getComputedStyle(el);
+                return style.display!=='none' && style.visibility!=='hidden' && style.visibility!=='collapse' && el.getClientRects().length>0;
+              };
+              const nativeStyle=add ? getComputedStyle(add) : null;
+              return {
+                formCount:forms.length,
+                resolved:String(input && input.value || ''),
+                panelCount:panels.length,
+                panelHidden:panel ? !!panel.hidden : null,
+                panelVisible:visible(panel),
+                nativeHidden:add ? !!add.hidden : null,
+                nativeVisible:visible(add),
+                nativeDisplay:nativeStyle ? nativeStyle.display : null,
+                nativeVisibility:nativeStyle ? nativeStyle.visibility : null,
+                nativeOwnedClass:add ? add.classList.contains('frpdepot-fqj-native-button-concealed') : null,
+                nativeButtonCount:nativeButtons.length,
+                ownedClassCount:owned.length,
+                nativeDisabled:add ? (!!add.disabled || add.getAttribute('disabled')!==null) : null,
+                nativeAriaHidden:add ? add.getAttribute('aria-hidden') : null,
+                nativeAriaDisabled:add ? add.getAttribute('aria-disabled') : null,
+                nativeTabindex:add ? add.getAttribute('tabindex') : null,
+                quoteHref:quote ? quote.getAttribute('href') : null,
+                quoteAriaDisabled:quote ? quote.getAttribute('aria-disabled') : null,
+                quoteTabindex:quote ? quote.getAttribute('tabindex') : null
+              };
+            }"""
+        )
+        if not isinstance(value, dict):
+            raise FnptPublicRefusal("stale_state")
+        return value
+
+    @staticmethod
+    def _native_restore_projection(state: dict[str, Any]) -> dict[str, Any]:
+        return {
+            key: state.get(key) for key in (
+                "nativeHidden", "nativeVisible", "nativeDisplay", "nativeVisibility",
+                "nativeOwnedClass", "nativeDisabled", "nativeAriaHidden",
+                "nativeAriaDisabled", "nativeTabindex", "nativeButtonCount",
+                "ownedClassCount",
+            )
+        }
+
+    def capture_unresolved_baseline(self, parent_id: int) -> None:
+        del parent_id
+        state = self._state()
+        if (state.get("formCount") != 1
+                or state.get("resolved") not in {"", "0"}
+                or state.get("panelCount") != 1
+                or state.get("panelHidden") is not True
+                or state.get("panelVisible") is not False
+                or state.get("nativeButtonCount") != 1
+                or state.get("ownedClassCount") != 0
+                or state.get("nativeOwnedClass") is not False
+                or state.get("nativeDisplay") in (None, "none")
+                or state.get("nativeVisible") is not True
+                or state.get("quoteHref") is not None
+                or state.get("quoteAriaDisabled") != "true"
+                or state.get("quoteTabindex") != "-1"):
+            raise FnptPublicRefusal("stale_state")
+        self._unresolved_native_baseline = self._native_restore_projection(state)
+
+    def require_no_page_errors(self) -> list[dict[str, Any]]:
+        self._finish_current_page_errors()
+        return self.page_error_projection()
+
+    @staticmethod
+    def _quote_url_exact(url: str, parent_id: int, variation_id: int,
+                         quantity: str = "1") -> bool:
+        parsed = urlsplit(str(url or ""))
+        return (
+            parsed.scheme == "https"
+            and (parsed.hostname or "").casefold() == ALLOWED_HOST
+            and parsed.port in (None, 443)
+            and parsed.path == "/"
+            and parse_qs(parsed.query, keep_blank_values=True) == {
+                "fqj_source": ["product"],
+                "fqj_product_id": [str(parent_id)],
+                "fqj_variation_id": [str(variation_id)],
+                "fqj_quantity": [quantity],
+            }
+            and not parsed.fragment
+        )
+
+    def require_freight_state(self, parent_id: int, variation_id: int, *,
+                              handoff: bool, quantity: str = "1") -> None:
+        state = self._state()
+        if state.get("formCount") != 1 or state.get("panelCount") != 1:
+            raise FnptPublicRefusal("panel_count")
+        if (state.get("panelHidden") is not False or state.get("panelVisible") is not True
+                or state.get("nativeButtonCount") != 1
+                or state.get("ownedClassCount") != 1
+                or state.get("nativeHidden") is not True
+                or state.get("nativeVisible") is not False
+                or state.get("nativeDisplay") != "none"
+                or state.get("nativeVisibility") != "visible"
+                or state.get("nativeOwnedClass") is not True
+                or state.get("nativeDisabled") is not True
+                or state.get("nativeAriaHidden") != "true"
+                or state.get("nativeAriaDisabled") != "true"
+                or state.get("nativeTabindex") != "-1"):
+            raise FnptPublicRefusal("freight_state")
+        if handoff:
+            if (state.get("resolved") != str(variation_id)
+                    or state.get("quoteAriaDisabled") is not None
+                    or not self._quote_url_exact(
+                        str(state.get("quoteHref") or ""), parent_id, variation_id, quantity
+                    )):
+                raise FnptPublicRefusal("quote_handoff")
+        elif (state.get("quoteHref") is not None
+              or state.get("quoteAriaDisabled") != "true"
+              or state.get("quoteTabindex") != "-1"):
+            raise FnptPublicRefusal("quote_handoff")
+
+    def require_direct_state(self, variation_id: int) -> None:
+        state = self._state()
+        if (state.get("resolved") != str(variation_id)
+                or state.get("formCount") != 1
+                or state.get("panelCount") != 1
+                or state.get("panelHidden") is not True
+                or state.get("panelVisible") is not False
+                or state.get("nativeHidden") is not False
+                or state.get("nativeVisible") is not True
+                or state.get("nativeDisplay") in (None, "none")
+                or state.get("nativeVisibility") != "visible"
+                or state.get("nativeButtonCount") != 1
+                or state.get("ownedClassCount") != 0
+                or state.get("nativeOwnedClass") is not False
+                or state.get("nativeDisabled") is not False
+                or state.get("nativeAriaHidden") == "true"
+                or state.get("nativeAriaDisabled") == "true"
+                or state.get("nativeTabindex") == "-1"
+                or state.get("quoteHref") is not None
+                or state.get("quoteAriaDisabled") != "true"
+                or state.get("quoteTabindex") != "-1"):
+            raise FnptPublicRefusal("direct_state")
+
+    def _require_restored_state(self, parent_id: int, *,
+                                require_selection_clear: bool) -> None:
+        del parent_id
+        state = self._state()
+        if (type(require_selection_clear) is not bool
+                or self._unresolved_native_baseline is None
+                or state.get("formCount") != 1
+                or (require_selection_clear and state.get("resolved") not in {"", "0"})
+                or state.get("panelCount") != 1
+                or state.get("panelHidden") is not True
+                or state.get("panelVisible") is not False
+                or state.get("quoteHref") is not None
+                or state.get("quoteAriaDisabled") != "true"
+                or state.get("quoteTabindex") != "-1"
+                or self._native_restore_projection(state) != self._unresolved_native_baseline):
+            raise FnptPublicRefusal("stale_state")
+
+    def _require_unresolved_state(self, parent_id: int) -> None:
+        self._require_restored_state(parent_id, require_selection_clear=True)
+
+    def _require_plugin_reset_state(self, parent_id: int) -> None:
+        self._require_restored_state(parent_id, require_selection_clear=False)
+
+    def dispatch_found_variation(self, payload: dict[str, Any]) -> None:
+        self._page.evaluate(
+            """payload => {
+              const form=document.querySelector('form.variations_form');
+              if (!form || !window.jQuery) throw new Error('fixed event unavailable');
+              window.jQuery(form).trigger('found_variation', [payload]);
+            }""",
+            payload,
+        )
+
+    def dispatch_lifecycle(self, event_name: str) -> None:
+        if event_name not in {"reset_data", "hide_variation"}:
+            raise FnptPublicRefusal("stale_state")
+        self._page.evaluate(
+            """eventName => {
+              const form=document.querySelector('form.variations_form');
+              if (!form || !window.jQuery) throw new Error('fixed event unavailable');
+              window.jQuery(form).trigger(eventName);
+            }""",
+            event_name,
+        )
+
+    def quantity_transition(self, value: str) -> None:
+        if value != "2":
+            raise FnptPublicRefusal("stale_state")
+        changed = self._page.evaluate(
+            """value => {
+              const form=document.querySelector('form.variations_form');
+              const qty=form && form.querySelector('input.qty');
+              if (!qty) return false;
+              qty.value=value;
+              qty.dispatchEvent(new Event('input', {bubbles:true}));
+              qty.dispatchEvent(new Event('change', {bubbles:true}));
+              return true;
+            }""",
+            value,
+        )
+        if changed is not True:
+            raise FnptPublicRefusal("selection_control")
+
+
+@contextlib.contextmanager
+def fnpt_anonymous_session(allowed_documents: frozenset[str], *,
+                           release_version: str = FNPT_REPAIR_VERSION,
+                           js_sha256: str = FNPT_JS_SHA256,
+                           css_sha256: str = FNPT_CSS_SHA256) -> Iterator[FnptCustomerPage]:
+    """One throwaway nonpersistent context with the strict FNPT network guard."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="msedge", headless=True)
+        try:
+            context = browser.new_context()
+            context.set_default_timeout(ACTION_TIMEOUT_MS)
+            context.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+            guard = FnptNetworkGuard(allowed_documents)
+            context.route("**/*", guard.handle)
+            try:
+                yield FnptCustomerPage(
+                    context.new_page(), guard, release_version=release_version,
+                    js_sha256=js_sha256, css_sha256=css_sha256,
+                )
+            finally:
+                context.close()
+        finally:
+            browser.close()
+
+
+class ContactReadOnlyNetworkGuard:
+    """Allow only fixed GET/HEAD documents and passive same-origin static files."""
+
+    _PASSIVE_TYPES = frozenset({"script", "stylesheet", "image", "font", "media"})
+
+    def __init__(self) -> None:
+        self.non_read_seen = 0
+        self.aborted = 0
+
+    def handle(self, route: Any) -> None:
+        request = route.request
+        method = str(request.method or "").upper()
+        if method not in {"GET", "HEAD"}:
+            self.non_read_seen += 1
+            self.aborted += 1
+            route.abort("blockedbyclient")
+            return
+        parsed = urlsplit(str(request.url or ""))
+        exact_origin = (
+            parsed.scheme == "https"
+            and (parsed.hostname or "").casefold() == ALLOWED_HOST
+            and parsed.port in (None, 443)
+            and not parsed.username and not parsed.password
+        )
+        resource_type = str(getattr(request, "resource_type", "") or "")
+        document = resource_type == "document" and str(request.url or "") in CONTACT_READ_ONLY_URLS
+        static = resource_type in self._PASSIVE_TYPES and any(
+            (parsed.path or "/").startswith(prefix) for prefix in FNPT_STATIC_PATH_PREFIXES
+        )
+        if exact_origin and (document or static):
+            route.continue_()
+            return
+        self.aborted += 1
+        route.abort("blockedbyclient")
+
+    def projection(self) -> dict[str, Any]:
+        return {
+            "allowed_methods": ["GET", "HEAD"],
+            "all_non_read_requests_aborted": True,
+            "all_analytics_requests_aborted": True,
+            "analytics_submission_performed": False,
+            "business_write_performed": False,
+            "form_submission_performed": False,
+        }
+
+
+class ContactPublicProbe:
+    """Read the exact Contact render and quote-route 404 without exposing body text."""
+
+    def __init__(self, page: Any, guard: ContactReadOnlyNetworkGuard):
+        self._page = page
+        self.guard = guard
+        self.page_errors = 0
+        page.on("pageerror", self._page_error)
+
+    def _page_error(self, _error: Any) -> None:
+        self.page_errors += 1
+
+    @staticmethod
+    def _same_bare_url(actual: str, expected: str) -> bool:
+        left, right = urlsplit(str(actual or "")), urlsplit(expected)
+        return (
+            left.scheme == right.scheme == "https"
+            and (left.hostname or "").casefold() == ALLOWED_HOST
+            and (right.hostname or "").casefold() == ALLOWED_HOST
+            and left.port in (None, 443) and right.port in (None, 443)
+            and left.path == right.path and not left.query and not left.fragment
+        )
+
+    def snapshot(self) -> dict[str, Any]:
+        contact_response = self._page.goto(
+            CONTACT_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+        )
+        self._page.wait_for_load_state("load", timeout=LOAD_STATE_TIMEOUT_MS)
+        if contact_response is None or int(contact_response.status) != 200 \
+                or not self._same_bare_url(str(self._page.url), CONTACT_URL):
+            raise DeploymentError("REFUSED: the fixed public Contact page is not exact HTTP 200.")
+        body = str(self._page.inner_text("body", timeout=ACTION_TIMEOUT_MS) or "")
+        normal = re.sub(r"[\s\u00a0]+", " ", body).strip()
+        structure = self._page.evaluate(
+            """expected => {
+              const normal=value => String(value || '').replace(/[\\s\\u00a0]+/g,' ').trim();
+              const strong=Array.from(document.querySelectorAll('strong'))
+                .filter(node => normal(node.textContent)===expected.strong);
+              let sentence=0;
+              strong.forEach(node => {
+                let parent=node.parentElement;
+                while (parent && parent!==document.body) {
+                  if (normal(parent.textContent)===expected.sentence) { sentence += 1; break; }
+                  parent=parent.parentElement;
+                }
+              });
+              return {strong_count:strong.length,strong_sentence_count:sentence};
+            }""",
+            {"strong": CONTACT_TARGET_STRONG_TEXT, "sentence": CONTACT_TARGET_SENTENCE},
+        )
+        contact = {
+            "status": 200,
+            "path": "/contact/",
+            "target_sentence_count": normal.count(CONTACT_TARGET_SENTENCE),
+            "old_sentence_count": normal.count(CONTACT_OLD_SENTENCE),
+            "strong_count": structure.get("strong_count") if isinstance(structure, dict) else None,
+            "strong_sentence_count": (
+                structure.get("strong_sentence_count") if isinstance(structure, dict) else None
+            ),
+        }
+        if contact != {
+            "status": 200, "path": "/contact/", "target_sentence_count": 1,
+            "old_sentence_count": 0, "strong_count": 1, "strong_sentence_count": 1,
+        }:
+            raise DeploymentError("REFUSED: public Contact sentence or strong structure changed.")
+
+        quote_response = self._page.goto(
+            REQUEST_QUOTE_URL, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS
+        )
+        self._page.wait_for_load_state("load", timeout=LOAD_STATE_TIMEOUT_MS)
+        quote = {
+            "status": int(quote_response.status) if quote_response is not None else None,
+            "path": "/request-a-quote/" if self._same_bare_url(
+                str(self._page.url), REQUEST_QUOTE_URL
+            ) else None,
+        }
+        if quote != {"status": 404, "path": "/request-a-quote/"}:
+            raise DeploymentError("REFUSED: /request-a-quote/ is not the protected HTTP 404.")
+        if self.page_errors != 0:
+            raise DeploymentError("REFUSED: a fixed public read raised an uncaught page error.")
+        return {
+            "contact": contact,
+            "request_quote": quote,
+            "network": self.guard.projection(),
+            "page_error_count": 0,
+        }
+
+
+@contextlib.contextmanager
+def contact_read_only_session() -> Iterator[ContactPublicProbe]:
+    """One throwaway context whose router makes every non-read request impossible."""
+    from playwright.sync_api import sync_playwright
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(channel="msedge", headless=True)
+        try:
+            context = browser.new_context()
+            context.set_default_timeout(ACTION_TIMEOUT_MS)
+            context.set_default_navigation_timeout(NAV_TIMEOUT_MS)
+            guard = ContactReadOnlyNetworkGuard()
+            context.route("**/*", guard.handle)
+            try:
+                yield ContactPublicProbe(context.new_page(), guard)
+            finally:
+                context.close()
+        finally:
+            browser.close()
+
+
 # ---------------------------------------------------------------------------
 # Sessions. Patched wholesale in tests; no network in the test suite.
 # ---------------------------------------------------------------------------
@@ -1578,6 +3062,313 @@ def _preflight_probe() -> tuple[list[dict[str, Any]], int | None, ValidationStep
     return runs, None, None
 
 
+def _fnpt_cache_buster_url(nonce: str) -> str:
+    if not re.fullmatch(r"[0-9a-f]{32}", str(nonce or "")):
+        raise DeploymentError("Plan nonce is not one exact lowercase 128-bit hex value.")
+    return f"{FNPT_PRODUCT_URL}?{FNPT_CACHE_BUSTER_KEY}={nonce}"
+
+
+def _fnpt_step(records: list[dict[str, Any]], step: str,
+               action: Callable[[], Any]) -> Any:
+    if step not in FNPT_PUBLIC_VALIDATION_STEPS:
+        raise DeploymentError("Internal: unknown FNPT public-validation step.")
+    started = time.monotonic()
+    try:
+        value = action()
+    except FnptPublicValidationError:
+        raise
+    except FnptPublicRefusal as exc:
+        raise FnptPublicValidationError(step, type(exc).__name__, exc.code) from exc
+    except Exception as exc:  # noqa: BLE001 - permanently reduced to bounded metadata
+        raise FnptPublicValidationError(
+            step, type(exc).__name__, "unexpected_exception"
+        ) from exc
+    records.append({
+        "step": step,
+        "status": "passed",
+        "duration_ms": max(0, int((time.monotonic() - started) * 1000)),
+    })
+    return value
+
+
+def _exercise_all_fnpt_rows(page: FnptCustomerPage,
+                            rows: dict[int, dict[str, Any]]) -> None:
+    for variation_id in FNPT_PUBLISHED_VARIATION_IDS:
+        row = rows[variation_id]
+        page.require_selection_controls(2061, row)
+        page.select_row(2061, row)
+        page.require_freight_state(2061, variation_id, handoff=True)
+
+    # Pin quantity, reset and hide transitions after a real fixed selection so
+    # stale quote/native state cannot be hidden by a fresh page load.
+    page.select_row(2061, rows[2088])
+    page.quantity_transition("2")
+    page.require_freight_state(2061, 2088, handoff=True, quantity="2")
+    page.dispatch_lifecycle("reset_data")
+    page._require_plugin_reset_state(2061)
+    page.select_row(2061, rows[2088])
+    page.dispatch_lifecycle("hide_variation")
+    page._require_plugin_reset_state(2061)
+
+
+def _exercise_fnpt_fail_closed_cases(page: FnptCustomerPage) -> None:
+    fixed = {
+        "frpdepot_quote_required": False,
+        "frpdepot_product_id": 2061,
+        "frpdepot_variation_id": 2088,
+    }
+    cases = (
+        dict(fixed),
+        {**fixed, "variation_id": 0, "frpdepot_variation_id": 0},
+        {**fixed, "variation_id": "2088x", "frpdepot_variation_id": "2088x"},
+        {**fixed, "variation_id": 2088, "frpdepot_variation_id": 2089},
+        {"variation_id": 2088, "frpdepot_product_id": 2061,
+         "frpdepot_quote_required": False},
+        {"variation_id": 2088, "frpdepot_product_id": 2061,
+         "frpdepot_variation_id": 2088},
+        {**fixed, "variation_id": 2088, "frpdepot_quote_required": "false"},
+    )
+    for payload in cases:
+        page.dispatch_lifecycle("reset_data")
+        page.dispatch_found_variation(payload)
+        page.require_freight_state(2061, 2088, handoff=False)
+    page.dispatch_lifecycle("hide_variation")
+    page._require_plugin_reset_state(2061)
+
+
+def _exercise_stub_controls(page: FnptCustomerPage) -> None:
+    page.load(STUB_PRODUCT_URL)
+    page.require_release_shell()
+    direct = page.fixed_control_row(1368, 2028, False)
+    blocked = page.fixed_control_row(1368, 2044, True)
+    page.require_selection_controls(1368, direct)
+    page.require_selection_controls(1368, blocked)
+    page.capture_unresolved_baseline(1368)
+
+    # blocked -> direct -> blocked proves neither panel nor native button leaks
+    # stale state across comparator transitions.
+    page.select_row(1368, blocked)
+    page.require_freight_state(1368, 2044, handoff=True)
+    page.select_row(1368, direct)
+    page.require_direct_state(2028)
+    page.select_row(1368, blocked)
+    page.require_freight_state(1368, 2044, handoff=True)
+    page.dispatch_lifecycle("reset_data")
+    page._require_plugin_reset_state(1368)
+
+
+def _exercise_pipe_control(page: FnptCustomerPage) -> None:
+    page.load(PIPE_PRODUCT_URL)
+    page.require_release_shell()
+    blocked = page.fixed_control_row(1455, 2057, True)
+    page.require_selection_controls(1455, blocked)
+    page.capture_unresolved_baseline(1455)
+    page.select_row(1455, blocked)
+    page.require_freight_state(1455, 2057, handoff=True)
+    page.dispatch_lifecycle("hide_variation")
+    page._require_plugin_reset_state(1455)
+
+
+def _run_fnpt_public_validation(
+    plan: dict[str, Any], *, release_version: str = FNPT_REPAIR_VERSION,
+    js_sha256: str = FNPT_JS_SHA256, css_sha256: str = FNPT_CSS_SHA256,
+) -> dict[str, Any]:
+    """Run the complete post-upload acceptance in exactly two cold contexts."""
+    records: list[dict[str, Any]] = []
+    network: list[dict[str, Any]] = []
+    page_errors: list[dict[str, Any]] = []
+    cache_url = _fnpt_cache_buster_url(str(plan.get("nonce") or ""))
+    session_options = {} if release_version == FNPT_REPAIR_VERSION else {
+        "release_version": release_version,
+        "js_sha256": js_sha256,
+        "css_sha256": css_sha256,
+    }
+
+    with fnpt_anonymous_session(
+        frozenset({cache_url, STUB_PRODUCT_URL, PIPE_PRODUCT_URL}), **session_options
+    ) as page:
+        _fnpt_step(records, "cache_buster_fnpt_load", lambda: page.load(cache_url))
+        rows = _fnpt_step(
+            records,
+            "cache_buster_fnpt_contract",
+            lambda: page.require_release_contract(
+                2061, FNPT_PUBLISHED_VARIATION_IDS, expected_freight=True
+            ),
+        )
+        _fnpt_step(
+            records, "cache_buster_fnpt_variations",
+            lambda: _exercise_all_fnpt_rows(page, rows),
+        )
+        _fnpt_step(
+            records, "cache_buster_fail_closed_cases",
+            lambda: _exercise_fnpt_fail_closed_cases(page),
+        )
+        _fnpt_step(
+            records, "cache_buster_stub_controls",
+            lambda: _exercise_stub_controls(page),
+        )
+        _fnpt_step(
+            records, "cache_buster_pipe_control",
+            lambda: _exercise_pipe_control(page),
+        )
+        page_errors.append({
+            "context": "cache_buster",
+            "pages": _fnpt_step(
+                records, "cache_buster_page_errors", page.require_no_page_errors
+            ),
+        })
+        network.append(page.guard.projection())
+
+    with fnpt_anonymous_session(
+        frozenset({FNPT_PRODUCT_URL, STUB_PRODUCT_URL, PIPE_PRODUCT_URL}), **session_options
+    ) as page:
+        _fnpt_step(records, "canonical_fnpt_load", lambda: page.load(FNPT_PRODUCT_URL))
+        rows = _fnpt_step(
+            records,
+            "canonical_fnpt_contract",
+            lambda: page.require_release_contract(
+                2061, FNPT_PUBLISHED_VARIATION_IDS, expected_freight=True
+            ),
+        )
+        _fnpt_step(
+            records, "canonical_fnpt_variations",
+            lambda: (
+                _exercise_all_fnpt_rows(page, rows),
+                _exercise_fnpt_fail_closed_cases(page),
+                _exercise_stub_controls(page),
+                _exercise_pipe_control(page),
+            ),
+        )
+        page_errors.append({
+            "context": "canonical",
+            "pages": _fnpt_step(
+                records, "canonical_page_errors", page.require_no_page_errors
+            ),
+        })
+        network.append(page.guard.projection())
+
+    def require_network_guard() -> None:
+        if len(network) != 2 or len(page_errors) != 2:
+            raise FnptPublicRefusal("context_count")
+        expected_page_categories = ["fnpt_product", "stub_control", "pipe_control"]
+        for index, context_name in enumerate(("cache_buster", "canonical")):
+            context = page_errors[index]
+            pages = context.get("pages")
+            if (set(context) != {"context", "pages"}
+                    or context.get("context") != context_name
+                    or not isinstance(pages, list)
+                    or [row.get("page_category") for row in pages]
+                       != expected_page_categories):
+                raise FnptPublicRefusal("page_error_guard_attribution")
+            for row in pages:
+                fixed_count = row.get("accepted_fixed_guard_error_count")
+                abort_delta = row.get("off_origin_reads_aborted_delta")
+                if (set(row) != {
+                        "page_category", "accepted_fixed_guard_error_count",
+                        "unclassified_error_count", "off_origin_reads_aborted_delta", "status",
+                    }
+                        or fixed_count not in {0, 1}
+                        or type(abort_delta) is not int or abort_delta < 0
+                        or row.get("unclassified_error_count") != 0
+                        or row.get("status") != "passed"
+                        or (fixed_count == 1 and abort_delta < 1)):
+                    raise FnptPublicRefusal("page_error_guard_attribution")
+        for projection in network:
+            if (projection.get("allowed_methods") != ["GET", "HEAD"]
+                    or projection.get("analytics_submission_performed") is not False
+                    or projection.get("business_write_performed") is not False
+                    or set(projection.get("non_read_method_counts") or {})
+                       != set(FnptNetworkGuard._METHOD_BUCKETS)):
+                raise FnptPublicRefusal("network_guard")
+
+    _fnpt_step(records, "anonymous_network_guard", require_network_guard)
+    variation_ids_bytes = json.dumps(
+        list(FNPT_PUBLISHED_VARIATION_IDS), ensure_ascii=True,
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "status": "PASSED",
+        "contexts_opened": 2,
+        "contexts_persistent": False,
+        "admin_session_used": False,
+        "cache_buster": {
+            "query_key": FNPT_CACHE_BUSTER_KEY,
+            "value_shape": "32_lowercase_hex",
+            "unique_to_plan_nonce": True,
+            "corrected_behavior": True,
+        },
+        "canonical_bare_product_url": True,
+        "canonical_corrected_behavior": True,
+        "release_version": release_version,
+        "js_sha256": js_sha256,
+        "css_sha256": css_sha256,
+        "fnpt_parent_id": 2061,
+        "fnpt_variation_ids": list(FNPT_PUBLISHED_VARIATION_IDS),
+        "fnpt_variation_ids_sha256": hashlib.sha256(variation_ids_bytes).hexdigest(),
+        "fnpt_variations_checked_per_context": len(FNPT_PUBLISHED_VARIATION_IDS),
+        "fnpt_variation_selections_total": 2 * len(FNPT_PUBLISHED_VARIATION_IDS),
+        "fixed_controls": list(FNPT_PUBLIC_CONTROL_IDS),
+        "complete_fail_closed_stub_pipe_matrix_each_context": True,
+        "native_button_computed_display_checked": True,
+        "native_button_computed_visibility_checked": True,
+        "owned_native_button_class_checked": FNPT_NATIVE_CONCEALMENT_CLASS,
+        "non_submission": {
+            "add_to_cart_clicked": False,
+            "quote_or_contact_form_visited": False,
+            "quote_or_contact_form_submitted": False,
+            "cart_or_checkout_visited": False,
+            "order_or_payment_created": False,
+            "email_sent": False,
+            "analytics_submission_performed": False,
+            "cache_purge_or_invalidation_performed": False,
+            "wordpress_or_woocommerce_write_performed": False,
+        },
+        "network": network,
+        "page_errors": page_errors,
+        "steps": records,
+    }
+
+
+def _run_fnpt_design_preflight() -> dict[str, Any]:
+    """Fail staging if exact current public controls cannot support acceptance."""
+    with fnpt_anonymous_session(
+        frozenset({FNPT_PRODUCT_URL, STUB_PRODUCT_URL, PIPE_PRODUCT_URL})
+    ) as page:
+        page.load(FNPT_PRODUCT_URL)
+        rows = page.variation_rows(
+            2061, FNPT_PUBLISHED_VARIATION_IDS, expected_freight=None
+        )
+        for row in rows.values():
+            page.require_selection_controls(2061, row)
+        page.load(STUB_PRODUCT_URL)
+        direct = page.fixed_control_row(1368, 2028, None)
+        blocked = page.fixed_control_row(1368, 2044, None)
+        page.require_selection_controls(1368, direct)
+        page.require_selection_controls(1368, blocked)
+        page.load(PIPE_PRODUCT_URL)
+        pipe = page.fixed_control_row(1455, 2057, None)
+        page.require_selection_controls(1455, pipe)
+        projection = page.guard.projection()
+    variation_ids_bytes = json.dumps(
+        list(FNPT_PUBLISHED_VARIATION_IDS), ensure_ascii=True,
+        sort_keys=True, separators=(",", ":"),
+    ).encode("utf-8")
+    return {
+        "status": "STRUCTURE_COMPATIBLE",
+        "anonymous_contexts_opened": 1,
+        "persistent_context": False,
+        "fnpt_parent_id": 2061,
+        "fnpt_variation_count": len(rows),
+        "fnpt_variation_ids_sha256": hashlib.sha256(variation_ids_bytes).hexdigest(),
+        "fixed_controls": list(FNPT_PUBLIC_CONTROL_IDS),
+        "selection_controls_exact": True,
+        "allowed_methods": projection["allowed_methods"],
+        "non_read_requests_aborted_and_recorded": True,
+        "analytics_submission_performed": False,
+        "business_write_performed": False,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Plans
 # ---------------------------------------------------------------------------
@@ -1607,43 +3398,266 @@ VALIDATION_CONTRACT = {
                       "verify homepage and cart recovery, close the plan permanently",
 }
 
-UPS_REPAIR_VALIDATION_CONTRACT = {
-    "artifact_relation": "exact deployed 2.0.4 baseline plus two version tokens, "
-                         "disclosed readme and one fixed hidden-panel CSS rule only; "
-                         "allowlist and JavaScript byte-identical",
+FNPT_REPAIR_VALIDATION_CONTRACT = {
+    "artifact_relation": "exact 2.0.7 artifact, size/member hashes, allowlist hash and narrow transform from exact active 2.0.6",
+    "presentation_scope_only": True,
+    "fnpt_parent_product_id": 2061,
+    "fnpt_published_variation_ids": list(FNPT_PUBLISHED_VARIATION_IDS),
+    "fnpt_published_variation_count": 60,
+    "fnpt_regression_variation_id": 2088,
+    "direct_checkout_control_variation_id": 2028,
+    "oversized_control_variation_id": 2044,
+    "pipe_control_variation_id": 2057,
+    "inline_dataset_requires_exact_parent_variation_identity_and_freight_true": True,
+    "missing_malformed_or_inconsistent_variation_id_fails_to_freight": True,
+    "missing_malformed_or_inconsistent_variation_id_disables_quote_handoff": True,
+    "selection_coverage": "all exact 60 live published FNPT IDs in each cold context",
+    "native_add_to_cart_for_all_fnpt": "owned class present; hidden/disabled/ARIA/tabindex preserved; computed display none and not visible",
+    "freight_panel_for_all_fnpt": "exactly one and visible",
+    "direct_stub_2028": "direct/Add to Cart enabled; freight hidden",
+    "oversized_stub_2044": "freight",
+    "pipe_2057": "freight",
+    "reset_hide_quantity_and_blocked_direct_blocked_leave_no_stale_state": True,
+    "native_button_exactly_one_and_owned_class_has_no_spill": True,
+    "direct_and_unresolved_restore_original_accessibility_state": True,
+    "two_animation_frame_stable_state_required": True,
     "allowlisted_variations": 64,
     "researched_candidate_groups": 30,
     "physically_verified_groups": 0,
-    "measurement_status": UPS_REPAIR_MEASUREMENT_STATUS,
-    "oversized_variations_still_quote_only": 14,
-    "fnpt_variations_still_quote_only": 60,
+    "measurement_status": FNPT_REPAIR_MEASUREMENT_STATUS,
     "freight_class_still_overrides_allowlist": True,
     "unknown_mixed_custom_customer_specific_still_quote_only": True,
+    "server_cart_checkout_controls_changed": False,
+    "cart_quote_required_strict_boolean_consumer_changed": False,
+    "cart_quote_required_strict_boolean_consumer_note": "pre-existing and out of this presentation release",
+    "quote_form_contract_changed": False,
     "creates_shipping_rate": False,
     "uses_existing_woocommerce_ups_method": True,
     "product_price_stock_shipping_class_weight_dimensions_touched": False,
-    "quote_form_transaction_triggered": False,
-    "email_order_payment_created": False,
+    "live_stage_is_read_only": True,
+    "required_later_approval": "APPROVED",
+    "approval_must_be_exact_and_unpadded_first": True,
+    "plan_lifetime_hours": 24,
+    "shared_wordpress_browser_lane_before_permanent_attempt_lock": True,
+    "fresh_exact_active_2_0_6_fingerprint_before_attempt_lock": True,
+    "customer_page_design_preflight_hashed_into_plan": True,
+    "customer_page_design_preflight_repeated_before_attempt_lock": True,
+    "site_level_atomic": False,
     "automatic_rollback": False,
     "one_upload_attempt": True,
-    "post_write_plugin_row_required": "version 2.0.5 and active",
-    "post_commit_public_checks": [
-        "one allowlisted small elbow/stub selection keeps direct checkout",
-        "one oversized selection remains freight quote",
-        "one incomplete FNPT selection remains freight quote",
-        "pipe remains freight quote",
-        "one mixed cart remains freight quote",
-        "ordinary eligible cart reaches existing UPS rate path",
-    ],
-    "on_upload_or_row_failure": "lock plan indeterminate with no retry and no rollback",
+    "retry_allowed": False,
+    "overwrite_control_requires_exact_reviewed_url_shape": True,
+    "upload_comparison_navigation_must_start_and_finish_bounded": True,
+    "upload_comparison_final_url_requires_only_action_upload_plugin": True,
+    "upload_comparison_http_status_required": 200,
+    "overwrite_navigation_must_start_and_finish_bounded": True,
+    "overwrite_final_url_requires_action_upload_plugin_and_overwrite_update_plugin": True,
+    "overwrite_final_url_must_match_reviewed_package_and_nonce_in_memory": True,
+    "url_fragments_and_duplicate_query_values_refused": True,
+    "overwrite_http_status_required": 200,
+    "wordpress_success_marker_required_exactly_once": OVERWRITE_SUCCESS_MARKER,
+    "nonce_and_package_values_never_logged_or_planned": True,
+    "post_write_plugin_row_required": "version 2.0.7 and active",
+    "public_validation_same_command_while_plan_permanently_locked": True,
+    "anonymous_contexts_exact": 2,
+    "each_context_runs_all_fnpt_fail_closed_stub_and_pipe_cases": True,
+    "anonymous_contexts_throwaway_nonpersistent": True,
+    "admin_cookies_or_storage_in_anonymous_contexts": False,
+    "anonymous_allowed_methods": ["GET", "HEAD"],
+    "every_non_get_head_aborted_and_recorded": True,
+    "analytics_submission_allowed": False,
+    "customer_business_submission_allowed": False,
+    "cache_purge_or_invalidation_authorized": False,
+    "cache_purge_or_invalidation_included": False,
+    "cache_correctness_proof": {
+        "context_1": "unique ?frpdepot_fnpt_verify=<32 lowercase hex plan nonce> FNPT product URL",
+        "context_2": "canonical bare FNPT product URL",
+        "both_require_corrected_behavior": True,
+        "canonical_stale_content_is_indeterminate": True,
+        "html_requires_one_2_0_7_panel_contract": True,
+        "asset_urls_require_exact_ver": FNPT_REPAIR_VERSION,
+        "javascript_sha256": FNPT_JS_SHA256,
+        "css_sha256": FNPT_CSS_SHA256,
+        "config_requires_exact_eight_keys_and_wp_localize_string_scalars": True,
+        "all_eight_localized_value_types_checked": True,
+    },
+    "uncaught_page_errors_allowed": False,
+    "public_validation_steps": list(FNPT_PUBLIC_VALIDATION_STEPS),
+    "on_upload_row_or_public_failure": "permanent indeterminate lock/result with bounded step/code; no retry; no rollback",
+    "success_status": "COMMITTED_AND_VERIFIED",
+    "success_pending_status_allowed": False,
+    "failure_record_contains_page_or_customer_text": False,
 }
 
+CONTACT_PRESERVE_VALIDATION_CONTRACT = {
+    "transition": "exact active 2.0.7 to exact active 2.0.8",
+    "active_to_active_wordpress_upload_overwrite": True,
+    "deactivation_allowed": False,
+    "artifact_and_installed_member_order_and_hashes_exact": True,
+    "stage_is_read_only": True,
+    "required_later_approval": "APPROVED",
+    "approval_must_be_exact_and_unpadded_first": True,
+    "plan_lifetime_hours": 24,
+    "newer_plan_supersedes_older_plan": True,
+    "single_use_permanent_attempt_lock": True,
+    "shared_wordpress_mutex_before_attempt_lock": True,
+    "browser_busy_is_free_refusal": True,
+    "fresh_complete_snapshot_must_equal_staged_snapshot_before_attempt_lock": True,
+    "source_contact_form_id": SOURCE_CONTACT_FORM_ID,
+    "source_notification_name": "Admin Notification",
+    "source_route_privacy_projected_hash_only": True,
+    "freight_status_required_before": "not_applied; zero transaction state; contact counts 0/0",
+    "freight_status_required_after": "same zero transaction state; contact counts 0/1",
+    "freight_spec_sha256": FREIGHT_SPEC_SHA256,
+    "contact_id": FREIGHT_CONTACT_ID,
+    "contact_sha256_must_not_change": True,
+    "public_contact_sentence_once_old_zero_and_strong_structure_once": True,
+    "request_a_quote_required_http_status": 404,
+    "wordpress_upload_attempts": 1,
+    "automatic_rollback": False,
+    "retry_after_upload_failure": False,
+    "failure_after_upload": "permanently indeterminate",
+    "post_write_installed_member_projection_required": True,
+    "post_write_fnpt_cold_validation": "existing complete GET/HEAD-only acceptance at 2.0.8",
+    "form_submit_email_order_cart_customer_product_zoho_write_allowed": False,
+    "gravity_forms_form_page_contact_transaction_write_allowed": False,
+    "success_status": "COMMITTED_AND_VERIFIED",
+}
+
+CONTACT_SNAPSHOT_KEYS = frozenset({
+    "plugin_row", "installed_members", "freight_status", "source_notification_route",
+    "public",
+})
+CONTACT_INSTALLED_KEYS = frozenset({"members", "member_sha256", "source_projected", "read_only"})
+CONTACT_ROUTE_KEYS = frozenset({
+    "source_form_id", "source_form_title_match", "source_notification_name_match",
+    "active_notification_match_count", "route_shape_valid", "route_sha256", "privacy",
+})
+CONTACT_PUBLIC_KEYS = frozenset({"contact", "request_quote", "network", "page_error_count"})
+
+
+def _require_freight_zero_status(status: Any, *, contact_new_count: int) -> None:
+    """Require the exact no-transaction status; only the 2.0.8 display count may differ."""
+    empty_hash = digest_for(None)
+    if not isinstance(status, dict) or set(status) != FREIGHT_STATUS_KEYS:
+        raise DeploymentError("REFUSED: freight zero-write status schema changed.")
+    if status.get("spec_sha256") != FREIGHT_SPEC_SHA256 \
+            or status.get("status") != "not_applied" \
+            or status.get("deployment_id") != "0" * 32 \
+            or status.get("source_form_id") != SOURCE_CONTACT_FORM_ID \
+            or status.get("source_notification_name_match") is not False \
+            or status.get("route_sha256") != empty_hash:
+        raise DeploymentError("REFUSED: freight deployment state is not exact not_applied zero-write.")
+    if (status.get("form_id") != 0 or status.get("page_id") != 0
+            or status.get("form_owned") is not False or status.get("page_owned") is not False
+            or status.get("form_sha256") != empty_hash or status.get("page_sha256") != empty_hash
+            or status.get("contact_id") != FREIGHT_CONTACT_ID
+            or status.get("contact_old_count") != 0
+            or status.get("contact_new_count") != contact_new_count
+            or not HEX_SHA256.fullmatch(str(status.get("contact_sha256") or ""))):
+        raise DeploymentError("REFUSED: freight form/page/Contact zero-write projection changed.")
+    if any(status.get(key) is not False for key in FREIGHT_BACKUP_STATUS_KEYS):
+        raise DeploymentError("REFUSED: a freight backup exists; this repair cannot cross that state.")
+    if (status.get("receipt_count") != 0
+            or status.get("receipt_schema_valid") is not False
+            or status.get("receipt_chain_valid") is not False
+            or status.get("receipt_append_only") is not False
+            or status.get("receipt_head_sha256") != empty_hash
+            or status.get("apply_receipt_head_sha256") != empty_hash
+            or status.get("rollback_drift_free") is not False
+            # The fixed 2.0.7/2.0.8 PHP status projection serializes the
+            # absent rollback artifact as the exact empty string.  This was
+            # measured live on 2026-08-15 and is also the literal initialized
+            # in both frozen plugin sources.  Require that one representation;
+            # None or any non-empty artifact is not the exact live zero state.
+            or status.get("rollback_blocked_artifact") != ""):
+        raise DeploymentError("REFUSED: freight receipts or rollback state are not absent.")
+    if any(status.get(key) != empty_hash for key in (
+        "form_before_sha256", "quote_page_before_sha256", "contact_before_sha256"
+    )) or status.get("privacy") != FREIGHT_PRIVACY_STATUS:
+        raise DeploymentError("REFUSED: freight baseline or privacy projection changed.")
+
+
+def require_contact_preserve_eligibility(snapshot: Any) -> None:
+    """One normalized eligibility predicate for stage, commit and upload adapter."""
+    if not isinstance(snapshot, dict) or set(snapshot) != CONTACT_SNAPSHOT_KEYS:
+        raise DeploymentError("REFUSED: Contact preservation snapshot schema changed.")
+    if snapshot.get("plugin_row") != project_row(
+        True, True, CONTACT_PRESERVE_FROM_VERSION, False
+    ):
+        raise DeploymentError("REFUSED: plugin row is not exact active 2.0.7 with no update marker.")
+    installed = snapshot.get("installed_members")
+    if (not isinstance(installed, dict) or set(installed) != CONTACT_INSTALLED_KEYS
+            or installed.get("members") != list(CONTACT_PRESERVE_BASELINE_MEMBERS)
+            or installed.get("member_sha256") != CONTACT_PRESERVE_BASELINE_MEMBER_SHA256
+            or installed.get("source_projected") is not False
+            or installed.get("read_only") is not True):
+        raise DeploymentError("REFUSED: installed plugin members are not the exact 2.0.7 baseline.")
+    _require_freight_zero_status(snapshot.get("freight_status"), contact_new_count=0)
+    route = snapshot.get("source_notification_route")
+    if (not isinstance(route, dict) or set(route) != CONTACT_ROUTE_KEYS
+            or route.get("source_form_id") != SOURCE_CONTACT_FORM_ID
+            or route.get("source_form_title_match") is not True
+            or route.get("source_notification_name_match") is not True
+            or route.get("active_notification_match_count") != 1
+            or route.get("route_shape_valid") is not True
+            or not HEX_SHA256.fullmatch(str(route.get("route_sha256") or ""))
+            or route.get("privacy") != FREIGHT_PRIVACY_STATUS):
+        raise DeploymentError("REFUSED: Contact Form 1 notification route is not exact and private.")
+    _require_contact_public_snapshot(snapshot.get("public"))
+
+
+def _require_contact_public_snapshot(public: Any) -> None:
+    expected_network = ContactReadOnlyNetworkGuard().projection()
+    if (not isinstance(public, dict) or set(public) != CONTACT_PUBLIC_KEYS
+            or public.get("contact") != {
+                "status": 200, "path": "/contact/", "target_sentence_count": 1,
+                "old_sentence_count": 0, "strong_count": 1, "strong_sentence_count": 1,
+            }
+            or public.get("request_quote") != {"status": 404, "path": "/request-a-quote/"}
+            or public.get("network") != expected_network
+            or public.get("page_error_count") != 0):
+        raise DeploymentError("REFUSED: protected public Contact/quote projection changed.")
+
+
+def require_contact_preserve_postcondition(before: Any, after: Any) -> None:
+    """Prove the overwrite changed only version/member hashes and the fixed display count."""
+    if not isinstance(after, dict) or set(after) != CONTACT_SNAPSHOT_KEYS:
+        raise DeploymentError("INDETERMINATE: post-upload snapshot schema changed.")
+    if after.get("plugin_row") != project_row(True, True, CONTACT_PRESERVE_VERSION, False):
+        raise DeploymentError("INDETERMINATE: plugin is not exact active 2.0.8 without update marker.")
+    installed = after.get("installed_members")
+    if (not isinstance(installed, dict) or set(installed) != CONTACT_INSTALLED_KEYS
+            or installed.get("members") != list(CONTACT_PRESERVE_MEMBERS)
+            or installed.get("member_sha256") != CONTACT_PRESERVE_MEMBER_SHA256
+            or installed.get("source_projected") is not False
+            or installed.get("read_only") is not True):
+        raise DeploymentError("INDETERMINATE: installed members are not exact 2.0.8.")
+    _require_freight_zero_status(after.get("freight_status"), contact_new_count=1)
+    expected_status = dict(before["freight_status"])
+    expected_status["contact_new_count"] = 1
+    if after.get("freight_status") != expected_status:
+        raise DeploymentError("INDETERMINATE: protected freight state changed beyond display count.")
+    if after.get("source_notification_route") != before.get("source_notification_route"):
+        raise DeploymentError("INDETERMINATE: source Contact notification route changed.")
+    _require_contact_public_snapshot(after.get("public"))
+    if after.get("public") != before.get("public"):
+        raise DeploymentError("INDETERMINATE: public Contact structure or quote 404 changed.")
+
+
 PLAN_KEYS = frozenset({
-    "schema_version", "tool", "origin", "action", "created_utc", "expires_utc", "nonce",
+    "schema_version", "tool", "tool_version", "origin", "action", "created_utc", "expires_utc", "nonce",
     "plugin_name", "plugin_slug", "plugin_file", "artifact", "before", "after_expected",
     "validation", "preflight",
 })
 PLAN_PREFLIGHT_KEYS = frozenset({"path", "sha256", "created_utc", "runs"})
+FNPT_DESIGN_PREFLIGHT_KEYS = frozenset({
+    "status", "anonymous_contexts_opened", "persistent_context", "fnpt_parent_id",
+    "fnpt_variation_count", "fnpt_variation_ids_sha256", "fixed_controls",
+    "selection_controls_exact", "allowed_methods",
+    "non_read_requests_aborted_and_recorded", "analytics_submission_performed",
+    "business_write_performed",
+})
 
 
 def lock_path(plan_path: Path) -> Path:
@@ -1676,6 +3690,7 @@ def stage_plan(action: str, before: dict[str, Any], after_expected: dict[str, An
     core = {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
+        "tool_version": TOOL_VERSION,
         "origin": EXACT_ORIGIN,
         "action": action,
         "created_utc": created.isoformat(),
@@ -1689,10 +3704,15 @@ def stage_plan(action: str, before: dict[str, Any], after_expected: dict[str, An
         "after_expected": after_expected,
         "validation": (
             dict(VALIDATION_CONTRACT) if action == "plugin_activate"
-            else dict(UPS_REPAIR_VALIDATION_CONTRACT) if action == "plugin_ups_repair"
+            else dict(FNPT_REPAIR_VALIDATION_CONTRACT) if action == "plugin_fnpt_display_repair"
+            else dict(CONTACT_PRESERVE_VALIDATION_CONTRACT)
+            if action == "plugin_freight_contact_preserve_repair"
             else None
         ),
-        "preflight": dict(preflight) if action == "plugin_activate" else None,
+        "preflight": dict(preflight) if action in {
+            "plugin_activate", "plugin_fnpt_display_repair",
+            "plugin_freight_contact_preserve_repair",
+        } else None,
     }
     digest = digest_for(core)
     plan = {**core, "sha256": digest}
@@ -1702,6 +3722,38 @@ def stage_plan(action: str, before: dict[str, Any], after_expected: dict[str, An
     path.write_text(json.dumps(plan, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     append_receipt("wordpress_plugin_plan_staged", str(path))
     return path
+
+
+def _require_contact_plan_not_superseded(path: Path, plan: dict[str, Any]) -> None:
+    """Any later intact plan for this one action permanently supersedes this one."""
+    try:
+        created = datetime.fromisoformat(str(plan["created_utc"]))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise DeploymentError("Contact preservation plan creation time is invalid.") from exc
+    for candidate_path in PLAN_DIR.glob("*_plugin_freight_contact_preserve_repair_*.json"):
+        if candidate_path.resolve() == path.resolve():
+            continue
+        try:
+            candidate = json.loads(candidate_path.read_text(encoding="utf-8"))
+            if not isinstance(candidate, dict) or set(candidate) != {*PLAN_KEYS, "sha256"}:
+                continue
+            saved = str(candidate.get("sha256") or "")
+            core = {key: value for key, value in candidate.items() if key != "sha256"}
+            candidate_created = datetime.fromisoformat(str(candidate.get("created_utc")))
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            continue
+        if (not saved or not secrets.compare_digest(saved, digest_for(core))
+                or candidate.get("schema_version") != SCHEMA_VERSION
+                or candidate.get("tool") != TOOL_NAME
+                or candidate.get("tool_version") != TOOL_VERSION
+                or candidate.get("origin") != EXACT_ORIGIN
+                or candidate.get("action") != "plugin_freight_contact_preserve_repair"
+                or candidate.get("plugin_file") != PLUGIN_FILE):
+            continue
+        if candidate_created > created:
+            raise DeploymentError(
+                "This Contact preservation plan was superseded by a newer immutable plan."
+            )
 
 
 def load_plan(path: str) -> dict[str, Any]:
@@ -1720,8 +3772,10 @@ def load_plan(path: str) -> dict[str, Any]:
             "preflight contract existed can never be committed; stage a new one."
         )
     if (plan["schema_version"] != SCHEMA_VERSION or plan["tool"] != TOOL_NAME
-            or plan["origin"] != EXACT_ORIGIN):
-        raise DeploymentError("The plan schema, tool, or origin is invalid.")
+            or plan["tool_version"] != TOOL_VERSION or plan["origin"] != EXACT_ORIGIN):
+        raise DeploymentError("The plan schema, tool version, tool, or origin is invalid.")
+    if not re.fullmatch(r"[0-9a-f]{32}", str(plan["nonce"] or "")):
+        raise DeploymentError("The plan nonce is not one exact lowercase 128-bit hex value.")
     if (plan["plugin_name"] != PLUGIN_NAME or plan["plugin_slug"] != PLUGIN_SLUG
             or plan["plugin_file"] != PLUGIN_FILE):
         raise DeploymentError("The plan does not name the fixed FRP Depot plugin.")
@@ -1729,11 +3783,19 @@ def load_plan(path: str) -> dict[str, Any]:
     if action not in ACTIONS:
         raise DeploymentError("The plan action is not allowlisted.")
     try:
+        created = datetime.fromisoformat(str(plan["created_utc"]))
         expires = datetime.fromisoformat(str(plan["expires_utc"]))
     except (TypeError, ValueError) as exc:
-        raise DeploymentError("Plan expiry is invalid.") from exc
+        raise DeploymentError("Plan creation or expiry is invalid.") from exc
+    if (created.tzinfo is None or expires.tzinfo is None
+            or created.utcoffset() != timedelta(0) or expires.utcoffset() != timedelta(0)):
+        raise DeploymentError("Plan creation and expiry must be explicit UTC timestamps.")
     if utc_now() >= expires:
         raise DeploymentError("Plan expired. Stage a new plan for review.")
+    if expires - created != timedelta(hours=PLAN_LIFETIME_HOURS):
+        raise DeploymentError("Plan expiry does not match the immutable 24-hour lifetime.")
+    if created > utc_now() + timedelta(seconds=5):
+        raise DeploymentError("Plan creation time is in the future.")
 
     for label in ("before", "after_expected"):
         state = plan[label]
@@ -1763,19 +3825,62 @@ def load_plan(path: str) -> dict[str, Any]:
                 or tuple(artifact["members"]) != tuple(sorted(ARTIFACT_MEMBERS))):
             raise DeploymentError("REFUSED: the plan artifact is not the approved 1.0.1 artifact.")
         expected = _expected_after("plugin_replace", plan["before"])
-    elif action == "plugin_ups_repair":
+    elif action == "plugin_fnpt_display_repair":
         if not isinstance(artifact, dict) or set(artifact) != {
-            "path", "sha256", "version", "members", "bytes"
+            "path", "sha256", "version", "members", "member_sha256",
+            "allowlist_sha256", "baseline_path", "baseline_sha256", "bytes"
         }:
-            raise DeploymentError("A UPS repair plan must carry the closed artifact record.")
-        if (artifact["sha256"] != UPS_REPAIR_SHA256
-                or artifact["version"] != UPS_REPAIR_VERSION
-                or Path(artifact["path"]).resolve() != Path(UPS_REPAIR_ARTIFACT_PATH).resolve()
-                or tuple(artifact["members"]) != tuple(sorted(UPS_REPAIR_MEMBERS))):
-            raise DeploymentError("REFUSED: the plan artifact is not the fixed UPS repair.")
-        expected = _expected_after("plugin_ups_repair", plan["before"])
+            raise DeploymentError("A FNPT display repair plan must carry the closed artifact record.")
+        if (artifact["sha256"] != FNPT_REPAIR_SHA256
+                or artifact["version"] != FNPT_REPAIR_VERSION
+                or Path(artifact["path"]).resolve() != Path(FNPT_REPAIR_ARTIFACT_PATH).resolve()
+                or tuple(artifact["members"]) != tuple(sorted(FNPT_REPAIR_MEMBERS))
+                or artifact["member_sha256"] != FNPT_REPAIR_MEMBER_SHA256
+                or artifact["allowlist_sha256"] != FNPT_REPAIR_ALLOWLIST_SHA256
+                or Path(artifact["baseline_path"]).resolve() != Path(FNPT_REPAIR_BASELINE_PATH).resolve()
+                or artifact["baseline_sha256"] != FNPT_REPAIR_BASELINE_SHA256
+                or artifact["bytes"] != FNPT_REPAIR_BYTES):
+            raise DeploymentError("REFUSED: the plan artifact is not the fixed FNPT display repair.")
+        fixed_before = project_row(True, True, FNPT_REPAIR_FROM_VERSION, False)
+        fixed_after = project_row(True, True, FNPT_REPAIR_VERSION, False)
+        if plan["before"] != fixed_before or plan["after_expected"] != fixed_after:
+            raise DeploymentError(
+                "REFUSED: FNPT display repair is only exact active 2.0.6 to exact active 2.0.7."
+            )
+        expected = _expected_after("plugin_fnpt_display_repair", plan["before"])
+    elif action == "plugin_freight_contact_preserve_repair":
+        artifact_keys = {
+            "path", "sha256", "version", "bytes", "members", "member_sha256",
+            "baseline_path", "baseline_version", "baseline_sha256", "baseline_bytes",
+            "baseline_members", "baseline_member_sha256",
+        }
+        if not isinstance(artifact, dict) or set(artifact) != artifact_keys:
+            raise DeploymentError("A Contact preservation plan must carry the closed ZIP pair record.")
+        if (Path(artifact["path"]).resolve() != Path(CONTACT_PRESERVE_ARTIFACT_PATH).resolve()
+                or artifact["sha256"] != CONTACT_PRESERVE_SHA256
+                or artifact["version"] != CONTACT_PRESERVE_VERSION
+                or artifact["bytes"] != CONTACT_PRESERVE_BYTES
+                or artifact["members"] != list(CONTACT_PRESERVE_MEMBERS)
+                or artifact["member_sha256"] != CONTACT_PRESERVE_MEMBER_SHA256
+                or Path(artifact["baseline_path"]).resolve()
+                   != Path(CONTACT_PRESERVE_BASELINE_PATH).resolve()
+                or artifact["baseline_version"] != CONTACT_PRESERVE_FROM_VERSION
+                or artifact["baseline_sha256"] != CONTACT_PRESERVE_BASELINE_SHA256
+                or artifact["baseline_bytes"] != CONTACT_PRESERVE_BASELINE_BYTES
+                or artifact["baseline_members"] != list(CONTACT_PRESERVE_BASELINE_MEMBERS)
+                or artifact["baseline_member_sha256"]
+                   != CONTACT_PRESERVE_BASELINE_MEMBER_SHA256):
+            raise DeploymentError("REFUSED: plan does not pin the exact 2.0.7/2.0.8 ZIP pair.")
+        if (plan["before"] != project_row(True, True, CONTACT_PRESERVE_FROM_VERSION, False)
+                or plan["after_expected"]
+                   != project_row(True, True, CONTACT_PRESERVE_VERSION, False)):
+            raise DeploymentError("REFUSED: Contact repair is only exact active 2.0.7 to 2.0.8.")
+        expected = _expected_after(action, plan["before"])
     elif artifact is not None:
-        raise DeploymentError("Only a replace or UPS repair plan may carry an artifact.")
+        raise DeploymentError(
+            "Only a replace or FNPT display repair plan, or the fixed Contact preservation "
+            "repair plan, may carry an artifact."
+        )
     else:
         expected = _expected_after(action, plan["before"])
 
@@ -1800,16 +3905,44 @@ def load_plan(path: str) -> dict[str, Any]:
                 f"An activation plan must be built on {PREFLIGHT_RUNS} passing rehearsals."
             )
         resolve_preflight_path(str(preflight["path"]))
-    elif action == "plugin_ups_repair":
-        if plan["validation"] != UPS_REPAIR_VALIDATION_CONTRACT:
-            raise DeploymentError("The UPS repair plan disclosure/verification contract changed.")
-        if preflight is not None:
-            raise DeploymentError("A UPS repair plan cannot carry activation preflight evidence.")
+    elif action == "plugin_fnpt_display_repair":
+        if plan["validation"] != FNPT_REPAIR_VALIDATION_CONTRACT:
+            raise DeploymentError("The FNPT display repair plan disclosure/verification contract changed.")
+        if not isinstance(preflight, dict) or set(preflight) != FNPT_DESIGN_PREFLIGHT_KEYS:
+            raise DeploymentError(
+                "A FNPT display repair plan must carry the closed customer-page design preflight."
+            )
+        variation_ids_bytes = json.dumps(
+            list(FNPT_PUBLISHED_VARIATION_IDS), ensure_ascii=True,
+            sort_keys=True, separators=(",", ":"),
+        ).encode("utf-8")
+        if (preflight.get("status") != "STRUCTURE_COMPATIBLE"
+                or preflight.get("anonymous_contexts_opened") != 1
+                or preflight.get("persistent_context") is not False
+                or preflight.get("fnpt_parent_id") != 2061
+                or preflight.get("fnpt_variation_count") != len(FNPT_PUBLISHED_VARIATION_IDS)
+                or preflight.get("fnpt_variation_ids_sha256")
+                   != hashlib.sha256(variation_ids_bytes).hexdigest()
+                or preflight.get("fixed_controls") != list(FNPT_PUBLIC_CONTROL_IDS)
+                or preflight.get("selection_controls_exact") is not True
+                or preflight.get("allowed_methods") != ["GET", "HEAD"]
+                or preflight.get("non_read_requests_aborted_and_recorded") is not True
+                or preflight.get("analytics_submission_performed") is not False
+                or preflight.get("business_write_performed") is not False):
+            raise DeploymentError("The FNPT customer-page design preflight is not exact.")
+    elif action == "plugin_freight_contact_preserve_repair":
+        if plan["validation"] != CONTACT_PRESERVE_VALIDATION_CONTRACT:
+            raise DeploymentError("The Contact preservation disclosure contract changed.")
+        require_contact_preserve_eligibility(preflight)
+        _require_contact_plan_not_superseded(Path(path), plan)
     else:
         if plan["validation"] is not None:
-            raise DeploymentError("Only activation and UPS repair plans may carry validation contracts.")
+            raise DeploymentError("Only fixed guarded actions may carry validation contracts.")
         if preflight is not None:
-            raise DeploymentError("Only an activation plan may carry preflight evidence.")
+            raise DeploymentError(
+                "Only an activation plan, FNPT display repair plan, or Contact preservation "
+                "repair plan may carry preflight evidence."
+            )
     plan["sha256"] = saved
     return plan
 
@@ -1817,8 +3950,10 @@ def load_plan(path: str) -> dict[str, Any]:
 def _expected_after(action: str, before: dict[str, Any]) -> dict[str, Any]:
     if action == "plugin_replace":
         return project_row(True, False, ARTIFACT_VERSION, False)
-    if action == "plugin_ups_repair":
-        return project_row(True, True, UPS_REPAIR_VERSION, False)
+    if action == "plugin_fnpt_display_repair":
+        return project_row(True, True, FNPT_REPAIR_VERSION, False)
+    if action == "plugin_freight_contact_preserve_repair":
+        return project_row(True, True, CONTACT_PRESERVE_VERSION, False)
     if action == "plugin_activate":
         return project_row(True, True, ARTIFACT_VERSION, before["update_marker"])
     return project_row(True, False, ARTIFACT_VERSION, before["update_marker"])
@@ -1852,6 +3987,7 @@ def record_result(plan_path: Path, plan: dict[str, Any], status: str,
 # ---------------------------------------------------------------------------
 # Commands
 # ---------------------------------------------------------------------------
+@holds_wordpress_browser("WordPress: read fixed plugin row only")
 def command_inspect(_: argparse.Namespace) -> None:
     with admin_session() as admin:
         admin.goto_plugins()
@@ -1921,11 +4057,35 @@ def _live_row() -> dict[str, Any]:
         return admin.read_row()
 
 
+def _contact_public_snapshot() -> dict[str, Any]:
+    with contact_read_only_session() as public:
+        return public.snapshot()
+
+
+def _contact_admin_snapshot(admin: AdminPage) -> dict[str, Any]:
+    admin.goto_plugins()
+    return {
+        "plugin_row": admin.read_row(),
+        "installed_members": admin.read_installed_member_projection(),
+        "freight_status": admin.read_freight_status(),
+        "source_notification_route": admin.read_source_notification_route_projection(),
+    }
+
+
+def _join_contact_snapshot(admin_projection: dict[str, Any],
+                           public_projection: dict[str, Any]) -> dict[str, Any]:
+    return {**admin_projection, "public": public_projection}
+
+
 def _stage_and_report(action: str, before: dict[str, Any],
                       artifact: dict[str, Any] | None,
-                      preflight: dict[str, Any] | None = None) -> None:
+                      preflight: dict[str, Any] | None = None,
+                      design_preflight: dict[str, Any] | None = None) -> None:
     after_expected = _expected_after(action, before)
-    path = stage_plan(action, before, after_expected, artifact, preflight)
+    closed_preflight = (
+        design_preflight if action == "plugin_fnpt_display_repair" else preflight
+    )
+    path = stage_plan(action, before, after_expected, artifact, closed_preflight)
     plan = json.loads(path.read_text(encoding="utf-8"))
     emit({
         "status": "STAGED_NOT_COMMITTED",
@@ -1940,6 +4100,7 @@ def _stage_and_report(action: str, before: dict[str, Any],
         "after_expected": after_expected,
         "validation": plan["validation"],
         "preflight": plan["preflight"],
+        "design_preflight": plan["preflight"] if action == "plugin_fnpt_display_repair" else None,
         "approval": APPROVAL_WORD,
         "external_write_performed": False,
     })
@@ -1966,25 +4127,64 @@ def command_stage_replace(_: argparse.Namespace) -> None:
     _stage_and_report("plugin_replace", before, artifact)
 
 
-def command_stage_ups_repair(_: argparse.Namespace) -> None:
-    artifact = verify_ups_repair_artifact()
+@holds_wordpress_browser("WordPress: read row and stage 2.0.7 FNPT plan")
+def command_stage_fnpt_display_repair(_: argparse.Namespace) -> None:
+    artifact = verify_fnpt_display_repair_artifact()
     before = _live_row()
-    if before["version"] == UPS_REPAIR_VERSION:
+    if before["version"] == FNPT_REPAIR_VERSION:
         raise DeploymentError(
-            f"No change is needed: UPS repair version {UPS_REPAIR_VERSION} is already installed. "
+            f"No change is needed: FNPT display repair version {FNPT_REPAIR_VERSION} is already installed. "
             "Nothing was staged."
         )
-    if before["version"] != UPS_REPAIR_FROM_VERSION:
+    if before["version"] != FNPT_REPAIR_FROM_VERSION:
         raise DeploymentError(
             f"REFUSED: the installed version is {before['version']!r}, not the exact frozen "
-            f"baseline {UPS_REPAIR_FROM_VERSION}. Nothing was staged."
+            f"baseline {FNPT_REPAIR_FROM_VERSION}. Nothing was staged."
         )
     if before["active"] is not True:
         raise DeploymentError(
-            f"REFUSED: the fixed {UPS_REPAIR_FROM_VERSION} plugin is not active. The UPS repair is an "
+            f"REFUSED: the fixed {FNPT_REPAIR_FROM_VERSION} plugin is not active. The FNPT display repair is an "
             "active-to-active replacement only; nothing was staged."
         )
-    _stage_and_report("plugin_ups_repair", before, artifact)
+    if before != project_row(True, True, FNPT_REPAIR_FROM_VERSION, False):
+        raise DeploymentError(
+            "REFUSED: the plugin row is not the exact active 2.0.6 baseline projection "
+            "(including no pending update marker). Nothing was staged."
+        )
+    try:
+        design_preflight = _run_fnpt_design_preflight()
+    except FnptPublicRefusal as exc:
+        raise DeploymentError(
+            f"REFUSED: exact live customer-page structure is incompatible ({exc.code}); "
+            "nothing was staged."
+        ) from exc
+    except Exception as exc:
+        raise DeploymentError(
+            "REFUSED: exact live customer-page structure could not be proven compatible; "
+            "nothing was staged."
+        ) from exc
+    _stage_and_report(
+        "plugin_fnpt_display_repair", before, artifact,
+        design_preflight=design_preflight,
+    )
+
+
+def command_stage_freight_contact_preserve_repair(_: argparse.Namespace) -> None:
+    """Read-only exact live snapshot; never uploads, saves a form, or edits a post."""
+    artifact = verify_contact_preserve_artifact()
+    with ui_browser_lock(
+        "wordpress", purpose="WordPress: read-only stage freight Contact preservation repair"
+    ):
+        public_projection = _contact_public_snapshot()
+        with admin_session() as admin:
+            snapshot = _join_contact_snapshot(
+                _contact_admin_snapshot(admin), public_projection
+            )
+        require_contact_preserve_eligibility(snapshot)
+        _stage_and_report(
+            "plugin_freight_contact_preserve_repair",
+            snapshot["plugin_row"], artifact, preflight=snapshot,
+        )
 
 
 def command_stage_activate(args: argparse.Namespace) -> None:
@@ -2026,11 +4226,13 @@ def command_stage_deactivate(_: argparse.Namespace) -> None:
 
 def _open_commit(args: argparse.Namespace, action: str) -> tuple[Path, dict[str, Any]]:
     """Everything that must pass before a browser is touched."""
+    # The approval gate is deliberately the first executable gate. Whitespace,
+    # a near miss or any other value refuses before even reading a plan path.
+    require_rachad_approval(args.approval)
     plan_path = resolve_plan_path(args.plan)
     plan = load_plan(str(plan_path))
     if plan["action"] != action:
         raise DeploymentError(f"This plan is a {plan['action']} plan, not {action}.")
-    require_rachad_approval(args.approval)
     if lock_path(plan_path).exists():
         raise DeploymentError("This plan has already entered commit and cannot be replayed.")
     return plan_path, plan
@@ -2111,86 +4313,252 @@ def command_commit_replace(args: argparse.Namespace) -> None:
     })
 
 
-@holds_wordpress_browser("WordPress: apply the active 2.0.5 UPS repair")
-def command_commit_ups_repair(args: argparse.Namespace) -> None:
-    plan_path, plan = _open_commit(args, "plugin_ups_repair")
-    artifact = verify_ups_repair_artifact(Path(plan["artifact"]["path"]))
+def command_commit_fnpt_display_repair(args: argparse.Namespace) -> None:
+    # Local approval/schema/tool/artifact gates all run before the shared browser
+    # lane. In particular every schema-6/schema-7/schema-8 plan is a free local refusal: no browser,
+    # admin page, network request, attempt lock or website write can occur.
+    plan_path, plan = _open_commit(args, "plugin_fnpt_display_repair")
+    artifact = verify_fnpt_display_repair_artifact(Path(plan["artifact"]["path"]))
     if artifact["sha256"] != plan["artifact"]["sha256"]:
-        raise DeploymentError("REFUSED: the UPS repair artifact no longer matches the approved plan.")
+        raise DeploymentError("REFUSED: the FNPT display repair artifact no longer matches the approved plan.")
     lock = lock_path(plan_path)
 
-    # The shared WordPress browser lock is acquired by the decorator before this
-    # function. The live row is checked before the permanent plan lock, so drift or
-    # a busy/missing browser is a free refusal. The lock is written immediately
-    # before the one overwrite click.
-    with admin_session() as admin:
-        _verify_pre_state(admin, plan)
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"], "status": "in_flight",
-            "started_utc": utc_now().isoformat(), "stage": "ups_repair_upload",
-        }, exclusive=True)
+    # An approved schema-9 attempt takes the shared lane before the fresh exact
+    # 2.0.6 fingerprint and before the permanent lock. The lane remains held
+    # through the one upload, row readback and both cold anonymous contexts.
+    with ui_browser_lock(
+        "wordpress", purpose="WordPress: apply and fully verify active 2.0.7 FNPT display repair"
+    ):
         try:
-            comparison = admin.upload_ups_repair(Path(artifact["path"]))
-            admin.goto_plugins()
-            after = admin.read_row()
+            fresh_design_preflight = _run_fnpt_design_preflight()
+        except FnptPublicRefusal as exc:
+            raise DeploymentError(
+                f"REFUSED: the customer-page design preflight drifted ({exc.code}); "
+                "nothing was written and the plan remains unused."
+            ) from exc
         except Exception as exc:
-            _burn(lock, plan, plan_path, exc, "ups_repair_upload")
+            raise DeploymentError(
+                "REFUSED: the fresh customer-page design preflight could not be proven; "
+                "nothing was written and the plan remains unused."
+            ) from exc
+        if fresh_design_preflight != plan["preflight"]:
+            raise DeploymentError(
+                "REFUSED: the fresh customer-page design preflight differs from the immutable "
+                "staged record. Nothing was written and the plan remains unused."
+            )
+        with admin_session() as admin:
+            _verify_pre_state(admin, plan)
+            write_lock(lock, {
+                "plan_sha256": plan["sha256"], "status": "in_flight",
+                "started_utc": utc_now().isoformat(), "stage": "fnpt_display_repair_upload",
+            }, exclusive=True)
+            try:
+                comparison = admin.upload_fnpt_display_repair(Path(artifact["path"]))
+                admin.goto_plugins()
+                after = admin.read_row()
+            except Exception as exc:
+                _burn(lock, plan, plan_path, exc, "fnpt_display_repair_upload")
+                raise IndeterminateError(
+                    "The FNPT display repair upload or row read-back is unverified. The plan is permanently "
+                    "locked with no retry and no rollback; inspect the fixed Plugins row."
+                ) from exc
+
+        if after != plan["after_expected"]:
+            write_lock(lock, {
+                "plan_sha256": plan["sha256"], "status": "indeterminate",
+                "updated_utc": utc_now().isoformat(), "after": after,
+                "stage": "fnpt_display_repair_row_readback", "retry": False,
+                "rollback": False,
+            })
+            record_result(plan_path, plan, "INDETERMINATE", {
+                "after": after, "retry": False, "rollback": False,
+                "stage": "fnpt_display_repair_row_readback",
+            })
             raise IndeterminateError(
-                "The UPS repair upload or row read-back is unverified. The plan is permanently "
-                "locked with no retry and no rollback; inspect the fixed Plugins row."
+                "The fixed plugin row does not exactly read back as active version 2.0.7. "
+                "The plan is permanently locked with no retry and no rollback."
+            )
+
+        # Row verification is not success. Keep the already-permanent attempt lock
+        # in flight while this same command proves the cache-buster and canonical
+        # product pages independently in two fresh anonymous contexts.
+        try:
+            findings = _run_fnpt_public_validation(plan)
+        except Exception as exc:  # noqa: BLE001 - permanently reduced to fixed metadata
+            if isinstance(exc, FnptPublicValidationError):
+                attribution = {
+                    "step": exc.step,
+                    "exception_class": exc.exception_class,
+                    "code": exc.code,
+                }
+            else:
+                attribution = {
+                    "step": "cache_buster_fnpt_load",
+                    "exception_class": type(exc).__name__,
+                    "code": "unexpected_exception",
+                }
+            write_lock(lock, {
+                "plan_sha256": plan["sha256"], "status": "indeterminate",
+                "updated_utc": utc_now().isoformat(), "after": after,
+                "stage": "fnpt_public_validation", "retry": False,
+                "rollback": False, **attribution,
+            })
+            record_result(plan_path, plan, "INDETERMINATE", {
+                "after": after, "stage": "fnpt_public_validation",
+                "retry": False, "rollback": False, **attribution,
+            })
+            raise IndeterminateError(
+                "Cold anonymous FNPT validation did not complete exactly. The upload attempt is "
+                "permanently indeterminate with no retry and no rollback."
             ) from exc
 
-    if after != plan["after_expected"]:
         write_lock(lock, {
-            "plan_sha256": plan["sha256"], "status": "indeterminate",
+            "plan_sha256": plan["sha256"], "status": "committed_verified",
             "updated_utc": utc_now().isoformat(), "after": after,
-            "public_validation_pending": True,
+            "public_validation": "passed",
         })
-        record_result(plan_path, plan, "INDETERMINATE", {
-            "after": after, "retry": False, "rollback": False,
-            "public_validation_pending": True,
+        record_result(plan_path, plan, "COMMITTED_AND_VERIFIED", {
+            "after": after,
+            "comparison": comparison,
+            "active_before_and_after": True,
+            "public_validation": findings,
+            "automatic_rollback": False,
         })
-        raise IndeterminateError(
-            "The fixed plugin row does not exactly read back as active version 2.0.5. "
-            "The plan is permanently locked with no retry and no rollback."
-        )
+        emit({
+            "status": "COMMITTED_AND_VERIFIED",
+            "action": "plugin_fnpt_display_repair",
+            "plugin_file": PLUGIN_FILE,
+            "installed_version": after["version"],
+            "active": after["active"],
+            "comparison": comparison,
+            "public_validation": findings,
+            "automatic_rollback": False,
+            "plan_sha256": plan["sha256"],
+            "replay_locked": True,
+        })
 
+
+def _burn_contact_attempt(lock: Path, plan: dict[str, Any], plan_path: Path,
+                          exc: Exception, stage: str) -> None:
+    detail = {
+        "stage": stage,
+        "reason": type(exc).__name__,
+        "retry": False,
+        "rollback": False,
+    }
     write_lock(lock, {
-        "plan_sha256": plan["sha256"], "status": "plugin_row_verified",
-        "updated_utc": utc_now().isoformat(), "after": after,
-        "public_validation_pending": True,
+        "plan_sha256": plan["sha256"], "status": "indeterminate",
+        "updated_utc": utc_now().isoformat(), **detail,
     })
-    record_result(plan_path, plan, "PLUGIN_ROW_VERIFIED_PUBLIC_CHECKS_PENDING", {
-        "after": after,
-        "comparison": comparison,
-        "active_before_and_after": True,
-        "quote_form_transaction_triggered": False,
-        "product_or_setting_write": False,
-        "email_order_payment_created": False,
-        "automatic_rollback": False,
-        "public_validation_pending": True,
-    })
-    emit({
-        "status": "PLUGIN_ROW_VERIFIED_PUBLIC_CHECKS_PENDING",
-        "action": "plugin_ups_repair",
-        "plugin_file": PLUGIN_FILE,
-        "installed_version": after["version"],
-        "active": after["active"],
-        "comparison": comparison,
-        "quote_form_transaction_triggered": False,
-        "product_or_setting_write": False,
-        "email_order_payment_created": False,
-        "automatic_rollback": False,
-        "public_validation_pending": True,
-        "plan_sha256": plan["sha256"],
-        "replay_locked": True,
-    })
+    record_result(plan_path, plan, "INDETERMINATE", detail)
+
+
+def command_commit_freight_contact_preserve_repair(args: argparse.Namespace) -> None:
+    """One active 2.0.7 -> 2.0.8 overwrite, then protected zero-write verification."""
+    # Exact unpadded approval, immutable plan/supersession, and both local ZIPs
+    # are proved before any browser or shared WordPress mutex is touched.
+    plan_path, plan = _open_commit(args, "plugin_freight_contact_preserve_repair")
+    artifact = verify_contact_preserve_artifact(Path(plan["artifact"]["path"]))
+    if artifact != plan["artifact"]:
+        raise DeploymentError("REFUSED: fixed 2.0.7/2.0.8 artifact record changed after review.")
+    lock = lock_path(plan_path)
+
+    with ui_browser_lock(
+        "wordpress", purpose="WordPress: apply active 2.0.8 Contact preservation repair"
+    ):
+        # Public first, admin last. This permits two non-nested Playwright contexts
+        # and keeps the same authenticated admin session from final preflight
+        # through the attempt lock and the one upload.
+        public_before = _contact_public_snapshot()
+        with admin_session() as admin:
+            admin_before = _contact_admin_snapshot(admin)
+            fresh = _join_contact_snapshot(admin_before, public_before)
+            require_contact_preserve_eligibility(fresh)
+            if fresh != plan["preflight"]:
+                raise DeploymentError(
+                    "REFUSED: fresh complete preflight differs from the immutable staged snapshot. "
+                    "Nothing was written and the plan remains unused."
+                )
+            write_lock(lock, {
+                "plan_sha256": plan["sha256"], "status": "in_flight",
+                "started_utc": utc_now().isoformat(),
+                "stage": "freight_contact_preserve_upload",
+            }, exclusive=True)
+            try:
+                comparison = admin.upload_freight_contact_preserve_repair(
+                    Path(artifact["path"]), fresh
+                )
+                admin_after = _contact_admin_snapshot(admin)
+            except Exception as exc:  # noqa: BLE001 - permanent bounded attribution
+                _burn_contact_attempt(
+                    lock, plan, plan_path, exc, "freight_contact_preserve_upload_or_admin_readback"
+                )
+                raise IndeterminateError(
+                    "The one 2.0.8 upload or protected admin read-back is unverified. The plan is "
+                    "permanently indeterminate with no retry, no deactivation and no rollback."
+                ) from exc
+
+        try:
+            public_after = _contact_public_snapshot()
+            after = _join_contact_snapshot(admin_after, public_after)
+            require_contact_preserve_postcondition(fresh, after)
+            fnpt_findings = _run_fnpt_public_validation(
+                plan, release_version=CONTACT_PRESERVE_VERSION,
+                js_sha256=CONTACT_PRESERVE_MEMBER_SHA256[
+                    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+                ],
+                css_sha256=CONTACT_PRESERVE_MEMBER_SHA256[
+                    f"{PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+                ],
+            )
+        except Exception as exc:  # noqa: BLE001 - no values or exception text persisted
+            _burn_contact_attempt(
+                lock, plan, plan_path, exc, "freight_contact_preserve_protected_validation"
+            )
+            raise IndeterminateError(
+                "Post-upload Contact, freight, member, quote-404 or cold FNPT validation did not "
+                "complete exactly. The plan is permanently indeterminate with no retry, no "
+                "deactivation and no rollback."
+            ) from exc
+
+        write_lock(lock, {
+            "plan_sha256": plan["sha256"], "status": "committed_verified",
+            "updated_utc": utc_now().isoformat(), "after": after,
+            "fnpt_public_validation": "passed", "retry": False, "rollback": False,
+        })
+        record_result(plan_path, plan, "COMMITTED_AND_VERIFIED", {
+            "before": fresh,
+            "after": after,
+            "comparison": comparison,
+            "active_before_and_after": True,
+            "upload_attempts": 1,
+            "contact_sha256_unchanged": True,
+            "fnpt_public_validation": fnpt_findings,
+            "automatic_rollback": False,
+            "deactivated": False,
+        })
+        emit({
+            "status": "COMMITTED_AND_VERIFIED",
+            "action": "plugin_freight_contact_preserve_repair",
+            "plugin_file": PLUGIN_FILE,
+            "installed_version": after["plugin_row"]["version"],
+            "active": after["plugin_row"]["active"],
+            "comparison": comparison,
+            "upload_attempts": 1,
+            "contact_sha256_unchanged": True,
+            "request_a_quote_status": after["public"]["request_quote"]["status"],
+            "fnpt_public_validation": fnpt_findings,
+            "deactivated": False,
+            "automatic_rollback": False,
+            "plan_sha256": plan["sha256"],
+            "replay_locked": True,
+        })
 
 
 def _verify_pre_state(admin: AdminPage, plan: dict[str, Any]) -> dict[str, Any]:
     admin.goto_plugins()
     live = admin.read_row()
-    if live["fingerprint"] != plan["before"]["fingerprint"]:
+    if live != plan["before"]:
         raise DeploymentError(
             "REFUSED: the plugin row changed after Rachad reviewed this plan. Nothing was "
             "written. Stage a new plan."
@@ -2471,7 +4839,10 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("inspect").set_defaults(func=command_inspect)
     commands.add_parser("preflight-validation").set_defaults(func=command_preflight_validation)
     commands.add_parser("stage-replace").set_defaults(func=command_stage_replace)
-    commands.add_parser("stage-ups-repair").set_defaults(func=command_stage_ups_repair)
+    commands.add_parser("stage-fnpt-display-repair").set_defaults(func=command_stage_fnpt_display_repair)
+    commands.add_parser("stage-freight-contact-preserve-repair").set_defaults(
+        func=command_stage_freight_contact_preserve_repair
+    )
     commands.add_parser("stage-deactivate").set_defaults(func=command_stage_deactivate)
 
     stage_activate = commands.add_parser("stage-activate")
@@ -2480,7 +4851,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     for name, handler in (
         ("commit-replace", command_commit_replace),
-        ("commit-ups-repair", command_commit_ups_repair),
+        ("commit-fnpt-display-repair", command_commit_fnpt_display_repair),
+        ("commit-freight-contact-preserve-repair",
+         command_commit_freight_contact_preserve_repair),
         ("commit-activate", command_commit_activate),
         ("commit-deactivate", command_commit_deactivate),
     ):

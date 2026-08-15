@@ -38,18 +38,21 @@ from __future__ import annotations
 
 import argparse
 import ast
+import copy
 import contextlib
 from datetime import datetime, timedelta
 import io
+import inspect
 import json
 from pathlib import Path
 import re
 import shutil
 import sys
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -285,6 +288,46 @@ class FakePage:
             raise AssertionError("a load wait was attempted without an explicit bounded timeout")
         return None
 
+    class _NavigationResponse:
+        def __init__(self, status, url):
+            self.status = status
+            self.url = url
+
+    class _NavigationExpectation:
+        def __init__(self, page):
+            self.page = page
+            self.before = page.url
+            self.value = None
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            if exc_type is not None:
+                return False
+            if self.page.url == self.before:
+                raise Playwright.TimeoutError("navigation did not start")
+            query = parse_qs(urlsplit(self.page.url).query)
+            status_name = (
+                "overwrite_response_status"
+                if query.get("overwrite") == ["update-plugin"]
+                else "upload_response_status"
+            )
+            prefix = "overwrite" if query.get("overwrite") == ["update-plugin"] else "upload"
+            if getattr(self.page.site, f"{prefix}_response_none", False):
+                self.value = None
+                return False
+            response_url = getattr(self.page.site, f"{prefix}_response_url", None) or self.page.url
+            self.value = FakePage._NavigationResponse(
+                getattr(self.page.site, status_name, 200), response_url
+            )
+            return False
+
+    def expect_navigation(self, wait_until=None, timeout=None):
+        if timeout is None:
+            raise AssertionError("navigation expectation had no explicit bounded timeout")
+        return self._NavigationExpectation(self)
+
     def query_selector_all(self, selector):
         probe = getattr(self.site, "probe", None)
         if probe is not None:
@@ -331,6 +374,22 @@ class FakeWordPress:
         self.no_file_input = False
         self.redirect_after_upload = None
         self.upload_replaces = True
+        self.upload_navigates = True
+        self.overwrite_navigates = True
+        self.upload_response_status = 200
+        self.overwrite_response_status = 200
+        self.upload_response_none = False
+        self.overwrite_response_none = False
+        self.upload_response_url = None
+        self.overwrite_response_url = None
+        self.overwrite_success_marker = True
+        self.overwrite_success_marker_count = 1
+        self.overwrite_notice_text = None
+        self.overwrite_navigation_url = None
+        self.overwrite_href = (
+            f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin"
+            "&overwrite=update-plugin&package=fixed.zip&_wpnonce=1234567890"
+        )
 
         # Recorded behaviour.
         self.navigations: list[str] = []
@@ -435,6 +494,17 @@ class FakeWordPress:
         ])
 
     def _update_screen(self):
+        query = parse_qs(urlsplit(self.current_url).query)
+        if query.get("overwrite") == ["update-plugin"]:
+            succeeded = self.upload_replaces and self.overwrite_success_marker
+            marker = ((self.overwrite_notice_text or "Plugin updated successfully.")
+                      if succeeded else "Plugin update failed.")
+            count = self.overwrite_success_marker_count if succeeded else 1
+            return FakeElement("body", children=[
+                FakeElement("div", cls="wrap", children=[
+                    FakeElement("p", text=marker) for _ in range(count)
+                ])
+            ])
         tables = [
             FakeElement("table", cls="update-from-upload-comparison", children=[
                 FakeElement("tr", children=[
@@ -448,12 +518,18 @@ class FakeWordPress:
         ]
         links = [
             FakeElement("a", cls="update-from-upload-overwrite",
+                        attrs={"href": self.overwrite_href},
                         text="Replace current with uploaded", on_click=self._overwrite)
             for _ in range(self.overwrite_links)
         ]
         return FakeElement("body", children=tables + links)
 
     def body_text(self):
+        query = parse_qs(urlsplit(self.current_url).query)
+        if query.get("overwrite") == ["update-plugin"]:
+            if self.upload_replaces and self.overwrite_success_marker:
+                return "Plugin updated successfully."
+            return "Plugin update failed."
         return "WordPress admin screen"
 
     # -- behaviours --------------------------------------------------------
@@ -479,15 +555,22 @@ class FakeWordPress:
 
     def _submit_upload(self):
         self.clicks.append("install-plugin-submit")
+        if not self.upload_navigates:
+            return
         self.navigate(self.redirect_after_upload
                       or f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin")
 
     def _overwrite(self):
         self.clicks.append("overwrite")
+        if not self.overwrite_navigates:
+            return
         if self.upload_replaces:
             self.version = self.comparison_version
             self.active = False
-        self.navigate(f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin")
+        self.navigate(self.overwrite_navigation_url or (
+            f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin"
+            "&overwrite=update-plugin&package=fixed.zip&_wpnonce=1234567890"
+        ))
 
 
 # ===========================================================================
@@ -945,14 +1028,16 @@ class TestFixedIdentity(unittest.TestCase):
             r"C:\FRPDepot\Dado\Tools\woocommerce\freight_checkout_guard"
             r"\frpdepot-freight-checkout-guard.zip"))
 
-    def test_actions_are_a_closed_set_of_four(self):
+    def test_actions_are_a_closed_set_including_contact_preservation(self):
         self.assertEqual(set(deploy.ACTIONS),
                          {"plugin_replace", "plugin_activate", "plugin_deactivate",
-                          "plugin_ups_repair"})
+                          "plugin_fnpt_display_repair",
+                          "plugin_freight_contact_preserve_repair"})
 
     def test_navigation_is_a_closed_allowlist(self):
         self.assertEqual(deploy.ALLOWED_ADMIN_PATHS, frozenset({
-            "/wp-admin/plugins.php", "/wp-admin/plugin-install.php", "/wp-admin/update.php"}))
+            "/wp-admin/plugins.php", "/wp-admin/plugin-install.php", "/wp-admin/update.php",
+            "/wp-admin/plugin-editor.php", "/wp-admin/tools.php", "/wp-admin/admin.php"}))
         self.assertEqual(deploy.ALLOWED_PUBLIC_PATHS, frozenset({
             "/", "/product/frp-fw-pipe/", "/cart/", "/checkout/"}))
 
@@ -989,8 +1074,8 @@ class TestFixedIdentity(unittest.TestCase):
                          frozenset({"visible_role_radio", "backing_select"}))
 
     def test_the_versions_moved_together_so_old_evidence_and_plans_are_dead(self):
-        self.assertEqual(deploy.TOOL_VERSION, "1.4.0")
-        self.assertEqual(deploy.SCHEMA_VERSION, 5)
+        self.assertEqual(deploy.TOOL_VERSION, "1.9.0")
+        self.assertEqual(deploy.SCHEMA_VERSION, 10)
         self.assertEqual(deploy.PREFLIGHT_SCHEMA_VERSION, 2)
         self.assertEqual(deploy.PREFLIGHT_RUNS, 3)
 
@@ -2360,7 +2445,7 @@ class TestPlanIntegrity(Harness):
         self.rehash(self.plan_path, artifact=deploy.verify_artifact())
         with self.assertRaises(deploy.DeploymentError) as caught:
             deploy.load_plan(str(self.plan_path))
-        self.assertIn("Only a replace or UPS repair plan", str(caught.exception))
+        self.assertIn("Only a replace or FNPT display repair plan", str(caught.exception))
 
     def test_replace_plan_naming_the_withdrawn_artifact_is_refused(self):
         self.wp.version = OLD_VERSION
@@ -2491,7 +2576,140 @@ class TestCommitReplace(Harness):
         self.assertFalse(result["activated"])
         self.assertEqual(result["after"]["version"], GOOD_VERSION)
         self.assertFalse(result["after"]["active"])
+        self.assertTrue(result["comparison"]["overwrite_navigation_proven"])
+        self.assertEqual(result["comparison"]["overwrite_http_status"], 200)
+        self.assertTrue(result["comparison"]["wordpress_success_marker_exact"])
         self.assertEqual(self.lock_of(self.plan_path)["status"], "committed_verified")
+
+    def test_overwrite_click_without_navigation_is_locked_indeterminate(self):
+        self.wp.overwrite_navigates = False
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertEqual(self.wp.version, OLD_VERSION)
+        self.assertEqual(self.lock_of(self.plan_path)["status"], "indeterminate")
+        self.assertFalse(self.result_of(self.plan_path)["retry"])
+
+    def test_overwrite_navigation_requires_http_200(self):
+        self.wp.overwrite_response_status = 500
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertEqual(self.lock_of(self.plan_path)["status"], "indeterminate")
+
+    def test_overwrite_result_requires_exact_success_marker(self):
+        self.wp.overwrite_success_marker = False
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertEqual(self.lock_of(self.plan_path)["status"], "indeterminate")
+
+    def test_overwrite_control_requires_exact_route_before_click(self):
+        self.wp.overwrite_href = (
+            f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=delete-plugin"
+            "&overwrite=update-plugin&package=fixed.zip&_wpnonce=1234567890"
+        )
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertNotIn("overwrite", self.wp.clicks)
+        self.assertEqual(self.wp.version, OLD_VERSION)
+
+    def test_overwrite_control_refuses_extra_query_fields(self):
+        self.wp.overwrite_href += "&foreign=1"
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertNotIn("overwrite", self.wp.clicks)
+
+    def test_overwrite_navigation_must_preserve_reviewed_package(self):
+        self.wp.overwrite_href = self.wp.overwrite_href.replace("fixed.zip", "reviewed.zip")
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertIn("overwrite", self.wp.clicks)
+        self.assertEqual(self.lock_of(self.plan_path)["status"], "indeterminate")
+
+    def test_overwrite_control_refuses_url_fragment_before_click(self):
+        self.wp.overwrite_href += "#not-part-of-the-reviewed-route"
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertNotIn("overwrite", self.wp.clicks)
+
+    def test_overwrite_control_refuses_duplicate_query_values(self):
+        self.wp.overwrite_href += "&action=upload-plugin"
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertNotIn("overwrite", self.wp.clicks)
+
+    def test_overwrite_navigation_must_preserve_reviewed_nonce(self):
+        self.wp.overwrite_navigation_url = (
+            f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin"
+            "&overwrite=update-plugin&package=fixed.zip&_wpnonce=0987654321"
+        )
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+        self.assertIn("overwrite", self.wp.clicks)
+
+    def test_overwrite_response_must_exist_and_match_the_final_url(self):
+        for mode in ("none", "wrong_url"):
+            with self.subTest(mode=mode):
+                self.setUp()
+                if mode == "none":
+                    self.wp.overwrite_response_none = True
+                else:
+                    self.wp.overwrite_response_url = (
+                        f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin"
+                        "&overwrite=update-plugin&package=other.zip&_wpnonce=1234567890"
+                    )
+                with self.assertRaises(deploy.IndeterminateError):
+                    self.commit("plugin_replace", self.plan_path)
+
+    def test_embedded_success_words_are_not_a_structured_exact_success(self):
+        self.wp.overwrite_notice_text = "Prefix Plugin updated successfully. suffix"
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+
+    def test_duplicate_exact_success_notices_are_rejected(self):
+        self.wp.overwrite_success_marker_count = 2
+        with self.assertRaises(deploy.IndeterminateError):
+            self.commit("plugin_replace", self.plan_path)
+
+    def test_initial_upload_navigation_is_bounded_and_exact(self):
+        cases = {
+            "no_navigation": {"upload_navigates": False},
+            "no_response": {"upload_response_none": True},
+            "http_error": {"upload_response_status": 500},
+            "wrong_response_url": {"upload_response_url": f"{deploy.EXACT_ORIGIN}/wp-admin/plugins.php"},
+            "fragment": {"redirect_after_upload": f"{deploy.EXACT_ORIGIN}/wp-admin/update.php?action=upload-plugin#x"},
+        }
+        for name, changes in cases.items():
+            with self.subTest(name=name):
+                self.setUp()
+                for key, value in changes.items():
+                    setattr(self.wp, key, value)
+                with self.assertRaises(deploy.IndeterminateError):
+                    self.commit("plugin_replace", self.plan_path)
+                self.assertNotIn("overwrite", self.wp.clicks)
+
+    def test_overwrite_identity_values_never_enter_success_sinks(self):
+        output = io.StringIO()
+        args = argparse.Namespace(plan=str(self.plan_path), approval=deploy.APPROVAL_WORD)
+        with contextlib.redirect_stdout(output):
+            deploy.command_commit_replace(args)
+        recorded = json.dumps(
+            {"result": self.result_of(self.plan_path), "lock": self.lock_of(self.plan_path)},
+            sort_keys=True,
+        ) + output.getvalue() + deploy.RECEIPTS.read_text(encoding="utf-8")
+        self.assertNotIn("fixed.zip", recorded)
+        self.assertNotIn("1234567890", recorded)
+
+    def test_overwrite_identity_values_never_enter_failure_sinks(self):
+        self.wp.overwrite_response_none = True
+        output = io.StringIO()
+        args = argparse.Namespace(plan=str(self.plan_path), approval=deploy.APPROVAL_WORD)
+        with contextlib.redirect_stdout(output), self.assertRaises(deploy.IndeterminateError):
+            deploy.command_commit_replace(args)
+        recorded = json.dumps(
+            {"result": self.result_of(self.plan_path), "lock": self.lock_of(self.plan_path)},
+            sort_keys=True,
+        ) + output.getvalue() + deploy.RECEIPTS.read_text(encoding="utf-8")
+        self.assertNotIn("fixed.zip", recorded)
+        self.assertNotIn("1234567890", recorded)
 
     def test_lock_exists_before_the_file_is_ever_handed_over(self):
         self.commit("plugin_replace", self.plan_path)
@@ -3130,6 +3348,751 @@ class TestCommitDeactivate(Harness):
 
 
 # ===========================================================================
+# fixed active 2.0.7 -> 2.0.8 freight Contact preservation repair
+# ===========================================================================
+def _contact_freight_status(*, contact_new_count=0, contact_sha256="c" * 64):
+    empty_hash = deploy.digest_for(None)
+    status = {
+        "spec_sha256": deploy.FREIGHT_SPEC_SHA256,
+        "status": "not_applied",
+        "deployment_id": "0" * 32,
+        "source_form_id": deploy.SOURCE_CONTACT_FORM_ID,
+        "source_notification_name_match": False,
+        "route_sha256": empty_hash,
+        "form_id": 0,
+        "form_owned": False,
+        "form_sha256": empty_hash,
+        "page_id": 0,
+        "page_owned": False,
+        "page_sha256": empty_hash,
+        "contact_id": deploy.FREIGHT_CONTACT_ID,
+        "contact_new_count": contact_new_count,
+        "contact_old_count": 0,
+        "contact_sha256": contact_sha256,
+        "receipt_count": 0,
+        "receipt_schema_valid": False,
+        "receipt_chain_valid": False,
+        "receipt_append_only": False,
+        "receipt_head_sha256": empty_hash,
+        "apply_receipt_head_sha256": empty_hash,
+        "rollback_drift_free": False,
+        "rollback_blocked_artifact": "",
+        "form_before_sha256": empty_hash,
+        "quote_page_before_sha256": empty_hash,
+        "contact_before_sha256": empty_hash,
+        "privacy": dict(deploy.FREIGHT_PRIVACY_STATUS),
+    }
+    status.update({key: False for key in deploy.FREIGHT_BACKUP_STATUS_KEYS})
+    if set(status) != deploy.FREIGHT_STATUS_KEYS:
+        raise AssertionError("the test freight projection no longer matches the closed schema")
+    return status
+
+
+def _contact_source_route(*, route_sha256="a" * 64):
+    return {
+        "source_form_id": deploy.SOURCE_CONTACT_FORM_ID,
+        "source_form_title_match": True,
+        "source_notification_name_match": True,
+        "active_notification_match_count": 1,
+        "route_shape_valid": True,
+        "route_sha256": route_sha256,
+        "privacy": dict(deploy.FREIGHT_PRIVACY_STATUS),
+    }
+
+
+def _contact_public_projection():
+    return {
+        "contact": {
+            "status": 200,
+            "path": "/contact/",
+            "target_sentence_count": 1,
+            "old_sentence_count": 0,
+            "strong_count": 1,
+            "strong_sentence_count": 1,
+        },
+        "request_quote": {"status": 404, "path": "/request-a-quote/"},
+        "network": deploy.ContactReadOnlyNetworkGuard().projection(),
+        "page_error_count": 0,
+    }
+
+
+def _contact_snapshot(*, after=False, route_sha256="a" * 64,
+                      contact_sha256="c" * 64):
+    return {
+        "plugin_row": deploy.project_row(
+            True, True,
+            deploy.CONTACT_PRESERVE_VERSION if after else deploy.CONTACT_PRESERVE_FROM_VERSION,
+            False,
+        ),
+        "installed_members": {
+            "members": list(
+                deploy.CONTACT_PRESERVE_MEMBERS
+                if after else deploy.CONTACT_PRESERVE_BASELINE_MEMBERS
+            ),
+            "member_sha256": dict(
+                deploy.CONTACT_PRESERVE_MEMBER_SHA256
+                if after else deploy.CONTACT_PRESERVE_BASELINE_MEMBER_SHA256
+            ),
+            "source_projected": False,
+            "read_only": True,
+        },
+        "freight_status": _contact_freight_status(
+            contact_new_count=1 if after else 0,
+            contact_sha256=contact_sha256,
+        ),
+        "source_notification_route": _contact_source_route(route_sha256=route_sha256),
+        "public": _contact_public_projection(),
+    }
+
+
+class ContactAdminDouble:
+    """Closed action-specific admin adapter; all uncommissioned writes explode."""
+
+    def __init__(self, before, after, events):
+        self.current = copy.deepcopy(before)
+        self.after = copy.deepcopy(after)
+        self.events = events
+        self.uploads = []
+        self.upload_snapshot = []
+        self.lock_seen_at_upload = []
+        self.lock_probe = lambda: False
+
+    def goto_plugins(self):
+        self.events.append("admin:goto_plugins")
+
+    def read_row(self):
+        self.events.append("admin:read_row")
+        return copy.deepcopy(self.current["plugin_row"])
+
+    def read_installed_member_projection(self):
+        self.events.append("admin:read_installed_members")
+        return copy.deepcopy(self.current["installed_members"])
+
+    def read_freight_status(self):
+        self.events.append("admin:read_freight_status")
+        return copy.deepcopy(self.current["freight_status"])
+
+    def read_source_notification_route_projection(self):
+        self.events.append("admin:read_source_route")
+        return copy.deepcopy(self.current["source_notification_route"])
+
+    def upload_freight_contact_preserve_repair(self, artifact, eligible_snapshot):
+        self.events.append("admin:upload_contact_2_0_8")
+        self.uploads.append(str(artifact))
+        self.upload_snapshot.append(copy.deepcopy(eligible_snapshot))
+        self.lock_seen_at_upload.append(bool(self.lock_probe()))
+        if len(self.uploads) != 1:
+            raise AssertionError("the Contact repair attempted more than one upload")
+        if Path(artifact).resolve() != Path(deploy.CONTACT_PRESERVE_ARTIFACT_PATH).resolve():
+            raise AssertionError("the Contact repair handed over a non-fixed artifact")
+        deploy.require_contact_preserve_eligibility(eligible_snapshot)
+        self.current = copy.deepcopy(self.after)
+        return {
+            "comparison_name": deploy.PLUGIN_NAME,
+            "comparison_uploaded_version": deploy.CONTACT_PRESERVE_VERSION,
+            "overwrite_navigation_proven": True,
+            "overwrite_http_status": 200,
+            "wordpress_success_marker_exact": True,
+        }
+
+    def activate(self):
+        raise AssertionError("the Contact preservation action reached Activate")
+
+    def deactivate(self):
+        raise AssertionError("the Contact preservation action reached Deactivate")
+
+    def upload_replace(self, _artifact):
+        raise AssertionError("the Contact preservation action reached the generic upload route")
+
+    def upload_fnpt_display_repair(self, _artifact):
+        raise AssertionError("the Contact preservation action reached the FNPT upload route")
+
+
+class _GuardRequest:
+    def __init__(self, method, url, resource_type="document"):
+        self.method = method
+        self.url = url
+        self.resource_type = resource_type
+
+
+class _GuardRoute:
+    def __init__(self, method, url, resource_type="document"):
+        self.request = _GuardRequest(method, url, resource_type)
+        self.continued = 0
+        self.aborted = []
+
+    def continue_(self):
+        self.continued += 1
+
+    def abort(self, reason):
+        self.aborted.append(reason)
+
+
+class TestFreightContactPreserveRepair(Harness):
+    def setUp(self):
+        super().setUp()
+        self.events = []
+        self.before = _contact_snapshot()
+        self.after = _contact_snapshot(after=True)
+        self.artifact = deploy.verify_contact_preserve_artifact()
+        self.admin = ContactAdminDouble(self.before, self.after, self.events)
+        self.admin_opens = 0
+        self.public_calls = 0
+        self.fnpt_calls = []
+
+        @contextlib.contextmanager
+        def fake_admin_session():
+            self.admin_opens += 1
+            self.events.append("admin:attach")
+            try:
+                yield self.admin
+            finally:
+                self.events.append("admin:detach")
+
+        @contextlib.contextmanager
+        def fake_mutex(lane, *, purpose, wait_seconds=None):
+            self.events.append(f"mutex:enter:{lane}")
+            try:
+                yield
+            finally:
+                self.events.append(f"mutex:exit:{lane}")
+
+        def fake_public_snapshot():
+            self.public_calls += 1
+            phase = "after" if self.admin.uploads else "before"
+            self.events.append(f"public:{phase}")
+            source = self.after if self.admin.uploads else self.before
+            return copy.deepcopy(source["public"])
+
+        def fake_fnpt(plan, **kwargs):
+            self.events.append("fnpt:get_head_validation")
+            self.fnpt_calls.append((copy.deepcopy(plan), copy.deepcopy(kwargs)))
+            return {
+                "status": "PASSED",
+                "allowed_methods": ["GET", "HEAD"],
+                "business_write_performed": False,
+            }
+
+        for patcher in (
+            mock.patch.object(deploy, "admin_session", fake_admin_session),
+            mock.patch.object(deploy, "ui_browser_lock", fake_mutex),
+            mock.patch.object(deploy, "_contact_public_snapshot", fake_public_snapshot),
+            mock.patch.object(deploy, "_run_fnpt_public_validation", fake_fnpt),
+        ):
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        self.plan_path = self.make_plan()
+        self.admin.lock_probe = lambda: deploy.lock_path(self.plan_path).exists()
+        self.events.clear()
+
+    def make_plan(self):
+        return deploy.stage_plan(
+            "plugin_freight_contact_preserve_repair",
+            copy.deepcopy(self.before["plugin_row"]),
+            copy.deepcopy(self.after["plugin_row"]),
+            copy.deepcopy(self.artifact),
+            copy.deepcopy(self.before),
+        )
+
+    def commit_contact(self, approval=deploy.APPROVAL_WORD, plan_path=None):
+        args = argparse.Namespace(
+            plan=str(plan_path or self.plan_path),
+            approval=approval,
+        )
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.command_commit_freight_contact_preserve_repair(args)
+
+    def test_fixed_artifact_pair_member_order_and_hashes_are_proven(self):
+        artifact = deploy.verify_contact_preserve_artifact()
+        self.assertEqual(artifact["version"], "2.0.8")
+        self.assertEqual(artifact["sha256"], deploy.CONTACT_PRESERVE_SHA256)
+        self.assertEqual(artifact["bytes"], deploy.CONTACT_PRESERVE_BYTES)
+        self.assertEqual(artifact["members"], list(deploy.CONTACT_PRESERVE_MEMBERS))
+        self.assertEqual(artifact["member_sha256"], deploy.CONTACT_PRESERVE_MEMBER_SHA256)
+        self.assertEqual(artifact["baseline_version"], "2.0.7")
+        self.assertEqual(artifact["baseline_members"],
+                         list(deploy.CONTACT_PRESERVE_BASELINE_MEMBERS))
+        self.assertEqual(artifact["baseline_member_sha256"],
+                         deploy.CONTACT_PRESERVE_BASELINE_MEMBER_SHA256)
+        for suffix in (
+            "assets/frpdepot-freight-quote-journey.css",
+            "assets/frpdepot-freight-quote-journey.js",
+            "ups-allowlist.json",
+        ):
+            member = f"{deploy.PLUGIN_SLUG}/{suffix}"
+            self.assertEqual(artifact["member_sha256"][member],
+                             artifact["baseline_member_sha256"][member])
+
+    def test_upload_adapter_rechecks_eligibility_and_the_exact_2_0_8_path(self):
+        admin = deploy.AdminPage(object())
+        with mock.patch.object(
+            admin, "_upload_fixed_replace", return_value={"fixed": True}
+        ) as upload:
+            self.assertEqual(
+                admin.upload_freight_contact_preserve_repair(
+                    Path(deploy.CONTACT_PRESERVE_ARTIFACT_PATH), self.before
+                ),
+                {"fixed": True},
+            )
+            upload.assert_called_once_with(
+                Path(deploy.CONTACT_PRESERVE_ARTIFACT_PATH),
+                deploy.CONTACT_PRESERVE_VERSION,
+            )
+
+        bad = copy.deepcopy(self.before)
+        bad["freight_status"]["contact_new_count"] = 1
+        with mock.patch.object(admin, "_upload_fixed_replace") as upload:
+            with self.assertRaises(deploy.DeploymentError):
+                admin.upload_freight_contact_preserve_repair(
+                    Path(deploy.CONTACT_PRESERVE_ARTIFACT_PATH), bad
+                )
+            with self.assertRaises(deploy.DeploymentError):
+                admin.upload_freight_contact_preserve_repair(
+                    self.tmp / "other.zip", self.before
+                )
+            upload.assert_not_called()
+
+    def test_exact_approval_is_first_before_even_resolving_or_reading_a_plan(self):
+        def forbidden(*_args, **_kwargs):
+            raise AssertionError("a plan, browser, mutex or artifact was touched before approval")
+
+        for wrong in ("", "approved", " APPROVED", "APPROVED ", "APPROVED."):
+            with self.subTest(approval=wrong), \
+                    mock.patch.object(deploy, "resolve_plan_path", forbidden), \
+                    mock.patch.object(deploy, "verify_contact_preserve_artifact", forbidden), \
+                    mock.patch.object(deploy, "ui_browser_lock", forbidden):
+                with self.assertRaises(deploy.DeploymentError) as caught:
+                    self.commit_contact(approval=wrong)
+                self.assertIn("exact one-word approval", str(caught.exception))
+        self.assertEqual(self.events, [])
+        self.assertFalse(deploy.lock_path(self.plan_path).exists())
+
+    def test_plan_is_exactly_24_hours_and_tamper_or_expiry_refuses_locally(self):
+        original = self.plan_path.read_text(encoding="utf-8")
+        plan = json.loads(original)
+        created = datetime.fromisoformat(plan["created_utc"])
+        expires = datetime.fromisoformat(plan["expires_utc"])
+        self.assertEqual(expires - created, timedelta(hours=24))
+
+        plan["preflight"]["freight_status"]["contact_id"] = 999
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaises(deploy.DeploymentError) as caught:
+            self.commit_contact()
+        self.assertIn("hash check failed", str(caught.exception))
+        self.assertEqual(self.events, [])
+
+        # Recomputing the public digest cannot turn a semantically forged
+        # Contact/business-state snapshot into an eligible plan.
+        self.plan_path.write_text(original, encoding="utf-8")
+        plan = json.loads(original)
+        plan.pop("sha256")
+        plan["preflight"]["freight_status"]["contact_id"] = 999
+        plan["sha256"] = deploy.digest_for(plan)
+        self.plan_path.write_text(json.dumps(plan), encoding="utf-8")
+        with self.assertRaises(deploy.DeploymentError):
+            self.commit_contact()
+        self.assertEqual(self.events, [])
+
+        self.plan_path.write_text(original, encoding="utf-8")
+        stale_created = deploy.utc_now() - timedelta(hours=25)
+        self.rehash(
+            self.plan_path,
+            created_utc=stale_created.isoformat(),
+            expires_utc=(stale_created + timedelta(hours=24)).isoformat(),
+        )
+        with self.assertRaises(deploy.DeploymentError) as caught:
+            self.commit_contact()
+        self.assertIn("expired", str(caught.exception))
+        self.assertEqual(self.events, [])
+        self.assertFalse(deploy.lock_path(self.plan_path).exists())
+
+    def test_newer_intact_plan_supersedes_the_older_before_the_mutex(self):
+        old = json.loads(self.plan_path.read_text(encoding="utf-8"))
+        later = datetime.fromisoformat(old["created_utc"]) + timedelta(seconds=1)
+        with mock.patch.object(deploy, "utc_now", return_value=later):
+            newer = self.make_plan()
+        self.assertNotEqual(newer, self.plan_path)
+        with self.assertRaises(deploy.DeploymentError) as caught:
+            self.commit_contact()
+        self.assertIn("superseded", str(caught.exception))
+        self.assertEqual(self.events, [])
+        self.assertFalse(deploy.lock_path(self.plan_path).exists())
+
+    def test_busy_shared_browser_is_free_no_attach_attempt_lock_or_upload(self):
+        @contextlib.contextmanager
+        def busy_mutex(*_args, **_kwargs):
+            self.events.append("mutex:busy")
+            raise deploy.UiLaneBusy("busy")
+            yield  # pragma: no cover - makes this a context manager
+
+        with mock.patch.object(deploy, "ui_browser_lock", busy_mutex):
+            with self.assertRaises(deploy.UiLaneBusy):
+                self.commit_contact()
+        self.assertEqual(self.events, ["mutex:busy"])
+        self.assertEqual(self.admin_opens, 0)
+        self.assertEqual(self.public_calls, 0)
+        self.assertEqual(self.admin.uploads, [])
+        self.assertFalse(deploy.lock_path(self.plan_path).exists())
+        self.assertFalse(deploy.result_path(self.plan_path).exists())
+
+    def test_staging_uses_only_exact_read_only_projections_and_no_attempt_lock(self):
+        before_files = set(self.plan_dir.glob("*.json"))
+        with contextlib.redirect_stdout(io.StringIO()):
+            deploy.command_stage_freight_contact_preserve_repair(argparse.Namespace())
+        fresh = list(set(self.plan_dir.glob("*.json")) - before_files)
+        self.assertEqual(len(fresh), 1)
+        plan = json.loads(fresh[0].read_text(encoding="utf-8"))
+        self.assertEqual(plan["action"], "plugin_freight_contact_preserve_repair")
+        self.assertEqual(plan["preflight"], self.before)
+        self.assertEqual(plan["before"], self.before["plugin_row"])
+        self.assertEqual(plan["after_expected"], self.after["plugin_row"])
+        self.assertEqual(plan["validation"], deploy.CONTACT_PRESERVE_VALIDATION_CONTRACT)
+        self.assertEqual(self.admin.uploads, [])
+        self.assertFalse(deploy.lock_path(fresh[0]).exists())
+        self.assertEqual(self.fnpt_calls, [])
+        self.assertEqual(self.events, [
+            "mutex:enter:wordpress", "public:before", "admin:attach",
+            "admin:goto_plugins", "admin:read_row", "admin:read_installed_members",
+            "admin:read_freight_status", "admin:read_source_route", "admin:detach",
+            "mutex:exit:wordpress",
+        ])
+
+    def test_exact_staged_snapshot_drift_refuses_before_attempt_lock(self):
+        self.admin.current["source_notification_route"]["route_sha256"] = "b" * 64
+        with self.assertRaises(deploy.DeploymentError) as caught:
+            self.commit_contact()
+        self.assertIn("differs from the immutable staged snapshot", str(caught.exception))
+        self.assertEqual(self.admin.uploads, [])
+        self.assertFalse(deploy.lock_path(self.plan_path).exists())
+        self.assertFalse(deploy.result_path(self.plan_path).exists())
+        self.assertNotIn("fnpt:get_head_validation", self.events)
+
+    def test_attempt_lock_precedes_one_upload_of_the_exact_artifact(self):
+        self.commit_contact()
+        self.assertEqual(self.admin.lock_seen_at_upload, [True])
+        self.assertEqual(self.admin.uploads, [str(deploy.CONTACT_PRESERVE_ARTIFACT_PATH)])
+        self.assertEqual(self.admin.upload_snapshot, [self.before])
+        self.assertEqual(self.events.count("admin:upload_contact_2_0_8"), 1)
+        upload_index = self.events.index("admin:upload_contact_2_0_8")
+        self.assertLess(self.events.index("admin:read_source_route"), upload_index)
+        self.assertLess(upload_index, self.events.index("public:after"))
+        self.assertLess(self.events.index("public:after"),
+                        self.events.index("fnpt:get_head_validation"))
+
+    def test_success_is_active_2_0_8_exact_members_zero_write_and_no_rollback(self):
+        self.commit_contact()
+        result = self.result_of(self.plan_path)
+        lock = self.lock_of(self.plan_path)
+        self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(lock["status"], "committed_verified")
+        self.assertEqual(result["before"], self.before)
+        self.assertEqual(result["after"], self.after)
+        self.assertEqual(result["after"]["plugin_row"],
+                         deploy.project_row(True, True, "2.0.8", False))
+        self.assertEqual(result["after"]["installed_members"],
+                         self.after["installed_members"])
+        self.assertTrue(result["contact_sha256_unchanged"])
+        self.assertEqual(result["upload_attempts"], 1)
+        self.assertTrue(result["active_before_and_after"])
+        self.assertFalse(result["automatic_rollback"])
+        self.assertFalse(result["deactivated"])
+        self.assertFalse(lock["retry"])
+        self.assertFalse(lock["rollback"])
+
+    def test_status_stays_not_applied_zero_ids_backups_receipts_old0_new1(self):
+        deploy.require_contact_preserve_eligibility(self.before)
+        deploy.require_contact_preserve_postcondition(self.before, self.after)
+        old = self.before["freight_status"]
+        new = self.after["freight_status"]
+        empty_hash = deploy.digest_for(None)
+        for status, new_count in ((old, 0), (new, 1)):
+            self.assertEqual(status["status"], "not_applied")
+            self.assertEqual(status["deployment_id"], "0" * 32)
+            self.assertEqual(status["form_id"], 0)
+            self.assertEqual(status["page_id"], 0)
+            self.assertEqual(status["contact_old_count"], 0)
+            self.assertEqual(status["contact_new_count"], new_count)
+            self.assertEqual(status["receipt_count"], 0)
+            self.assertEqual(status["rollback_blocked_artifact"], "")
+            self.assertTrue(all(status[key] is False
+                                for key in deploy.FREIGHT_BACKUP_STATUS_KEYS))
+            for key in ("receipt_head_sha256", "apply_receipt_head_sha256",
+                        "form_before_sha256", "quote_page_before_sha256",
+                        "contact_before_sha256"):
+                self.assertEqual(status[key], empty_hash)
+        self.assertEqual(old["contact_sha256"], new["contact_sha256"])
+
+    def test_postcondition_rejects_contact_route_public_or_member_drift(self):
+        cases = {}
+        changed = copy.deepcopy(self.after)
+        changed["freight_status"]["contact_sha256"] = "d" * 64
+        cases["contact_sha"] = changed
+        changed = copy.deepcopy(self.after)
+        changed["source_notification_route"]["route_sha256"] = "b" * 64
+        cases["source_route"] = changed
+        changed = copy.deepcopy(self.after)
+        changed["installed_members"]["member_sha256"] = dict(
+            deploy.CONTACT_PRESERVE_BASELINE_MEMBER_SHA256
+        )
+        cases["installed_member"] = changed
+        changed = copy.deepcopy(self.after)
+        changed["public"]["contact"]["strong_sentence_count"] = 0
+        cases["contact_structure"] = changed
+        changed = copy.deepcopy(self.after)
+        changed["public"]["request_quote"]["status"] = 200
+        cases["quote_not_404"] = changed
+        for name, snapshot in cases.items():
+            with self.subTest(drift=name), self.assertRaises(deploy.DeploymentError):
+                deploy.require_contact_preserve_postcondition(self.before, snapshot)
+
+    def test_eligibility_rejects_any_nonzero_write_or_privacy_projection(self):
+        mutations = []
+        changed = copy.deepcopy(self.before)
+        changed["plugin_row"] = deploy.project_row(True, True, "2.0.7", True)
+        mutations.append(("update_marker", changed))
+        changed = copy.deepcopy(self.before)
+        changed["freight_status"]["form_id"] = 10
+        mutations.append(("form_id", changed))
+        changed = copy.deepcopy(self.before)
+        changed["freight_status"]["contact_backup_present"] = True
+        mutations.append(("backup", changed))
+        changed = copy.deepcopy(self.before)
+        changed["freight_status"]["receipt_count"] = 1
+        mutations.append(("receipt", changed))
+        changed = copy.deepcopy(self.before)
+        changed["freight_status"]["rollback_blocked_artifact"] = None
+        mutations.append(("rollback_absence_wrong_serialization", changed))
+        changed = copy.deepcopy(self.before)
+        changed["freight_status"]["rollback_blocked_artifact"] = "contact"
+        mutations.append(("rollback_blocked_artifact_present", changed))
+        changed = copy.deepcopy(self.before)
+        changed["source_notification_route"]["privacy"]["recipient_values_projected"] = True
+        mutations.append(("recipient_projection", changed))
+        for name, snapshot in mutations:
+            with self.subTest(mutation=name), self.assertRaises(deploy.DeploymentError):
+                deploy.require_contact_preserve_eligibility(snapshot)
+
+    def test_source_route_projection_returns_hash_only_and_no_recipient_values(self):
+        class ProjectionLink:
+            def inner_text(self):
+                return "Admin Notification"
+
+            def get_attribute(self, name):
+                self_name = str(name)
+                if self_name != "href":
+                    return None
+                return deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&nid=opaque-live-id"
+
+        class ProjectionPage:
+            def __init__(self):
+                self.url = deploy.PLUGINS_URL
+                self.evaluate_calls = []
+                self.gotos = []
+
+            def goto(self, url, wait_until=None, timeout=None):
+                self.url = url
+                self.gotos.append(url)
+
+            def query_selector_all(self, selector):
+                self.asserted_selector = selector
+                return [ProjectionLink()]
+
+            def evaluate(self, script, argument):
+                self.evaluate_calls.append((script, copy.deepcopy(argument)))
+                return _contact_source_route()
+
+        page = ProjectionPage()
+        projection = deploy.AdminPage(page).read_source_notification_route_projection()
+        self.assertEqual(set(projection), deploy.CONTACT_ROUTE_KEYS)
+        self.assertEqual(projection["privacy"], deploy.FREIGHT_PRIVACY_STATUS)
+        self.assertEqual(page.asserted_selector, deploy.SOURCE_CONTACT_NOTIFICATION_LINK_SELECTOR)
+        self.assertEqual(page.gotos, [
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL,
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&nid=opaque-live-id",
+        ])
+        self.assertEqual(page.evaluate_calls[0][1], {
+            "formId": 1, "title": "Contact", "notification": "Admin Notification",
+        })
+        serialized = json.dumps(projection, sort_keys=True)
+        for forbidden in ("@", '"to"', '"bcc"', '"from"', '"replyTo"'):
+            self.assertNotIn(forbidden, serialized)
+
+    def test_contact_and_fnpt_network_guards_allow_only_get_or_head_reads(self):
+        contact = deploy.ContactReadOnlyNetworkGuard()
+        for method in ("GET", "HEAD"):
+            route = _GuardRoute(method, deploy.CONTACT_URL)
+            contact.handle(route)
+            self.assertEqual(route.continued, 1)
+            self.assertEqual(route.aborted, [])
+        for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS"):
+            route = _GuardRoute(method, deploy.CONTACT_URL)
+            contact.handle(route)
+            self.assertEqual(route.continued, 0)
+            self.assertEqual(route.aborted, ["blockedbyclient"])
+        disallowed = _GuardRoute("GET", f"{deploy.EXACT_ORIGIN}/wp-json/")
+        contact.handle(disallowed)
+        self.assertEqual(disallowed.aborted, ["blockedbyclient"])
+        self.assertEqual(contact.projection()["allowed_methods"], ["GET", "HEAD"])
+
+        fnpt = deploy.FnptNetworkGuard(frozenset({deploy.FNPT_PRODUCT_URL}))
+        for method in ("GET", "HEAD"):
+            route = _GuardRoute(method, deploy.FNPT_PRODUCT_URL)
+            fnpt.handle(route)
+            self.assertEqual(route.continued, 1)
+        for method in ("POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE"):
+            route = _GuardRoute(method, deploy.FNPT_PRODUCT_URL)
+            fnpt.handle(route)
+            self.assertEqual(route.aborted, ["blockedbyclient"])
+        self.assertEqual(fnpt.projection()["allowed_methods"], ["GET", "HEAD"])
+
+    def test_success_invokes_fixed_2_0_8_fnpt_validation_contract(self):
+        self.commit_contact()
+        self.assertEqual(len(self.fnpt_calls), 1)
+        plan, kwargs = self.fnpt_calls[0]
+        self.assertEqual(plan["sha256"],
+                         json.loads(self.plan_path.read_text(encoding="utf-8"))["sha256"])
+        self.assertEqual(kwargs["release_version"], "2.0.8")
+        self.assertEqual(
+            kwargs["js_sha256"],
+            deploy.CONTACT_PRESERVE_MEMBER_SHA256[
+                f"{deploy.PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.js"
+            ],
+        )
+        self.assertEqual(
+            kwargs["css_sha256"],
+            deploy.CONTACT_PRESERVE_MEMBER_SHA256[
+                f"{deploy.PLUGIN_SLUG}/assets/frpdepot-freight-quote-journey.css"
+            ],
+        )
+
+    def test_post_upload_verification_failure_is_permanent_indeterminate_no_retry(self):
+        calls = []
+
+        def fail_fnpt(*_args, **_kwargs):
+            calls.append("failed")
+            raise deploy.DeploymentError("fixed synthetic validation failure")
+
+        with mock.patch.object(deploy, "_run_fnpt_public_validation", fail_fnpt):
+            with self.assertRaises(deploy.IndeterminateError):
+                self.commit_contact()
+        self.assertEqual(calls, ["failed"])
+        self.assertEqual(len(self.admin.uploads), 1)
+        self.assertEqual(self.lock_of(self.plan_path)["status"], "indeterminate")
+        result = self.result_of(self.plan_path)
+        self.assertEqual(result["status"], "INDETERMINATE")
+        self.assertFalse(result["retry"])
+        self.assertFalse(result["rollback"])
+        with self.assertRaises(deploy.DeploymentError):
+            self.commit_contact()
+        self.assertEqual(len(self.admin.uploads), 1, "a permanent failure must never retry")
+
+    def test_new_routes_selectors_ids_and_plugin_target_are_exactly_closed(self):
+        self.assertEqual(deploy.CONTACT_READ_ONLY_URLS,
+                         frozenset({deploy.CONTACT_URL, deploy.REQUEST_QUOTE_URL}))
+        self.assertEqual(deploy.CONTACT_READ_ONLY_PATHS,
+                         frozenset({"/contact/", "/request-a-quote/"}))
+        self.assertEqual(deploy.SOURCE_CONTACT_FORM_ID, 1)
+        self.assertEqual(deploy.FREIGHT_CONTACT_ID, 469)
+        deploy.assert_admin_url(deploy.SOURCE_CONTACT_FORM_EDITOR_URL)
+        self.assertEqual(parse_qs(urlsplit(deploy.SOURCE_CONTACT_FORM_EDITOR_URL).query), {
+            "page": ["gf_edit_forms"],
+            "id": ["1"],
+            "view": ["settings"],
+            "subview": ["notification"],
+        })
+        detail_url = deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&nid=opaque-live-id"
+        deploy.assert_source_contact_notification_detail_url(detail_url)
+        for bad_detail in (
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL,
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&nid=",
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&nid=one&nid=two",
+            detail_url + "&extra=1",
+            detail_url.replace("id=1", "id=2"),
+        ):
+            with self.subTest(bad_detail=bad_detail), self.assertRaises(deploy.DeploymentError):
+                deploy.assert_source_contact_notification_detail_url(bad_detail)
+        self.assertEqual(deploy.PLUGIN_EDITOR_TEXTAREA_SELECTOR, "textarea#newcontent")
+        self.assertEqual(deploy.FREIGHT_STATUS_SELECTOR, "#frpdepot-fqj-status")
+        self.assertEqual(set(deploy.PLUGIN_EDITOR_URL_BY_MEMBER),
+                         set(deploy.CONTACT_PRESERVE_MEMBERS))
+        for member, url in deploy.PLUGIN_EDITOR_URL_BY_MEMBER.items():
+            deploy.assert_admin_url(url)
+            query = parse_qs(urlsplit(url).query)
+            self.assertEqual(query, {"file": [member], "plugin": [deploy.PLUGIN_FILE]})
+        for url in (
+            deploy.SOURCE_CONTACT_FORM_EDITOR_URL + "&extra=1",
+            deploy.FREIGHT_STATUS_URL + "&action=save",
+            next(iter(deploy.PLUGIN_EDITOR_URL_BY_MEMBER.values())) + "&plugin=other/x.php",
+        ):
+            with self.subTest(url=url), self.assertRaises(deploy.DeploymentError):
+                deploy.assert_admin_url(url)
+
+    def test_action_call_graph_has_no_uncommissioned_write_or_leak_sink(self):
+        def calls(function):
+            tree = ast.parse(textwrap.dedent(inspect.getsource(function)))
+            found = set()
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                if isinstance(node.func, ast.Name):
+                    found.add(node.func.id)
+                elif isinstance(node.func, ast.Attribute):
+                    found.add(node.func.attr)
+            return found
+
+        self.assertEqual(calls(deploy.command_stage_freight_contact_preserve_repair), {
+            "verify_contact_preserve_artifact", "ui_browser_lock",
+            "_contact_public_snapshot", "admin_session", "_contact_admin_snapshot",
+            "_join_contact_snapshot", "require_contact_preserve_eligibility",
+            "_stage_and_report",
+        })
+        self.assertEqual(calls(deploy.command_commit_freight_contact_preserve_repair), {
+            "_open_commit", "verify_contact_preserve_artifact", "Path", "DeploymentError",
+            "lock_path", "ui_browser_lock", "_contact_public_snapshot", "admin_session",
+            "_contact_admin_snapshot", "_join_contact_snapshot",
+            "require_contact_preserve_eligibility", "write_lock", "utc_now", "isoformat",
+            "upload_freight_contact_preserve_repair", "_burn_contact_attempt",
+            "IndeterminateError", "require_contact_preserve_postcondition",
+            "_run_fnpt_public_validation", "record_result", "emit",
+        })
+        executable = "\n".join(
+            _strip_docs_and_comments(inspect.getsource(value))
+            for value in (
+                deploy.command_stage_freight_contact_preserve_repair,
+                deploy.command_commit_freight_contact_preserve_repair,
+                deploy._contact_public_snapshot,
+                deploy._contact_admin_snapshot,
+                deploy.AdminPage.read_installed_member_projection,
+                deploy.AdminPage.read_freight_status,
+                deploy.AdminPage.read_source_notification_route_projection,
+                deploy.ContactPublicProbe,
+                deploy.ContactReadOnlyNetworkGuard,
+                deploy._run_fnpt_public_validation,
+                deploy._exercise_all_fnpt_rows,
+                deploy._exercise_fnpt_fail_closed_cases,
+                deploy.FnptCustomerPage,
+                deploy.FnptNetworkGuard,
+            )
+        )
+        for forbidden in (
+            ".activate(", ".deactivate(", "upload_replace(", "upload_fnpt_display_repair(",
+            ".click(", ".submit(", ".fill(", ".type(", ".press(",
+            "set_input_files(", "screenshot(",
+            ".content(", "inner_html", "outer_html", "storage_state", ".cookies(",
+            "admin-ajax", "wp-json", "woocommerce_common", "zoho", "send_email",
+            "place_order", "add_selected_to_cart", "goto_checkout",
+        ):
+            with self.subTest(forbidden=forbidden):
+                self.assertNotIn(forbidden, executable.casefold())
+        self.assertNotRegex(
+            executable,
+            r"(?i)[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}",
+            "no recipient value may be embedded in or emitted by the action",
+        )
+
+
+# ===========================================================================
 # Source scan
 # ===========================================================================
 def _strip_docs_and_comments(source: str) -> str:
@@ -3139,6 +4102,10 @@ def _strip_docs_and_comments(source: str) -> str:
     NOT to touch them. Scanning raw text would either fire on the promise or force
     the promise to be deleted, so the scan runs on code alone.
     """
+    # inspect.getsource() preserves a class method's leading indentation.  Parse
+    # the same executable shape for modules, classes, functions and bound class
+    # methods rather than weakening callers to raw-text scans.
+    source = textwrap.dedent(source)
     drop: set[int] = set()
     for node in ast.walk(ast.parse(source)):
         if isinstance(node, (ast.Module, ast.ClassDef, ast.FunctionDef,
@@ -3172,7 +4139,8 @@ class TestSourceBoundaries(unittest.TestCase):
                            "urlopen", "Request(", "admin-ajax", "xmlrpc"))
 
     def test_no_credential_cookie_or_storage_access(self):
-        self.assertAbsent(("cookie", "storage_state", "localStorage", "sessionStorage",
+        self.assertAbsent((".cookies(", "add_cookies(", "clear_cookies(",
+                           "storage_state", "localStorage", "sessionStorage",
                            "local_storage", "session_storage", "getpass",
                            "Authorization", "Bearer", "access_token", "credentials",
                            "add_init_script", "set_extra_http_headers"))
@@ -3182,7 +4150,20 @@ class TestSourceBoundaries(unittest.TestCase):
 
     def test_no_page_dumps_or_screenshots(self):
         self.assertAbsent(("screenshot", ".content()", "inner_html", "innerHTML",
-                           "outer_html", "page_source", "evaluate(", "console"))
+                           "outer_html", "page_source", "console"))
+        read_only_code = "\n".join((
+            _strip_docs_and_comments(inspect.getsource(deploy.FnptCustomerPage)),
+            _strip_docs_and_comments(inspect.getsource(deploy.ContactPublicProbe)),
+            _strip_docs_and_comments(
+                inspect.getsource(deploy.AdminPage.read_source_notification_route_projection)
+            ),
+        ))
+        self.assertGreater(read_only_code.count("evaluate("), 0)
+        self.assertEqual(
+            self.code.count("evaluate("),
+            read_only_code.count("evaluate("),
+            "DOM evaluation is confined to fixed privacy-projected read-only validators",
+        )
 
     def test_no_typing_of_customer_or_payment_data(self):
         self.assertAbsent((".fill(", ".type(", "keyboard", ".press("))
@@ -3205,7 +4186,10 @@ class TestSourceBoundaries(unittest.TestCase):
         self.assertNotIn("user_data_dir", block)
 
     def test_the_preflight_never_reaches_an_admin_session(self):
-        block = self.source.split("def _preflight_single_run")[1].split("\n# ---")[0]
+        block = "\n".join((
+            _strip_docs_and_comments(inspect.getsource(deploy._preflight_single_run)),
+            _strip_docs_and_comments(inspect.getsource(deploy._preflight_probe)),
+        ))
         self.assertIn("anonymous_session(PREFLIGHT_PUBLIC_PATHS)", block)
         self.assertIn("require_variation_ready", block)
         for banned in ("admin_session", "CART_URL", "CHECKOUT_URL",
@@ -3232,13 +4216,21 @@ class TestSourceBoundaries(unittest.TestCase):
             with self.subTest(banned_call=banned_call):
                 self.assertNotIn(banned_call, block)
 
-    def test_only_the_ten_subcommands_exist(self):
-        literal = set(re.findall(r'add_parser\("([a-z-]+)"\)', self.source))
-        looped = set(re.findall(r'^\s+\("([a-z-]+)", command_', self.source, re.M))
+    def test_only_the_twelve_subcommands_exist(self):
+        parser_source = inspect.getsource(deploy.build_parser)
+        literal = set(re.findall(r'add_parser\("([a-z-]+)"\)', parser_source))
+        # The fixed Contact commit tuple is intentionally line-wrapped.  Permit
+        # only whitespace across that wrap while still requiring a literal name
+        # paired directly with one command_* handler.
+        looped = set(re.findall(
+            r'\(\s*"([a-z-]+)"\s*,\s*command_[a-z_]+\s*\)', parser_source
+        ))
         self.assertEqual(literal | looped, {
             "inspect", "preflight-validation",
-            "stage-replace", "stage-ups-repair", "stage-activate", "stage-deactivate",
-            "commit-replace", "commit-ups-repair", "commit-activate", "commit-deactivate"})
+            "stage-replace", "stage-fnpt-display-repair",
+            "stage-freight-contact-preserve-repair", "stage-activate", "stage-deactivate",
+            "commit-replace", "commit-fnpt-display-repair",
+            "commit-freight-contact-preserve-repair", "commit-activate", "commit-deactivate"})
 
     def test_every_navigation_and_action_carries_an_explicit_timeout(self):
         for call in re.findall(r"\.goto\([^)]*\)", self.code):
@@ -3258,9 +4250,18 @@ class TestSourceBoundaries(unittest.TestCase):
                 self.assertIn("timeout=", call)
 
     def test_the_forced_selection_is_only_used_on_the_backing_select(self):
-        forced = re.findall(r"^.*force=True.*$", self.code, re.M)
-        self.assertEqual(len(forced), 1, "force must appear exactly once")
-        self.assertIn("select.select_option", forced[0])
+        legacy = inspect.getsource(deploy.PublicPage.select_attribute)
+        legacy_forced = re.findall(r"^.*force=True.*$", legacy, re.M)
+        self.assertEqual(len(legacy_forced), 1,
+                         "the legacy preflight force stays confined to its backing select")
+        self.assertIn("select.select_option", legacy_forced[0])
+
+        fnpt = inspect.getsource(deploy.FnptCustomerPage)
+        fnpt_forced = re.findall(r"^.*force=True.*$", fnpt, re.M)
+        self.assertEqual(len(fnpt_forced), 2,
+                         "the FNPT validator may only reset and select WooCommerce backing selects")
+        for call in fnpt_forced:
+            self.assertIn("select_option", call)
 
     def test_every_hard_coded_url_stays_on_the_fixed_origin(self):
         for url in re.findall(r"https?://[^\s\"')]+", self.source):
@@ -3271,9 +4272,16 @@ class TestSourceBoundaries(unittest.TestCase):
                                 f"{url} is not on the fixed origin")
 
     def test_selectors_are_anchored_and_never_positional(self):
-        self.assertAbsent((":first", ":nth", "first_of_type", ">> nth=", ":visible",
+        self.assertAbsent((":first", ":nth", "first_of_type", ">> nth=",
                            "a.activate", "a.deactivate", "input[type=\"radio\"][",
                            "has-text", "text=", ":checked"))
+        for selector_name in (
+                "ROW_SELECTOR", "UPDATE_ROW_SELECTOR", "ROLE_RADIO_SELECTOR",
+                "VARIATION_ID_SELECTOR", "ADD_TO_CART_SELECTOR", "VARIATION_FORM_SELECTOR",
+                "FNPT_PANEL_SELECTOR", "FNPT_QUOTE_BUTTON_SELECTOR",
+                "FNPT_VARIATION_SELECT_SELECTOR"):
+            with self.subTest(selector=selector_name):
+                self.assertNotRegex(getattr(deploy, selector_name), r":(?:first|nth|visible)")
         self.assertEqual(
             deploy.ROW_SELECTOR,
             f'tr[data-plugin="{PLUGIN_FILE}"]:not(.plugin-update-tr)',

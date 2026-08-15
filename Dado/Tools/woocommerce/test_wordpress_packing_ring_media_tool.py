@@ -79,6 +79,11 @@ ORIGIN = media.EXACT_ORIGIN
 SOURCE_PATH = Path(media.__file__)
 SOURCE_TEXT = SOURCE_PATH.read_text(encoding="utf-8")
 SOURCE_TREE = ast.parse(SOURCE_TEXT)
+REAL_PLAN_DIR = Path(r"C:\FRPDepot\Dado\20_Working\wordpress_packing_ring_media_plans")
+REAL_PLAN_BASELINE = {
+    path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+    for path in REAL_PLAN_DIR.glob("*.json")
+} if REAL_PLAN_DIR.exists() else {}
 
 
 class Playwright:
@@ -271,11 +276,14 @@ class FakeSite:
         self.fail_mode = "rejected"        # "rejected" | "timeout" | "ambiguous"
         self.stored_name_suffix = ""       # e.g. "-1" to model a name collision
         self.count_text: str | None = None  # override ".displaying-num"
+        self.second_count_text: str | None = None
         self.hide_count = False
         self.login_screen = False
         self.redirects: dict[str, str] = {}
         self.break_row_links = False
         self.hide_row_filenames = False
+        self.parent_edit_links = False
+        self.empty_placeholder = False
 
     # -- navigation ---------------------------------------------------------
     def goto(self, url):
@@ -402,11 +410,22 @@ class FakeSite:
                         ]),
                     ]),
                 ]),
+                *([_element("td", cls="parent column-parent", children=[
+                    _element("a", attrs={
+                        "href": f"{ORIGIN}/wp-admin/post.php?post={item.id + 100000}&action=edit"
+                    }, text="Parent product"),
+                ])] if self.parent_edit_links else []),
+            ]))
+        if self.empty_placeholder and not rows:
+            rows.append(_element("tr", children=[
+                _element("td", cls="colspanchange", text="No media items found."),
             ]))
         header = []
         if not self.hide_count:
             text = self.count_text if self.count_text is not None else f"{len(self.attachments)} items"
             header.append(_element("span", cls="displaying-num", text=text))
+            if self.second_count_text is not None:
+                header.append(_element("span", cls="displaying-num", text=self.second_count_text))
         return _element("body", children=[
             _element("div", cls="tablenav top", children=header),
             _element("table", cls="wp-list-table", children=[
@@ -1150,9 +1169,17 @@ class TestNavigationGuards(unittest.TestCase):
         good = f"{ORIGIN}/wp-content/uploads/2026/08/01_hero_three_quarter.png"
         self.assertEqual(media.assert_public_upload_url(good), "01_hero_three_quarter.png")
         media.assert_public_upload_url(good, expected_basename="01_hero_three_quarter.png")
+        legacy_root = f"{ORIGIN}/wp-content/uploads/legacy-original.webp"
+        self.assertEqual(
+            media.assert_public_upload_url(
+                legacy_root, allowed_extensions=media.SCANNED_EXTENSIONS
+            ),
+            "legacy-original.webp",
+        )
         for bad in (
             f"{ORIGIN}/wp-content/uploads/2026/08/01_hero_three_quarter.png?v=1",
             f"{ORIGIN}/wp-content/uploads/2026/08/../../../wp-config.php",
+            f"{ORIGIN}/wp-content/uploads/legacy/nested.png",
             f"{ORIGIN}/wp-content/uploads/2026/08/shell.php",
             f"{ORIGIN}/wp-content/uploads/2026/08/x.svg",
             f"{ORIGIN}/wp-content/plugins/evil/x.png",
@@ -1284,6 +1311,35 @@ class TestDuplicatePreflight(ToolTestCase):
         self.assertFalse(evidence["complete"])
         with self.assertRaises(media.MediaUploadError):
             media.require_no_duplicates(evidence)
+
+    def test_matching_top_and_bottom_item_counts_are_one_attestation(self):
+        site = self.library_with(["unrelated.png"])
+        site.second_count_text = "1 item"
+        evidence = self.evidence_for(site)
+        self.assertTrue(evidence["complete"])
+        self.assertEqual(evidence["library_total"], 1)
+
+    def test_disagreeing_top_and_bottom_item_counts_fail_closed(self):
+        site = self.library_with(["unrelated.png"])
+        site.second_count_text = "2 items"
+        evidence = self.evidence_for(site)
+        self.assertFalse(evidence["complete"])
+        with self.assertRaises(media.MediaUploadError):
+            media.require_no_duplicates(evidence)
+
+    def test_parent_product_edit_link_does_not_ambiguate_attachment_identity(self):
+        site = self.library_with(["unrelated.png"])
+        site.parent_edit_links = True
+        evidence = self.evidence_for(site)
+        self.assertTrue(evidence["complete"])
+        self.assertEqual(evidence["enumerated"], 1)
+
+    def test_standard_empty_table_placeholder_is_not_an_unidentified_media_row(self):
+        site = self.library_with([])
+        site.empty_placeholder = True
+        admin = media.AdminPage(FakePage(site))
+        admin._goto(media.library_page_url(1))
+        self.assertEqual(admin._row_records(), [])
 
     def test_unidentifiable_row_fails_closed(self):
         site = self.library_with(["unrelated.png"])
@@ -2212,13 +2268,19 @@ class TestSourceHasNoForbiddenCapability(unittest.TestCase):
 
 
 # ===========================================================================
-# The build itself changed nothing live
+# The tests themselves change no real commissioned state
 # ===========================================================================
-class TestBuildPerformedNoLiveAction(unittest.TestCase):
-    def test_no_plan_was_staged_in_the_real_plan_folder(self):
-        real = Path(r"C:\FRPDepot\Dado\20_Working\wordpress_packing_ring_media_plans")
-        self.assertFalse(real.exists() and any(real.glob("*.json")),
-                         "a real plan was staged; this build authorises build/test only")
+class TestSuitePerformedNoLiveAction(unittest.TestCase):
+    def test_real_plan_folder_is_byte_identical_to_the_pre_test_baseline(self):
+        current = {
+            path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+            for path in REAL_PLAN_DIR.glob("*.json")
+        } if REAL_PLAN_DIR.exists() else {}
+        self.assertEqual(
+            current,
+            REAL_PLAN_BASELINE,
+            "the offline test run created, removed or changed real plan state",
+        )
 
     def test_the_gallery_on_disk_is_untouched(self):
         for record in media.FIXED_IMAGES:
