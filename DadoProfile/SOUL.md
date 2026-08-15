@@ -716,8 +716,13 @@ Systems of record:
   is unavailable. The failed 1.0.0 artifact is permanently withdrawn; corrected
   1.0.1 SHA-256 is
   `fe6fa440ea3a08169bf568ae0fbb06f666ad71c1110e58f9b2b6bb0acc8be6cb`.
-  On 2026-08-12 Rachad commissioned `wordpress_packing_ring_media_tool.py`:
-  BUILT AND TESTED ONLY — no plan staged, zero uploads, zero website writes.
+  On 2026-08-12 Rachad commissioned `wordpress_packing_ring_media_tool.py`.
+  STATUS 2026-08-15: tool 2.2.0 / schema 4. Rachad approved immutable plan
+  SHA-256 `4a35eaec5a391652007443949987541f83b64bf93d3f95e88677687c95bcf0dc`.
+  Its first upload attempt timed out and the plan is permanently locked
+  `INDETERMINATE` at `upload_1`: zero uploads were verified, and whether that
+  first upload landed is not proven. NO RETRY. No rollback or delete was
+  attempted or is reachable; zero product changes and zero emails were recorded.
   It has two commands, `stage` and `commit --plan --approval`, and may upload
   ONLY the six approved Packing Ring PNGs in
   `Dado\20_Working\packing_rings\generated_gallery_20260812\`, hard-coded by

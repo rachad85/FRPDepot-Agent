@@ -114,12 +114,13 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Packing Ring Media Upload Tool"
-# 2.0.0 / schema 2: the duplicate hash gate became COMPLETE over every enumerated
-# image attachment. The version and schema are bumped together and checked on
-# load so a plan cut under the old bounded-sample gate can never be committed by
-# this build -- an incomplete duplicate proof must not survive a tool upgrade.
-TOOL_VERSION = "2.0.0"
-SCHEMA_VERSION = 2
+# 2.2.0 / schema 4: preserve the schema-3 list-table repair and additionally
+# accept WordPress's legacy uploads-root originals as READ targets. The public
+# reader still accepts only the exact host and either one root filename or the
+# dated YYYY/MM form; nested foreign paths stay unreachable. Upload scope is
+# unchanged. Plans from older readers are refused by the version/schema gate.
+TOOL_VERSION = "2.2.0"
+SCHEMA_VERSION = 4
 
 ROOT = Path(r"C:\FRPDepot")
 GALLERY_DIR = (ROOT / "Dado" / "20_Working" / "packing_rings"
@@ -266,8 +267,12 @@ SUBMIT_SELECTOR = 'input[type="submit"][name="html-upload"]'
 LOGIN_FORM_SELECTOR = "form#loginform"
 LIST_ROW_SELECTOR = "#the-list tr"
 LIST_COUNT_SELECTOR = ".displaying-num"
-ROW_LINK_SELECTOR = "a[href]"
+# The parent column can contain a second post.php?...action=edit link. Reading
+# every link makes an attached media row look like two attachments. The title
+# cell is WordPress's own attachment-identity surface.
+ROW_LINK_SELECTOR = "td.title a[href]"
 ROW_FILENAME_SELECTOR = "p.filename"
+EMPTY_TABLE_CELL_SELECTOR = "td.colspanchange"
 ATTACHMENT_URL_SELECTOR = "input#attachment_url"
 ATTACHMENT_URL_FALLBACK_SELECTOR = ".misc-pub-attachment input.urlfield"
 ATTACHMENT_FILENAME_SELECTOR = ".misc-pub-filename"
@@ -275,7 +280,9 @@ ATTACHMENT_FILETYPE_SELECTOR = ".misc-pub-filetype"
 
 LIST_COUNT_PATTERN = re.compile(r"([0-9][0-9,]*)\s+items?\b", re.IGNORECASE)
 DEDUPE_SUFFIX_PATTERN = re.compile(r"-\d+$")
-UPLOADS_PATH_PATTERN = re.compile(r"^/wp-content/uploads/\d{4}/\d{2}/(?P<name>[^/]+)$")
+UPLOADS_PATH_PATTERN = re.compile(
+    r"^/wp-content/uploads/(?:\d{4}/\d{2}/)?(?P<name>[^/]+)$"
+)
 
 # The six approved files are PNG, so every UPLOAD path in this tool is PNG-only.
 # The duplicate scan is deliberately wider: an identical image could have been
@@ -579,7 +586,8 @@ def assert_public_upload_url(url: str, *, expected_basename: str | None = None,
     found = UPLOADS_PATH_PATTERN.fullmatch(parsed.path or "")
     if not found:
         raise MediaUploadError(
-            "REFUSED: the public file URL is not a plain /wp-content/uploads/YYYY/MM/ path."
+            "REFUSED: the public file URL is not a plain uploads-root or "
+            "/wp-content/uploads/YYYY/MM/ original-file path."
         )
     name = found.group("name")
     if "/" in name or "\\" in name or name in ("", ".", "..") or "%" in name:
@@ -922,6 +930,13 @@ class AdminPage:
         rows = self._page.query_selector_all(LIST_ROW_SELECTOR)
         found: list[dict[str, Any]] = []
         for row in rows:
+            # WordPress renders one colspan placeholder row after the final
+            # populated page. It is proof that there are no rows here, not an
+            # unidentified attachment. A real row with missing identity still
+            # takes the fail-closed path below.
+            if (not row.query_selector_all("a[href]")
+                    and len(row.query_selector_all(EMPTY_TABLE_CELL_SELECTOR)) == 1):
+                continue
             ids = set()
             for link in row.query_selector_all(ROW_LINK_SELECTOR):
                 attachment_id = parse_attachment_edit_link(str(link.get_attribute("href") or ""))
@@ -952,12 +967,19 @@ class AdminPage:
 
     def _library_total(self) -> int | None:
         nodes = self._page.query_selector_all(LIST_COUNT_SELECTOR)
-        if len(nodes) != 1:
+        if not nodes:
             return None
-        matched = LIST_COUNT_PATTERN.search(str(nodes[0].inner_text() or ""))
-        if not matched:
+        totals: set[int] = set()
+        for node in nodes:
+            matched = LIST_COUNT_PATTERN.search(str(node.inner_text() or ""))
+            if not matched:
+                return None
+            totals.add(int(matched.group(1).replace(",", "")))
+        # WordPress emits the same total above and below the table. Agreement is
+        # stronger than choosing one; any disagreement remains a closed refusal.
+        if len(totals) != 1:
             return None
-        return int(matched.group(1).replace(",", ""))
+        return totals.pop()
 
     def enumerate_library(self) -> dict[str, Any]:
         """Walk the list screen with explicit bounds and prove we reached the end.

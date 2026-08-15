@@ -604,9 +604,14 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
  fresh 248-test pass; activation still awaits its own exact `APPROVED`.
 - [x] PACKING RING MEDIA UPLOAD (2026-08-12, Rachad answered "Yes" on Discord) —
       `Dado\Tools\woocommerce\wordpress_packing_ring_media_tool.py`.
-      **BUILT AND TESTED ONLY: no plan staged, zero uploads, zero website writes,
-      zero products changed, browser never contacted.** Two commands only, `stage`
-      and `commit --plan --approval`. The six approved Packing Ring PNGs in
+      **STATUS 2026-08-15: tool 2.2.0 / schema 4. Rachad approved plan SHA-256
+      `4a35eaec5a391652007443949987541f83b64bf93d3f95e88677687c95bcf0dc`.
+      The first upload attempt timed out and the permanent result is
+      `INDETERMINATE` at `upload_1`: zero uploads were verified, and whether that
+      first upload landed is not proven. NO RETRY. No rollback or delete was
+      attempted or is reachable; zero product changes and zero emails were
+      recorded.** Two commands only, `stage` and `commit --plan --approval`.
+      The six approved Packing Ring PNGs in
       `Dado\20_Working\packing_rings\generated_gallery_20260812\` are hard-coded by
       path, name, byte size, SHA-256 and PNG/RGB/1024x1024 identity, so a seventh
       file, the review sheet, the ZIP, a source photo and any arbitrary path are
@@ -625,8 +630,8 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
       retry route by design: a delete capability is far more dangerous than a
       leftover unattached image.
       *** DUPLICATE PREFLIGHT — BOTH GATES COMPLETE, NO SAMPLING PATH ANYWHERE
-      (repaired 2026-08-12 after an independent review; tool/schema bumped to
-      2.0.0 / 2 together so no plan cut under the old gate can ever validate). ***
+      (repaired 2026-08-12 after an independent review; tool/schema later bumped
+      to 2.2.0 / 4 so plans from the old list reader cannot validate). ***
       The NAME gate is complete and proves it against the list table's own item
       count (fails closed on an unreadable count, an unidentifiable row, a
       NAMELESS row or a short walk) and strips WordPress's `-N` suffix before
@@ -649,9 +654,9 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
       REAL AND IS NOT A LIMIT ON COMPLETENESS: this downloads every image in the
       Media Library once per stage and once per commit. That is the price of a
       gate that can actually see an older duplicate.
-      Tests: 134 run / 133 passed / 1 skip (this account cannot create symlinks;
+      Tests: 138 run / 137 passed / 1 skip (this account cannot create symlinks;
       that branch is covered deterministically instead) / 0 failed; complete
-      WooCommerce suite 824 run / 822 passed / 2 expected skips / 0 failed. The
+      WooCommerce suite 1,151 run / 1,150 passed / 1 expected skip / 0 failed. The
       completeness tests put the interesting file at the OLDEST row of a
       multi-page library, so a regression to sampling fails them. An upload still
       needs its own staged plan and Rachad's own fresh `APPROVED`.
