@@ -283,6 +283,36 @@
    "skills": [],
    "state": "scheduled",
    "workdir": null
+  },
+  {
+   "base_url": null,
+   "context_from": null,
+   "deliver": "origin",
+   "enabled": false,
+   "enabled_toolsets": [
+    "terminal"
+   ],
+   "id": "0f0c6db1feb1",
+   "model": null,
+   "name": "retry-stub-flange-media-scan-once",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Run exactly one authorized READ-ONLY retry of the FRP Depot Stub Flange Media Library duplicate diagnostic. Use terminal once to start it through the watcher-managed runner with this exact command: \"C:/Users/TDI-service/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe\" \"C:/FRPDepot/Dado/Tools/watch/job_runner.py\" start --name retry-stub-flange-duplicate-gate-once -- \"C:/Users/TDI-service/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe\" \"C:/FRPDepot/Dado/20_Working/diagnose_stub_flange_media_duplicate_20260815.py\". Working directory C:/FRPDepot. Do not poll, do not retry again, do not stage, do not upload, and do not modify the website. Report the returned job ID and state that the watcher will announce its result. This is a one-shot execution; do not create or schedule any cron job.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-15T21:48:53.505374-04:00",
+    "display": "once in 15m"
+   },
+   "schedule_display": "once in 15m",
+   "script": null,
+   "skill": null,
+   "skills": [],
+   "state": "completed",
+   "workdir": "C:\\FRPDepot"
   }
  ]
 }

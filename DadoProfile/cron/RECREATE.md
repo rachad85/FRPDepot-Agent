@@ -9,7 +9,7 @@ own lock, so an external writer can silently drop a claim or a completion,
 and copying a mirror over a live schedule is what the neighbouring tree had
 to build a refusal gate against.
 
-10 job(s) live at the time of writing:
+11 job(s) live at the time of writing:
 
     hermes -p dado cron create "10 5 * * *" --name dado-conduct-review --no-agent --script conduct_review.py --deliver telegram:891365639
     hermes -p dado cron create "15 8 * * *" --name dado-daily-banking-review --no-agent --script dado_daily_banking_review.py --deliver origin
@@ -21,3 +21,4 @@ to build a refusal gate against.
     hermes -p dado cron create "*/10 * * * *" --name dado-zoho-session-watch --no-agent --script zoho_session_keepalive.py --deliver telegram:891365639
     hermes -p dado cron create "0 9 * * 1" --name packing-observation-weekly-reminder --no-agent --script packing_observation_weekly_reminder.py --deliver origin
     hermes -p dado cron create "every 30m" --name packing-order-monitor --no-agent --script packing_order_monitor.py --deliver origin
+    hermes -p dado cron create "once in 15m" --name retry-stub-flange-media-scan-once --deliver origin   # DISABLED in live

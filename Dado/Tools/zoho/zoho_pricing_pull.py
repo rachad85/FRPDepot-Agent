@@ -19,7 +19,7 @@ def paginate(token, domain, path, org_id, key):
         query = urlencode({"organization_id": org_id, "page": page, "per_page": 200})
         response = zoho_tool.api_get(token, domain, f"{path}?{query}")
         rows.extend(response.get(key) or [])
-        if not (response.get("page_context") or {}).get("has_more_page"):
+        if not zoho_tool.require_has_more_page(response, path, page):
             return rows
     raise RuntimeError(f"Pagination guard stopped on {path}")
 

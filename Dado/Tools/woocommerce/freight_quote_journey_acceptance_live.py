@@ -246,21 +246,39 @@ class RequestRecorder:
     submission_phase: str = ""
 
     @staticmethod
-    def _record(request: Any) -> dict[str, str]:
+    def _safe_post_data(request: Any) -> str:
+        """Return text payloads without letting compressed/binary telemetry escape the guard.
+
+        Playwright's sync ``request.post_data`` property decodes CDP's base64 bytes
+        as UTF-8. Some browser telemetry payloads are compressed binary, so reading
+        that property raises ``UnicodeDecodeError``. An unreadable payload must be
+        treated as empty for marker matching; its non-read method is still recorded
+        and aborted by the default-deny route below.
+        """
+        try:
+            return str(request.post_data or "")
+        except (UnicodeDecodeError, TypeError, ValueError):
+            return ""
+
+    @classmethod
+    def _record(cls, request: Any) -> dict[str, str]:
         return {
             "method": str(request.method).upper(),
             "url": str(request.url),
-            "post_data": str(request.post_data or ""),
+            "post_data": cls._safe_post_data(request),
         }
 
-    def observe(self, request: Any) -> None:
+    def observe(self, request: Any) -> dict[str, str]:
         record = self._record(request)
         method = record["method"]
         lowered_url = record["url"].casefold()
         lowered_body = record["post_data"].casefold()
         if any(fragment in lowered_url for fragment in ANALYTICS_HOST_FRAGMENTS):
             self.analytics_transports.append(record)
-        if (
+        # Read-only payment-related scripts, fonts and configuration endpoints
+        # are ordinary storefront resources.  A payment callback/attempt is a
+        # non-read request; those remain recorded and blocked below.
+        if method not in {"GET", "HEAD", "OPTIONS"} and (
             any(fragment in lowered_url for fragment in PAYMENT_URL_FRAGMENTS)
             or "payment_method" in lowered_body
             or "card_number" in lowered_body
@@ -268,10 +286,11 @@ class RequestRecorder:
             self.payment_requests.append(record)
         if method not in {"GET", "HEAD", "OPTIONS"}:
             self.non_read_requests.append(record)
+        return record
 
     def allow_or_abort(self, route: Any) -> None:
         request = route.request
-        self.observe(request)
+        record = self.observe(request)
         method = str(request.method).upper()
         if method in {"GET", "HEAD", "OPTIONS"}:
             route.continue_()
@@ -291,7 +310,7 @@ class RequestRecorder:
             and parsed.port is None
             and parsed.path in SUBMISSION_PATHS
             and method in ALLOWED_SUBMISSION_METHODS
-            and TEST_MARKER in str(request.post_data or "")
+            and TEST_MARKER in record["post_data"]
             and not self.payment_requests
         )
         if not permitted:
@@ -563,7 +582,11 @@ class PlaywrightAdapter:
             value = specified if specified in values and specified else next((item for item in values if item), "")
             if not value:
                 raise HarnessRefusal("variation selector exposes no non-empty server option")
-            select.select_option(value)
+            # Storefront swatch plugins intentionally hide WooCommerce's native
+            # selects. Playwright's force flag changes the native selection and
+            # dispatches the normal WooCommerce events without clicking a cart,
+            # quote-submit or other business-write control.
+            select.select_option(value, force=True)
         page.wait_for_function(
             "() => Number(document.querySelector('form.variations_form input.variation_id')?.value || 0) > 0",
             timeout=15_000,

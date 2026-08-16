@@ -231,6 +231,27 @@ class FixedInterfaceTests(unittest.TestCase):
 
 
 class RequestRecorderTests(unittest.TestCase):
+    def test_binary_post_data_fails_closed_without_breaking_the_route(self):
+        class BinaryRequest:
+            method = "POST"
+            url = live.QUOTE_URL
+
+            @property
+            def post_data(self):
+                raise UnicodeDecodeError("utf-8", b"\x1f\x8b", 1, 2, "invalid start byte")
+
+        recorder = live.RequestRecorder(submission_enabled=True)
+        route = FakeRoute(BinaryRequest())
+        recorder.submission_window = True
+        recorder.submission_phase = "validation_failure"
+        recorder.allow_or_abort(route)
+
+        self.assertEqual("abort", route.action)
+        self.assertEqual("blockedbyclient", route.reason)
+        self.assertEqual(0, recorder.submission_count)
+        self.assertEqual(1, len(recorder.non_read_requests))
+        self.assertEqual("", recorder.non_read_requests[0]["post_data"])
+
     def test_read_only_methods_continue(self):
         recorder = live.RequestRecorder()
         for method in ("GET", "HEAD", "OPTIONS"):
@@ -273,7 +294,7 @@ class RequestRecorderTests(unittest.TestCase):
         foreign.allow_or_abort(route)
         self.assertEqual("abort", route.action)
 
-    def test_payment_request_is_recorded_and_never_permitted(self):
+    def test_non_read_payment_request_is_recorded_and_never_permitted(self):
         recorder = live.RequestRecorder(submission_enabled=True, submission_window=True)
         route = FakeRoute(FakeRequest("POST", live.ORIGIN + "/wc/store/v1/checkout", "payment_method=fixture"))
         recorder.allow_or_abort(route)
@@ -283,7 +304,34 @@ class RequestRecorderTests(unittest.TestCase):
         get_route = FakeRoute(FakeRequest("GET", live.ORIGIN + "/payment/fixture"))
         recorder.allow_or_abort(get_route)
         self.assertEqual("continue", get_route.action)
-        self.assertEqual(2, len(recorder.payment_requests))
+        self.assertEqual(1, len(recorder.payment_requests))
+
+    def test_hidden_native_variation_select_is_changed_with_force(self):
+        page = mock.Mock()
+        form = mock.Mock()
+        page.locator.return_value = form
+        form.count.return_value = 1
+        page.evaluate.return_value = {"attribute_size": "2"}
+
+        selects = mock.Mock()
+        form.locator.return_value = selects
+        selects.count.return_value = 1
+        select = mock.Mock()
+        selects.nth.return_value = select
+        select.get_attribute.return_value = "attribute_size"
+
+        options = mock.Mock()
+        select.locator.return_value = options
+        options.count.return_value = 2
+        options.nth.side_effect = [
+            mock.Mock(get_attribute=mock.Mock(return_value="")),
+            mock.Mock(get_attribute=mock.Mock(return_value="2")),
+        ]
+
+        live.PlaywrightAdapter._select_first_resolved_variation(page, True)
+
+        select.select_option.assert_called_once_with("2", force=True)
+        page.wait_for_function.assert_called_once()
 
     def test_analytics_transport_payload_is_recorded(self):
         recorder = live.RequestRecorder()

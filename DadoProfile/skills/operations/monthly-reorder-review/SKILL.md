@@ -14,6 +14,15 @@ The analysis is **READ-ONLY. It never writes to Zoho.** It writes dated JSON and
 CSV under `Dado\20_Working\reports` and appends one local receipt. Your job is
 the recommendation, not the arithmetic.
 
+## Completeness gate
+
+Every Inventory item, invoice, Sales Order and Purchase Order collection must
+finish with Zoho's explicit boolean `page_context.has_more_page == false`.
+Missing/empty/non-boolean pagination metadata, or a page ceiling reached while
+Zoho still reports more rows, aborts the report. Never interpret an absent page
+context as "last page" and never reason from a partial reorder file as though it
+covered the organization.
+
 ## The four inputs, and what each one is really telling you
 
 | Input | What it means | How it misleads |

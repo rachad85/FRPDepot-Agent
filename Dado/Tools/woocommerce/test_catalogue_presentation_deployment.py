@@ -238,6 +238,9 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(deploy.CDP_ENDPOINT, "http://127.0.0.1:9229")
         self.assertEqual(deploy.PLUGIN_NAME, "FRP Depot Automatic Catalogue Presentation")
         self.assertEqual(deploy.PLUGIN_SLUG, "frpdepot-automatic-catalogue-presentation")
+        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.0.3")
+        self.assertEqual(deploy.DEACTIVATABLE_VERSIONS,
+                         frozenset({"1.0.3", deploy.ARTIFACT_VERSION}))
         self.assertEqual(
             deploy.PLUGIN_FILE,
             "frpdepot-automatic-catalogue-presentation/"
@@ -249,6 +252,121 @@ class TestFixedCapability(unittest.TestCase):
         )
         self.assertEqual(deploy.ACTIVATE_SELECTOR, ".row-actions .activate a")
         self.assertEqual(deploy.DEACTIVATE_SELECTOR, ".row-actions .deactivate a")
+
+    def test_upload_form_navigation_forces_a_fresh_page_without_reading_its_nonce(self):
+        class PageDouble:
+            def __init__(self):
+                self.url = deploy.PLUGINS_URL
+                self.visited = []
+
+            def goto(self, url, **_kwargs):
+                self.url = url
+                self.visited.append(url)
+
+        page = PageDouble()
+        admin = deploy.AdminPage(page)
+        admin.goto_upload()
+        self.assertEqual(len(page.visited), 1)
+        visited = page.visited[0]
+        self.assertTrue(visited.startswith(deploy.UPLOAD_URL + "&_dado_refresh="))
+        self.assertNotEqual(visited, deploy.UPLOAD_URL)
+        deploy.assert_admin_url(visited)
+
+    def test_real_admin_click_guard_allows_predecessor_deactivation_only(self):
+        class LinkDouble:
+            def __init__(self):
+                self.clicks = 0
+
+            def click(self, timeout=None):
+                self.clicks += 1
+                self.timeout = timeout
+
+        link = LinkDouble()
+
+        class RowDouble:
+            @staticmethod
+            def query_selector(selector):
+                return link if selector == deploy.DEACTIVATE_SELECTOR else None
+
+        class PageDouble:
+            url = deploy.PLUGINS_URL
+
+            @staticmethod
+            def wait_for_load_state(state, timeout=None):
+                if state != "domcontentloaded" or timeout != deploy.LOAD_STATE_TIMEOUT_MS:
+                    raise AssertionError("unexpected load-state wait")
+
+        admin = deploy.AdminPage(PageDouble())
+        states = [
+            deploy.project_row(True, True, deploy.PREDECESSOR_VERSION, False),
+            deploy.project_row(True, False, deploy.PREDECESSOR_VERSION, False),
+        ]
+        admin.read_row = lambda: states.pop(0)
+        admin._rows = lambda: [RowDouble()]
+        after = admin.deactivate()
+        self.assertFalse(after["active"])
+        self.assertEqual(after["version"], deploy.PREDECESSOR_VERSION)
+        self.assertEqual(link.clicks, 1)
+
+        predecessor_inactive = deploy.project_row(
+            True, False, deploy.PREDECESSOR_VERSION, False)
+        admin.read_row = lambda: predecessor_inactive
+        with self.assertRaises(deploy.DeploymentError):
+            admin.activate()
+        self.assertEqual(link.clicks, 1)
+
+    def test_post_replace_readback_allows_bounded_fresh_reconciliation_only(self):
+        class PageDouble:
+            def __init__(self):
+                self.waits = []
+
+            def wait_for_timeout(self, milliseconds):
+                self.waits.append(milliseconds)
+
+        predecessor = deploy.project_row(
+            True, False, deploy.PREDECESSOR_VERSION, False)
+        expected = deploy.project_row(True, False, deploy.ARTIFACT_VERSION, False)
+        page = PageDouble()
+        admin = deploy.AdminPage(page)
+        visits = []
+        admin.goto_plugins = lambda: visits.append("plugins")
+        states = [predecessor, predecessor, expected]
+        admin.read_row = lambda: states.pop(0)
+        after = admin._read_inactive_artifact_bounded()
+        self.assertEqual(after, expected)
+        self.assertEqual(visits, ["plugins"] * deploy.POST_WRITE_READ_ROUNDS)
+        self.assertEqual(
+            page.waits,
+            [deploy.POST_WRITE_READ_DELAY_MS] * (deploy.POST_WRITE_READ_ROUNDS - 1),
+        )
+
+        page.waits.clear()
+        visits.clear()
+        states = [predecessor] * deploy.POST_WRITE_READ_ROUNDS
+        admin.read_row = lambda: states.pop(0)
+        with self.assertRaises(deploy.IndeterminateError):
+            admin._read_inactive_artifact_bounded()
+        self.assertEqual(visits, ["plugins"] * deploy.POST_WRITE_READ_ROUNDS)
+        self.assertEqual(
+            page.waits,
+            [deploy.POST_WRITE_READ_DELAY_MS] * (deploy.POST_WRITE_READ_ROUNDS - 1),
+        )
+
+    def test_missing_runtime_temp_is_redirected_to_fixed_local_temp(self):
+        missing = Path(tempfile.gettempdir()) / "dado-catalogue-definitely-missing-temp"
+        self.assertFalse(missing.exists())
+        with tempfile.TemporaryDirectory(prefix="dado-catalogue-stable-temp-") as stable:
+            stable_path = Path(stable) / "playwright"
+            with mock.patch.object(deploy, "RUNTIME_TEMP_DIR", stable_path), mock.patch.dict(
+                    os.environ,
+                    {"TMP": str(missing), "TEMP": str(missing), "TMPDIR": str(missing)},
+                    clear=False):
+                deploy.ensure_runtime_temp_ready()
+                self.assertTrue(stable_path.is_dir())
+                self.assertEqual(
+                    {os.environ[name] for name in ("TMP", "TEMP", "TMPDIR")},
+                    {str(stable_path.resolve())},
+                )
 
     def test_post_protection_shared_guide_source_state_is_exact_activation_prerequisite(self):
         class PageDouble:
@@ -295,6 +413,7 @@ class TestFixedCapability(unittest.TestCase):
             "/wp-admin/plugins.php", "/wp-admin/plugin-install.php", "/wp-admin/update.php"}))
         self.assertEqual(deploy.ALLOWED_PUBLIC_PATHS, frozenset({
             "/", "/products/", *(deploy.urlsplit(url).path for url in deploy.PRODUCT_URLS.values()),
+            *(deploy.urlsplit(url).path for url in deploy.CATEGORY_URLS.values()),
             "/wp-json/wc/store/v1/products/2061", "/derakane-resin-resistance-search/",
             "/wp-json/frpdepot-derakane/v1/search", "/hetron-cr-guide-2007_ineos/",
             "/wp-content/uploads/2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -358,17 +477,17 @@ class TestArtifact(unittest.TestCase):
         record = deploy.verify_artifact()
         self.assertEqual(Path(record["path"]).resolve(), deploy.ARTIFACT_PATH.resolve())
         self.assertEqual(record["sha256"],
-                         "472d8fa0bd647b255093301386c2ce94779b8005daa76eadcf18169f372f468c")
+                         "efdfc817b3b37c93f8597e7dafb31f9da46e48163b0729a140076d132901e462")
         self.assertEqual(record["sha256"], deploy.ARTIFACT_SHA256)
-        self.assertEqual(record["bytes"], 6964)
+        self.assertEqual(record["bytes"], 7038)
         self.assertEqual(record["bytes"], deploy.ARTIFACT_BYTES)
-        self.assertEqual(record["version"], "1.0.3")
+        self.assertEqual(record["version"], "1.0.4")
         self.assertEqual(record["members"], sorted(deploy.ARTIFACT_MEMBERS))
         self.assertEqual(deploy.ARTIFACT_MEMBER_SHA256, {
             f"{deploy.PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-                "90f35e3de454bc28966884932ae06d0b4ac9548f37f3e01efd4b64f52f50d9c9",
+                "857c20273f10df98246538d0bff5feb14f61cac93a011476014456e4c7606031",
             f"{deploy.PLUGIN_SLUG}/readme.txt":
-                "4431cee3cf114564cc99d59cc36145fb4df89557f63a4379965e31a0e6bf84b2",
+                "6d803cc878e14992722dbfc4372d0449e216571efe3ea791b51c4e12d2c5a243",
         })
 
     def test_other_path_hash_size_member_or_version_is_refused(self):
@@ -656,6 +775,24 @@ class TestActivation(Harness):
 
 
 class TestDeactivation(Harness):
+    def test_exact_predecessor_can_be_deactivated_for_the_fixed_upgrade(self):
+        self.admin.version = deploy.PREDECESSOR_VERSION
+        self.admin.active = True
+        plan = self.stage("plugin_deactivate")
+        staged = self.read_json(plan)
+        self.assertEqual(staged["before"]["version"], deploy.PREDECESSOR_VERSION)
+        self.assertEqual(staged["after_expected"]["version"], deploy.PREDECESSOR_VERSION)
+        self.commit("plugin_deactivate", plan)
+        self.assertFalse(self.admin.active)
+        self.assertEqual(self.admin.version, deploy.PREDECESSOR_VERSION)
+
+    def test_unknown_active_version_cannot_be_deactivated(self):
+        self.admin.version = "1.0.2"
+        self.admin.active = True
+        with self.assertRaises(deploy.DeploymentError):
+            self.stage("plugin_deactivate")
+        self.assertEqual(self.admin.clicks, [])
+
     def test_deactivate_keeps_exact_plugin_installed_and_records_no_delete(self):
         self.admin.active = True
         plan = self.stage("plugin_deactivate")
@@ -729,11 +866,13 @@ class MenuRoot:
 
 
 class ContractPage:
-    def __init__(self, *, missing_selector=None, duplicate=False, bad_guide=False):
+    def __init__(self, *, missing_selector=None, duplicate=False, bad_guide=False,
+                 category_warning=False):
         self.url = deploy.HOME_URL
         self.missing_selector = missing_selector
         self.duplicate = duplicate
         self.bad_guide = bad_guide
+        self.category_warning = category_warning
         self.navigations: list[str] = []
 
     def goto(self, url, wait_until=None, timeout=None):
@@ -745,6 +884,10 @@ class ContractPage:
     def inner_text(self, selector, timeout=None):
         if selector != "body" or timeout is None:
             raise AssertionError("unexpected or unbounded body read")
+        if self.category_warning and self.url in deploy.CATEGORY_URLS.values():
+            return ("Warning: Undefined property: stdClass::$post_parent in "
+                    "/public_html/wp-includes/nav-menu-template.php on line 455 "
+                    "Healthy anonymous FRP Depot storefront content.")
         return "Healthy anonymous FRP Depot storefront content long enough to pass the blank gate."
 
     def content(self):
@@ -815,6 +958,10 @@ class TestAnonymousContract(unittest.TestCase):
         self.assertEqual(deploy.VALIDATION_CONTRACT["product_pages"],
                          [deploy.PRODUCT_URLS[product_id]
                           for product_id in sorted(deploy.PRODUCT_URLS)])
+        self.assertEqual(deploy.VALIDATION_CONTRACT["category_pages"],
+                         [deploy.CATEGORY_URLS[category_id]
+                          for category_id in sorted(deploy.CATEGORY_URLS)])
+        self.assertFalse(deploy.VALIDATION_CONTRACT["public_php_warnings_allowed"])
         self.assertEqual(deploy.VALIDATION_CONTRACT["menus"],
                          ["desktop", "mobile", "footer", "footer_mobile"])
         self.assertEqual(deploy.VALIDATION_CONTRACT["required_category_ids"],
@@ -842,6 +989,8 @@ class TestAnonymousContract(unittest.TestCase):
                          [deploy.HOME_URL]
                          + [deploy.PRODUCT_URLS[product_id]
                             for product_id in sorted(deploy.PRODUCT_URLS)]
+                         + [deploy.CATEGORY_URLS[category_id]
+                            for category_id in sorted(deploy.CATEGORY_URLS)]
                          + [deploy.DERAKANE_PAGE_URL])
         self.assertEqual(set(findings["projections"]),
                          {"desktop", "footer", "mobile", "footer_mobile"})
@@ -850,6 +999,10 @@ class TestAnonymousContract(unittest.TestCase):
         self.assertEqual(set(findings["guides"]),
                          {str(product_id) for product_id in deploy.PRODUCT_URLS})
         self.assertTrue(all(item["passed"] for item in findings["guides"].values()))
+        self.assertEqual(set(findings["category_pages"]),
+                         {str(category_id) for category_id in deploy.CATEGORY_URLS})
+        self.assertTrue(all(not item["blank"] and not item["fatal"]
+                            for item in findings["category_pages"].values()))
         self.assertTrue(findings["fnpt"]["passed"])
         self.assertTrue(findings["derakane_v2"]["passed"])
         self.assertTrue(findings["hetron_unavailable"]["passed"])
@@ -864,6 +1017,12 @@ class TestAnonymousContract(unittest.TestCase):
             with self.subTest(raw=vars(raw)):
                 self.assertFalse(deploy.PublicPage(
                     raw, ContractRequest()).catalogue_findings()["passed"])
+
+    def test_public_php_warning_on_any_category_page_fails_closed(self):
+        with self.assertRaises(deploy.DeploymentError):
+            deploy.PublicPage(
+                ContractPage(category_warning=True), ContractRequest()
+            ).catalogue_findings()
 
 
 class TestReceipts(Harness):

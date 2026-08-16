@@ -38,11 +38,12 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Automatic Catalogue Presentation Deployment Tool"
-TOOL_VERSION = "1.0.2"
+TOOL_VERSION = "1.0.6"
 SCHEMA_VERSION = 3
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "catalogue_presentation_plugin_plans"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
+RUNTIME_TEMP_DIR = ROOT / "Dado" / "20_Working" / "catalogue_playwright_tmp"
 PLAN_LIFETIME_HOURS = 24
 PLAN_CLOCK_SKEW_MINUTES = 5
 APPROVAL_WORD = "APPROVED"
@@ -55,29 +56,43 @@ PLUGIN_SLUG = "frpdepot-automatic-catalogue-presentation"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php"
 ARTIFACT_PATH = (ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
                  / "frpdepot-automatic-catalogue-presentation.zip")
-ARTIFACT_VERSION = "1.0.3"
+ARTIFACT_VERSION = "1.0.4"
+PREDECESSOR_VERSION = "1.0.3"
+DEACTIVATABLE_VERSIONS = frozenset({PREDECESSOR_VERSION, ARTIFACT_VERSION})
 # Superseded artifact and plan identities are refused explicitly. This includes
-# the v1.0.2 build and its failed-closed activation plan; neither can be restaged
-# or interpreted under the corrected post-protection contract.
+# every earlier artifact; none can be restaged under the public-warning fix.
 SUPERSEDED_ARTIFACT_SHA256 = frozenset({
     "b1e9ed3959ff38a003a44bd876ec0a0c29386fa54d5cd3cc5a879de99c098542",
     "9047bbb55637b46a30e2a3109affa24304d1e21d3c46479159214fb25dfb3f6c",
+    "472d8fa0bd647b255093301386c2ce94779b8005daa76eadcf18169f372f468c",
 })
 SUPERSEDED_PLAN_SHA256 = frozenset({
     "1984a36095329ef5b20cd1a2f7c76fa3bf2120f21a1f124b564718bc406e6e8f",
     "d3d4cd48b43d0067760e4ac6e2bbc86a135d9087d55aa914c86dbe9d931e1bf9",
+    # The 2026-08-14 replacement attempt reached WordPress's expired-link page.
+    # Its permanent attempt lock remains authoritative; naming the digest here
+    # also prevents a future build from interpreting that reviewed plan anew.
+    "53863d55db4a555e98ee55daaf78a3c971b053878f6ebe0742c8dd2ca99289d1",
+    # v1.0.4 staged predecessor deactivation but its commit guard still required
+    # the new artifact version. It failed before clicking and is permanently closed.
+    "46258fac8d0e42647094463beaa7b3b0d18711e6c6cec65fa2398c5537a75ba7",
+    # The first v1.0.4 replacement attempt reached the overwrite path but fresh
+    # readback still showed the predecessor. Its attempt is permanently closed.
+    "3a1cc8096e6b13c1cf59d5319c64d7c5c21e57a4fa0cc9d784442da9ec8aa62f",
 })
-ARTIFACT_SHA256 = "472d8fa0bd647b255093301386c2ce94779b8005daa76eadcf18169f372f468c"
-ARTIFACT_BYTES = 6964
+ARTIFACT_SHA256 = "efdfc817b3b37c93f8597e7dafb31f9da46e48163b0729a140076d132901e462"
+ARTIFACT_BYTES = 7038
+POST_WRITE_READ_ROUNDS = 3
+POST_WRITE_READ_DELAY_MS = 1_000
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php",
     f"{PLUGIN_SLUG}/readme.txt",
 )
 ARTIFACT_MEMBER_SHA256 = {
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-        "90f35e3de454bc28966884932ae06d0b4ac9548f37f3e01efd4b64f52f50d9c9",
+        "857c20273f10df98246538d0bff5feb14f61cac93a011476014456e4c7606031",
     f"{PLUGIN_SLUG}/readme.txt":
-        "4431cee3cf114564cc99d59cc36145fb4df89557f63a4379965e31a0e6bf84b2",
+        "6d803cc878e14992722dbfc4372d0449e216571efe3ea791b51c4e12d2c5a243",
 }
 
 ACTIONS = ("plugin_install_or_replace", "plugin_activate", "plugin_deactivate")
@@ -103,6 +118,13 @@ PRODUCT_URLS = {
     1411: f"{EXACT_ORIGIN}/product/frp-manway-cover/",
     2061: f"{EXACT_ORIGIN}/product/fnpt-coupling-threaded-on-both-ends/",
 }
+CATEGORY_URLS = {
+    60: f"{EXACT_ORIGIN}/product-category/manways/",
+    58: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/",
+    45: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/elbows/",
+    57: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/flanges/",
+    44: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/pipes/",
+}
 PRODUCT_URL = PRODUCT_URLS[1455]
 FNPT_URL = PRODUCT_URLS[2061]
 FNPT_STORE_API_URL = f"{EXACT_ORIGIN}/wp-json/wc/store/v1/products/2061"
@@ -115,6 +137,7 @@ HETRON_DIRECT_PDF_URL = (
 )
 ALLOWED_PUBLIC_PATHS = frozenset({
     "/", SHOP_PATH, *(urlsplit(url).path for url in PRODUCT_URLS.values()),
+    *(urlsplit(url).path for url in CATEGORY_URLS.values()),
     "/wp-json/wc/store/v1/products/2061", "/derakane-resin-resistance-search/",
     "/wp-json/frpdepot-derakane/v1/search", "/hetron-cr-guide-2007_ineos/",
     "/wp-content/uploads/2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -126,7 +149,7 @@ ACTION_TIMEOUT_MS = 15_000
 MIN_RENDERED_TEXT = 40
 FATAL_MARKERS = (
     "there has been a critical error on this website", "fatal error", "parse error:",
-    "call to undefined function",
+    "call to undefined function", "warning: undefined property:",
 )
 HETRON_URL = "https://frpdepots.com/hetron-cr-guide-2007_ineos/"
 DERAKANE_OLD_URL = "https://frpdepots.com/derakane-resin-selection-guide/"
@@ -153,6 +176,8 @@ VALIDATION_CONTRACT = {
     "anonymous": True,
     "persistent_profile": False,
     "product_pages": [PRODUCT_URLS[product_id] for product_id in sorted(PRODUCT_URLS)],
+    "category_pages": [CATEGORY_URLS[category_id] for category_id in sorted(CATEGORY_URLS)],
+    "public_php_warnings_allowed": False,
     "fatal_or_blank_allowed": False,
     "hetron_url_count": 0,
     "hetron_card_count": 0,
@@ -239,6 +264,24 @@ def holds_wordpress_browser(purpose: str):
 def require_approval(value: str) -> None:
     if not isinstance(value, str) or value != APPROVAL_WORD:
         raise DeploymentError("Approval must be the exact unpadded uppercase word APPROVED.")
+
+
+def ensure_runtime_temp_ready() -> None:
+    """Give Playwright a fixed local temp when Hermes' inherited per-call temp vanished."""
+    names = ("TMP", "TEMP", "TMPDIR")
+    if not all(os.environ.get(name) and Path(os.environ[name]).is_dir() for name in names):
+        try:
+            RUNTIME_TEMP_DIR.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise DeploymentError(
+                "REFUSED: fixed local Playwright temp directory is unavailable; "
+                "no browser action attempted.") from exc
+        stable = str(RUNTIME_TEMP_DIR.resolve())
+        for name in names:
+            os.environ[name] = stable
+    if not all(Path(os.environ[name]).is_dir() for name in names):
+        raise DeploymentError(
+            "REFUSED: runtime temp directory is unavailable; no browser action attempted.")
 
 
 def assert_origin(url: str) -> None:
@@ -332,7 +375,11 @@ class AdminPage:
         self._goto(PLUGINS_URL)
 
     def goto_upload(self) -> None:
-        self._goto(UPLOAD_URL)
+        # A long-lived authenticated browser returned WordPress's "The link you
+        # followed has expired" after submitting a cached upload form on
+        # 2026-08-14. Force a fresh GET so WordPress supplies a current form
+        # nonce; never read, copy, log, or expose that nonce ourselves.
+        self._goto(f"{UPLOAD_URL}&_dado_refresh={secrets.token_hex(8)}")
 
     def _rows(self) -> list[Any]:
         assert_admin_url(self.url)
@@ -369,7 +416,9 @@ class AdminPage:
 
     def _click_state_action(self, selector: str, active_before: bool) -> dict[str, Any]:
         before = self.read_row()
-        if before["active"] is not active_before or before["version"] != ARTIFACT_VERSION:
+        allowed_versions = (DEACTIVATABLE_VERSIONS if active_before
+                            else frozenset({ARTIFACT_VERSION}))
+        if before["active"] is not active_before or before["version"] not in allowed_versions:
             raise DeploymentError("REFUSED: fixed plugin is not in the required version/state.")
         link = self._rows()[0].query_selector(selector)
         if link is None:
@@ -402,6 +451,18 @@ class AdminPage:
                 return str(cells[-1].inner_text() or "").strip()
         return ""
 
+    def _read_inactive_artifact_bounded(self) -> dict[str, Any]:
+        """Allow only bounded fresh GET/read reconciliation after the single overwrite click."""
+        for read_round in range(POST_WRITE_READ_ROUNDS):
+            self.goto_plugins()
+            observed = self.read_row()
+            if observed["version"] == ARTIFACT_VERSION and observed["active"] is False:
+                return observed
+            if read_round + 1 < POST_WRITE_READ_ROUNDS:
+                self._page.wait_for_timeout(POST_WRITE_READ_DELAY_MS)
+        raise IndeterminateError(
+            "Install/replace did not read back exact version inactive after bounded fresh reads.")
+
     def upload_install_or_replace(self, artifact: Path, existed_before: bool) -> dict[str, Any]:
         if artifact.resolve() != ARTIFACT_PATH.resolve():
             raise DeploymentError("REFUSED: upload is not the hardcoded artifact.")
@@ -433,10 +494,7 @@ class AdminPage:
         elif tables or overwrite:
             raise DeploymentError("REFUSED: fresh install unexpectedly entered replace route.")
 
-        self.goto_plugins()
-        after = self.read_row()
-        if after["version"] != ARTIFACT_VERSION or after["active"] is not False:
-            raise IndeterminateError("Install/replace did not read back exact version inactive.")
+        after = self._read_inactive_artifact_bounded()
         return {"route": route, "after": after}
 
 
@@ -665,15 +723,25 @@ class PublicPage:
                                     for value in root.values())
         guides = {str(product_id): self._guide_findings(product_id, transformed=True)
                   for product_id in sorted(PRODUCT_URLS)}
+        category_pages = {
+            str(category_id): {
+                "url": CATEGORY_URLS[category_id],
+                **self.require_healthy(CATEGORY_URLS[category_id]),
+            }
+            for category_id in sorted(CATEGORY_URLS)
+        }
         fnpt = self._fnpt_findings()
         derakane_v2 = self._derakane_v2_findings()
         hetron_unavailable = self._hetron_unavailable_findings()
         passed = bool(all(item["matches_expected"] for item in projections.values())
                       and root["passed"] and all(item["passed"] for item in guides.values())
+                      and all(not item["blank"] and not item["fatal"]
+                              for item in category_pages.values())
                       and fnpt["passed"] and derakane_v2["passed"]
                       and hetron_unavailable["passed"])
         return {"passed": passed, "projections": projections, "shop_root": root,
-                "guides": guides, "fnpt": fnpt, "derakane_v2": derakane_v2,
+                "guides": guides, "category_pages": category_pages,
+                "fnpt": fnpt, "derakane_v2": derakane_v2,
                 "hetron_unavailable": hetron_unavailable}
 
 
@@ -683,6 +751,7 @@ def admin_session() -> Iterator[AdminPage]:
     from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
     from playwright.sync_api import sync_playwright
 
+    ensure_runtime_temp_ready()
     with ui_browser_lock("wordpress", purpose="catalogue plugin admin session"), sync_playwright() as pw:
         try:
             browser = pw.chromium.connect_over_cdp(CDP_ENDPOINT, timeout=15_000)
@@ -697,6 +766,7 @@ def admin_session() -> Iterator[AdminPage]:
 def anonymous_session() -> Iterator[PublicPage]:
     from playwright.sync_api import sync_playwright
 
+    ensure_runtime_temp_ready()
     with sync_playwright() as pw:
         browser = pw.chromium.launch(channel="msedge", headless=True)
         try:
@@ -743,7 +813,7 @@ def expected_after(action: str, before: dict[str, Any]) -> dict[str, Any]:
     if action == "plugin_activate":
         return project_row(True, True, ARTIFACT_VERSION, bool(before["update_marker"]))
     if action == "plugin_deactivate":
-        return project_row(True, False, ARTIFACT_VERSION, bool(before["update_marker"]))
+        return project_row(True, False, str(before["version"]), bool(before["update_marker"]))
     return project_row(True, False, ARTIFACT_VERSION, False)
 
 
@@ -918,8 +988,9 @@ def command_stage_activate(_: argparse.Namespace) -> None:
 
 def command_stage_deactivate(_: argparse.Namespace) -> None:
     before = _live_row()
-    if before["version"] != ARTIFACT_VERSION or before["active"] is not True:
-        raise DeploymentError("REFUSED: deactivation requires exact artifact version active.")
+    if before["version"] not in DEACTIVATABLE_VERSIONS or before["active"] is not True:
+        raise DeploymentError(
+            "REFUSED: deactivation requires the exact current or predecessor artifact active.")
     _stage_report("plugin_deactivate", before, None)
 
 

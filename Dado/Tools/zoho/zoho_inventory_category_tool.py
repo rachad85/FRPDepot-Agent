@@ -225,8 +225,9 @@ def list_all_categories(access_token: str, vault: dict[str, Any]) -> list[dict[s
         if not isinstance(page_rows, list):
             raise CategoryToolError("Zoho category GET returned no categories list.")
         rows.extend(page_rows)
-        page_context = result.get("page_context") or {}
-        if not isinstance(page_context, dict) or not page_context.get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            result, "/inventory/v1/categories", page, CategoryToolError
+        ):
             return rows
     raise CategoryToolError("Category listing exceeded 20,000 records and stopped safely.")
 

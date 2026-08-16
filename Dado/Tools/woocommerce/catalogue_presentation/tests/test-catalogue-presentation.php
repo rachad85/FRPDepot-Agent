@@ -128,6 +128,17 @@ function generated_parent_classes_are_valid( array $items ): bool {
 	}
 	return true;
 }
+function generated_nav_post_parents_are_valid( array $items ): bool {
+	foreach ( $items as $item ) {
+		$is_generated = false;
+		foreach ( $item->classes ?? array() as $class ) {
+			if ( 0 === strpos( $class, 'frpdepot-acp-' ) ) { $is_generated = true; break; }
+		}
+		if ( $is_generated && ( ! property_exists( $item, 'post_parent' )
+			|| 0 !== (int) $item->post_parent ) ) { return false; }
+	}
+	return true;
+}
 
 $GLOBALS['acp_terms'] = array(
 	17 => term( 17, 'Uncategorized', 'uncategorized', 0 ),
@@ -235,6 +246,8 @@ foreach ( array( $desktop, $mobile_source, $footer ) as $surface ) {
 		'surface receives identical generated product ids' );
 	check( generated_parent_classes_are_valid( $surface ),
 		'surface product parent metadata matches its generated category group' );
+	check( generated_nav_post_parents_are_valid( $surface ),
+		'synthetic nav items expose the zero nav-post parent required by WordPress walkers' );
 }
 check( generated_projection( $desktop ) === generated_projection( $mobile_source )
 	&& generated_projection( $desktop ) === generated_projection( $footer ),

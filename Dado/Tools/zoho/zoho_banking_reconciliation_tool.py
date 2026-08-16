@@ -615,8 +615,9 @@ def enrich_missing_transaction_status(
     rows = result.get("banktransactions")
     if not isinstance(rows, list):
         raise BankingToolError("Zoho did not return bank transaction list rows for status verification.")
-    page_context = result.get("page_context") or {}
-    if page_context.get("has_more_page"):
+    if zoho_tool.require_has_more_page(
+        result, "/books/v3/banktransactions", 1, BankingToolError
+    ):
         raise BankingToolError("Zoho returned more than 200 same-day bank rows; status verification is ambiguous.")
     statuses = {
         str(first_value(row, ("status", "transaction_status"))).strip()
@@ -723,10 +724,12 @@ def list_uncategorized_ui_transactions(vault: dict[str, Any]) -> list[dict[str, 
             )
             transaction_before(projected, transaction_id)
             rows_out.append(projected)
-        page_context = result.get("page_context") or {}
-        if not isinstance(page_context, dict):
-            raise BankingToolError("Zoho Books imported-feed GET returned invalid page context.")
-        if not page_context.get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            result,
+            "/api/v3/banktransactions/uncategorized",
+            page_number,
+            BankingToolError,
+        ):
             break
     else:
         raise BankingToolError("Zoho Books imported-feed GET exceeded the 50-page safety limit.")
@@ -896,7 +899,9 @@ def get_account(access_token: str, vault: dict[str, Any], account_id: str) -> di
                 bank_rows = bank_result.get("bankaccounts")
                 if not isinstance(bank_rows, list):
                     raise BankingToolError("Zoho did not return bank-account rows for currency verification.")
-                if (bank_result.get("page_context") or {}).get("has_more_page"):
+                if zoho_tool.require_has_more_page(
+                    bank_result, "/books/v3/bankaccounts", 1, BankingToolError
+                ):
                     raise BankingToolError(
                         "Zoho returned more than 200 bank accounts; currency verification is ambiguous."
                     )
@@ -2413,10 +2418,9 @@ def verify_invoice_match_readback(
             and date_text(row.get("date"), "live payment date") == source_date
             and decimal_value(row.get("amount"), "live payment amount") == source_amount
         )
-        page_context = result.get("page_context") or {}
-        if not isinstance(page_context, dict):
-            raise BankingToolError("Zoho returned invalid customer-payment page context.")
-        if not page_context.get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            result, "/books/v3/customerpayments", page_number, BankingToolError
+        ):
             break
     else:
         raise BankingToolError("Customer-payment readback exceeded the 50-page safety limit.")

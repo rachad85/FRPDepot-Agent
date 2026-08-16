@@ -104,6 +104,11 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-12 INV-000046 / Airwallex ticket 1605332 — New Airwallex reply needs the specific account name before tracing Les Plastiques P.V.'s missing CAD 40.94 Interac payment; reply needed to keep recovery moving.
 - 2026-08-12 1-inch Stub Flange D411 / SCT — New RFQ from Bon requests 2 × 1-inch D411MEKP stub flanges; live Zoho shows 321 physically available at CAD 50.40 each, so approval requested to prepare quick pricing.
 - 2026-08-13 QT-000031 / 1-inch Stub Flange D411 / SCT — New inbound says Bon may increase the order from 2 to 10; live Zoho shows 319 physically available for sale after 2 committed, so approval requested to draft the stock confirmation and revised quote.
+- 2026-08-14 Trust audit — Anh has not answered whether he can provide the audit documents; chase draft prepared in the original Outlook thread.
+- 2026-08-14 RE: / Les Plastiques P.V. 8-inch pipe estimate — Roland has not responded to the estimate after 136 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-14 Important: Account Closure Notification — Re-alerted within 24 hours: FRP Depot loses Airwallex access on August 15; verify statements are downloaded and any remaining balance is withdrawn.
+- 2026-08-14 British Columbia PST Registration Case: 18476601 — BC Finance requires confirmation that 01-Jan-2026 is when FRP Depot began taxable BC sales; choosing that date may create overdue PST-return obligations, so Rachad must verify the date before replying.
+- 2026-08-15 INV-000053 / SHM Marine Constructors JV — Zoho failed to send the payment reminder because no contact person is linked; live Books shows CAD 14,712.60 overdue and unpaid, so payment or manual reminder requires verification.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

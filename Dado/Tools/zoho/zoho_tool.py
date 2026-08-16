@@ -174,6 +174,35 @@ class ZohoError(RuntimeError):
     pass
 
 
+def require_has_more_page(
+    payload: dict[str, Any],
+    path: str,
+    page: int,
+    error_type: type[Exception] = ZohoError,
+) -> bool:
+    """Return Zoho's explicit pagination answer or fail closed.
+
+    Missing/empty page_context and non-boolean values are not proof that a
+    page is the last page. Callers use their own error type so existing tool
+    contracts and command-level refusal handling stay intact.
+    """
+    if not isinstance(payload, dict):
+        raise error_type(f"Zoho returned an invalid response for {path} page {page}.")
+    context = payload.get("page_context")
+    if not isinstance(context, dict):
+        raise error_type(
+            f"Zoho did not return page_context for {path} page {page}; "
+            "refusing a partial result."
+        )
+    has_more = context.get("has_more_page")
+    if not isinstance(has_more, bool):
+        raise error_type(
+            f"Zoho did not state boolean has_more_page for {path} page {page}; "
+            "refusing a partial result."
+        )
+    return has_more
+
+
 def validate_scopes(scopes: list[str] | tuple[str, ...]) -> None:
     for scope in scopes:
         if scope in ALLOWED_WRITE_SCOPES:

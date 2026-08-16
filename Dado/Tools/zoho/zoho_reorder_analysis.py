@@ -22,6 +22,38 @@ ZOHO_TOOLS = ROOT / "Dado" / "Tools" / "zoho"
 sys.path.insert(0, str(ZOHO_TOOLS))
 import zoho_tool  # noqa: E402
 
+MAX_PAGES = 20
+
+
+def collect_all(get, path: str, key: str, max_pages: int = MAX_PAGES) -> list[dict]:
+    """Collect a complete Zoho list or fail closed on ambiguous pagination."""
+    rows: list[dict] = []
+    for page in range(1, max_pages + 1):
+        payload = get(path, {"page": page, "per_page": 200})
+        if not isinstance(payload, dict):
+            raise RuntimeError(f"Invalid response while paginating {path} page {page}")
+        page_rows = payload.get(key, [])
+        if not isinstance(page_rows, list):
+            raise RuntimeError(f"Invalid {key} list while paginating {path} page {page}")
+        rows.extend(page_rows)
+
+        page_context = payload.get("page_context")
+        if not isinstance(page_context, dict) or "has_more_page" not in page_context:
+            raise RuntimeError(
+                f"Incomplete pagination metadata for {path} page {page}; "
+                "refusing a partial report"
+            )
+        has_more = page_context["has_more_page"]
+        if has_more is False:
+            return rows
+        if has_more is not True:
+            raise RuntimeError(f"Invalid has_more_page for {path} page {page}")
+
+    raise RuntimeError(
+        f"Pagination guard reached {max_pages} pages for {path} while Zoho still "
+        "reported more data; refusing a partial report"
+    )
+
 
 def shift_months(day: date, months: int) -> date:
     month_index = day.year * 12 + day.month - 1 + months
@@ -48,20 +80,11 @@ def main() -> int:
         query = urlencode({**(params or {}), "organization_id": organization_id})
         return zoho_tool.api_get(token, domain, path + "?" + query)
 
-    def collect(path: str, key: str) -> list[dict]:
-        rows: list[dict] = []
-        for page in range(1, 20):
-            payload = get(path, {"page": page, "per_page": 200})
-            rows.extend(payload.get(key, []))
-            if not (payload.get("page_context") or {}).get("has_more_page"):
-                break
-        return rows
-
-    items = collect("/inventory/v1/items", "items")
+    items = collect_all(get, "/inventory/v1/items", "items")
     item_map = {str(item.get("item_id")): item for item in items}
-    invoice_list = collect("/inventory/v1/invoices", "invoices")
-    salesorder_list = collect("/inventory/v1/salesorders", "salesorders")
-    purchaseorder_list = collect("/inventory/v1/purchaseorders", "purchaseorders")
+    invoice_list = collect_all(get, "/inventory/v1/invoices", "invoices")
+    salesorder_list = collect_all(get, "/inventory/v1/salesorders", "salesorders")
+    purchaseorder_list = collect_all(get, "/inventory/v1/purchaseorders", "purchaseorders")
 
     usage_12m: dict[str, Decimal] = defaultdict(Decimal)
     usage_4m: dict[str, Decimal] = defaultdict(Decimal)

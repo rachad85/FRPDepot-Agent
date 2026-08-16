@@ -1,7 +1,7 @@
 === FRP Depot Automatic Catalogue Presentation ===
 Contributors: frpdepot
 Requires PHP: 7.4
-Stable tag: 1.0.3
+Stable tag: 1.0.4
 License: GPLv2 or later
 
 Read-time public catalogue presentation for FRP Depot.

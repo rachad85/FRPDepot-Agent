@@ -466,7 +466,9 @@ def fetch_all(fetch, path: str, key: str, extra: dict | None = None) -> list[dic
         if not isinstance(batch, list):
             raise AuditError(f"REFUSED: Zoho returned a non-list {key} collection for {path}")
         rows.extend(row for row in batch if isinstance(row, dict))
-        if not (payload.get("page_context") or {}).get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            payload, path, page, AuditError
+        ):
             return rows
     raise AuditError(
         f"REFUSED: pagination guard stopped {path} after {MAX_PAGES} pages of {PER_PAGE}"

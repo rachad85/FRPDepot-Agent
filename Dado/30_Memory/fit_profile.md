@@ -11,6 +11,8 @@ sheet — ask instead.
   coatings/unlisted items.
 - Resin standard (Rachad, confirmed 2026-08-08): use D411 unless Rachad explicitly requests another resin. Use `D411` in customer-facing selectors, item names, quotes, and catalog labels. In technical/manufacturer documents, use `Derakane 411-350 (D411)` on first mention when the exact grade matters. D411 and Derakane 411-350 are the same catalog option and must not be listed separately. Stock availability does not authorize changing the resin.
 - Hetron offering policy (Rachad, 2026-08-13): FRP Depot does not offer Hetron resin. Remove Hetron from every public website page, selector, guide link and catalogue presentation. Existing hidden/private historical records are not an offering and must not be published; deleting or changing them requires an exact separately approved write plan.
+- Website specifications/catalogue replacement plan (Rachad, 2026-08-15): the working source is the live Google Drive `Specs & Catalog` folder and is being overhauled with Claude. When Rachad declares it final, Dado is to replace the old website catalogue and give each product a direct shortcut to its own section rather than opening the complete catalogue at the beginning. The 2026-08-15 editable HTML snapshot already separates Stub Flanges, Manways & Covers, 90° Elbows, Filament-Wound Pipe and FNPT Couplings, but contains no section IDs or fragment links yet; those stable anchors belong in the final website implementation. Keep the existing live catalogue unchanged until the final source is frozen and separately staged/approved.
+- Product-image overhaul (Rachad, 2026-08-15): every product family is to receive multiple polished image variations at the quality level of the approved FNPT coupling set. Use FRP Depot-owned originals from Drive and the current site as primary sources; web and competitor images are visual references only and their pixels, branding, labels and watermarks are not republished. Preserve exact product geometry and a realistic resin-rich FRP appearance—never glossy PVC, metal or invented construction details. Final images and any website assignment remain subject to Rachad's visual approval and a separately staged website plan.
 - Public chemical-guide policy (Rachad, 2026-08-13): Derakane/Alta chemical guides are public and FRP Depot may use them for its searchable guide. Do not treat separate INEOS/Alta permission as a blocker. Data accuracy, complete footnotes, units, source attribution and technical limitations still must be proven before wider promotion. For broad or mixture chemical names, publish no normalized CAS unless the exact substance form is independently proven; keep the chemical name searchable and retain the guide's raw identifier internally.
 - Customer stock-disclosure rule (Rachad, 2026-08-13 13:29, on the Taha reply):
   "let not tell him how much we have in stock and send him unit pricing." Do NOT
@@ -242,8 +244,20 @@ sheet — ask instead.
   row 62 is the pinned note and the B5 balance formula counts B7:B234. Both
   operations remain stage-then-commit under Hard Rule 3. Rachad's approval word
   is ONE PLAIN WORD — `APPROVED` / "Proceed" (20:17); never ask him to copy a
-  checksum. Sheet screenshots omit "live Google Sheets" wording and crop at the
+  checksums. Sheet screenshots omit "live Google Sheets" wording and crop at the
   latest payment.
+- 2026-08-15: Rachad commissioned `google_catalogue_publish_tool.py` for one
+  exact catalogue publication. It can replace only the content of existing
+  Google Drive file `1PqcjZf-SSCbBVp7quMri_ernaOPZDPz1`, `FRP Depots Catalogue
+  2026.pdf`, in `My Drive / My Files / Rachad / Bussiness Folder / FRPDEPOT INC.
+  / Specs & Catalog`, and only with the approved nine-page local PDF SHA-256
+  `60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3`.
+  It preserves the existing file ID, name, MIME type, path and share links. It
+  cannot create, delete, copy, rename, move, change permissions/sharing, email,
+  or use a browser. Stage is read-only; commit requires a 24-hour immutable plan
+  plus Rachad's fresh exact unpadded uppercase `APPROVED`, makes one conditional
+  media-only HTTP PUT with no retry or rollback route, and verifies downloaded
+  live bytes. Any failure or uncertainty permanently locks the plan.
 - 2026-07-27: FRP Depot GA4 access is live and read-only. Google Analytics
   account `2499934` ("Northnet Media") exposes property `529941333` ("FRP
   Depots"). A live Data API audit returned historical frpdepots.com traffic,
@@ -1165,3 +1179,25 @@ because it needs the real item IDs creation returns.
 JSON object beside `sources`; a top-level `payload` wrapper is refused. That
 wrapper — not any tool defect — is what stopped the four D441 item creations on
 2026-08-13.
+
+## Website hosting (verified 2026-08-15)
+
+Rachad has a GoDaddy **Managed Hosting for WordPress Deluxe** plan, but GoDaddy
+support and the live Hosting Settings both prove that `frpdepots.com` is **not
+connected to that GoDaddy site**: the Domains panel says “We need your help to
+finish connecting this domain to your site,” and support states the domain is
+pointing to a third-party host. The GoDaddy production IP `160.153.0.96` is for
+the disconnected plan, not the current live website. Never click **Connect
+Domain**, **Remove Site**, **Create WP Site**, **Start Free Trial**, or **Create**
+under Staging Site while the live site remains elsewhere.
+
+GoDaddy still serves the domain's `ns49/ns50.domaincontrol.com` nameservers. The
+live public A record resolves to `146.190.245.4`, owned by DigitalOcean, and its
+reverse DNS is `1520312.cloudwaysapps.com`. Together with GoDaddy's explicit
+third-party-host finding, this identifies the live website as a
+**Cloudways-managed DigitalOcean server**. The official Cloudways login is
+`https://platform.cloudways.com/login`. No FRP Outlook search result identified
+a Cloudways account, so Northnet may own/manage the Cloudways account, but that
+account ownership is not yet proven. If Rachad's own email is not recognized by
+Cloudways, request a secure Cloudways team/account invitation from Northnet; do
+not request or accept an emailed password.

@@ -39,7 +39,7 @@ def get_pages(token, domain, path, org, extra=None):
             "/books/v3/customerpayments": "customerpayments",
         }[path]
         rows.extend(result.get(key) or [])
-        if not (result.get("page_context") or {}).get("has_more_page"):
+        if not zoho_tool.require_has_more_page(result, path, page):
             return rows
     raise RuntimeError(f"Pagination guard stopped for {path}")
 

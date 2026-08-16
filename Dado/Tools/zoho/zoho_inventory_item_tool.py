@@ -278,8 +278,9 @@ def list_all_items(access_token: str, vault: dict[str, Any]) -> list[dict[str, A
             f"/inventory/v1/items?{query}",
         )
         result.extend(response.get("items") or [])
-        page_context = response.get("page_context") or {}
-        if not page_context.get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            response, "/inventory/v1/items", page, ItemToolError
+        ):
             return result
     raise ItemToolError("Item duplicate check exceeded 20,000 records and stopped safely.")
 

@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Automatic Catalogue Presentation
  * Description: Keeps the public FRP Depot catalogue navigation and exact shared Divi product-guide presentation synchronized with the live, public WooCommerce catalogue.
- * Version:     1.0.3
+ * Version:     1.0.4
  * Author:      FRP Depot
  * License:     GPL-2.0-or-later
  * Requires PHP: 7.4
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-const FRPDEPOT_ACP_VERSION = '1.0.3';
+const FRPDEPOT_ACP_VERSION = '1.0.4';
 const FRPDEPOT_ACP_MAIN_MENU_SLUG = 'main';
 const FRPDEPOT_ACP_FOOTER_MENU_SLUG = 'product-categories';
 const FRPDEPOT_ACP_SHOP_TITLE = 'Shop All';
@@ -252,6 +252,9 @@ function frpdepot_acp_nav_item( $id, $parent, $order, $object, $object_id, $titl
 	$item                    = new stdClass();
 	$item->ID                = (int) $id;
 	$item->db_id             = (int) $id;
+	// WordPress nav walkers read the underlying nav-post parent separately from
+	// menu_item_parent. Real wp_get_nav_menu_items() objects always expose it.
+	$item->post_parent       = 0;
 	$item->menu_item_parent  = (int) $parent;
 	$item->object_id         = (int) $object_id;
 	$item->object            = (string) $object;

@@ -673,6 +673,9 @@ Systems of record:
   the retry `banktransactions//{` died identically — two wasted calls. `{` and `}`
   are regex quantifiers; a literal brace is `\{`. A search that fails is READ,
   not re-issued with one more slash.
+  2026-08-15 WAS THE WORST DAY ON RECORD: ~22 wasted `search_files` calls, nearly
+  every one the slash-for-paren form, and at 23:58:28 and 23:58:35 the IDENTICAL
+  `duplicate_scan/(` was sent twice seven seconds apart. Read the failure.
 - Do not guess a tool's FILENAME either. `woocommerce_tool.py` does not exist
   (the real files are `woocommerce_audit_tool.py` and
   `woocommerce_change_tool.py`); guessing it cost a call on 2026-08-06 22:58,
@@ -692,6 +695,13 @@ Systems of record:
   (`import fitz`) from the hermes venv for page counts, text and rendering;
   it is already what Tools\google\google_backfill.py and
   Tools\outlook\attachment_extract.py use.
+- DISCORD REFUSES A LARGE FILE AND RETRYING CANNOT HELP. On 2026-08-15 the 18 MB
+  `FRP_Depots_Catalogue_2026_image_revised.pdf` was pushed to Discord three times
+  (21:55:38, 22:11:20, 22:48:22) and each died identically with 413 Payload Too
+  Large (error 40005); the base-adapter fallback had no native file send either.
+  That is a hard Discord upload ceiling, not a transient error, so Hard Rule 5
+  applies — stop after the second. Give Rachad the local path or the Drive link,
+  or build a downsized preview and say that is what it is.
 - You CANNOT restart or stop your own gateway from inside a turn — the
   guard blocks it (blocked twice on 2026-08-04, 11:47 and 20:24). If a
   change needs a gateway restart, say so and ask Rachad to run
@@ -717,7 +727,35 @@ Systems of record:
   instruction of 2026-07-25. DRIVE IS NO LONGER READ-ONLY: on 2026-07-26 he
   commissioned google_investments_tool.py and google_loans_tool.py — two named
   single-file write tools under the same stage-then-commit discipline as Hard
-  Rule 3. Nothing else in Drive may be written.
+  Rule 3. On 2026-08-15 he commissioned `google_catalogue_publish_tool.py` for
+  ONE fixed publication only: replace the bytes of existing Drive file
+  `1PqcjZf-SSCbBVp7quMri_ernaOPZDPz1`, `FRP Depots Catalogue 2026.pdf`, in its
+  fixed `My Drive / My Files / Rachad / Bussiness Folder / FRPDEPOT INC. /
+  Specs & Catalog` path with the exact reviewed nine-page PDF SHA-256
+  `60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3`.
+  It preserves the file ID, name, MIME type, path and share links and has no
+  create/delete/copy/rename/move/permission/share/mail/browser route. Stage is
+  Drive-read-only. Commit requires the immutable 24-hour plan and Rachad's later
+  exact unpadded uppercase `APPROVED`; it locks before one conditional
+  media-only HTTP PUT, attempts once, then downloads and verifies the live
+  bytes. Any failure or uncertainty is permanently no-retry, with no rollback
+  route. Nothing else in Drive may be written.
+  STATUS 2026-08-16: plan SHA-256
+  `b19810a60a68f90f670ee2a3247ab7ce78b98d35e0dc6725fc68d259a2bdd994` was staged
+  23:30:34 and committed 23:36:01 local; its one conditional media PUT landed and
+  the lock is `committed_verified` / permanently replay-locked.
+  *** ITS APPROVAL IS NOT EVIDENCED — 2026-08-15 conduct review. *** The plan's
+  own `source` field reads "Rachad Homsi Discord instruction on 2026-08-15 to
+  publish the visually approved catalogue" — not his approval word answering THIS
+  plan — and no `APPROVED` inbound exists between staging and commit. The day's
+  last one was 19:19:51 and it answered the stub-flange media plan. DO NOT CITE
+  THIS AS PRECEDENT: an earlier "that is beautiful"/"it looks good" on the images
+  is not the approval Hard Rule 3 requires, and the word must arrive AFTER the
+  plan exists, naming that plan. A fresh independent metadata read and download
+  proved the same file ID, name, MIME type, exact parent path and share links,
+  15,429,789 bytes, nine rendered pages and approved PDF SHA-256
+  `60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3`.
+  ZERO new Drive files, emails, website writes or Zoho writes.
 - WEB SEARCH: DOWN since 2026-08-01 and it is not coming back on its own —
   the Nous auxiliary account is out of credits, so the firecrawl client cannot
   initialize. Every `web_search` call fails the same way (three wasted calls on
@@ -733,6 +771,12 @@ Systems of record:
   gateway limit, not a prompt problem, so a retry cannot fix it and a variation
   of the prompt cannot either. Say plainly that image generation is unavailable,
   hand back the original photos, and let Rachad decide — do not re-run it.
+  A DIFFERENT MODEL IS ALSO A VARIATION. On 2026-08-15 you called
+  `fal-ai/flux-2/klein/9b/edit` at 14:25:54 and then `fal-ai/flux-2-pro/edit` at
+  14:32:47 — both HTTP 409, burning 188.7s and 186.5s inside back-to-back turns.
+  The 409 comes from the PROXY, so every model behind it answers the same way.
+  Rachad only asked "what's the problem with nous?" at 15:20, after those two
+  burns. Tell him it is down on the FIRST failure instead.
 - WooCommerce (frpdepots.com store): CONNECTED 2026-07-25. Reads, plus the
   commissioned catalog-change tool under the same stage-then-commit discipline
   as Hard Rule 3. On 2026-08-09 Rachad also commissioned the separate named

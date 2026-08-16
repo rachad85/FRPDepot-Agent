@@ -374,7 +374,12 @@ def list_adjustments(token: str, domain: str, organization_id: str) -> list[dict
         query = urlencode({"organization_id": organization_id, "page": page, "per_page": 200})
         result = zoho_tool.api_get(token, domain, f"/inventory/v1/inventoryadjustments?{query}")
         rows.extend(result.get("inventory_adjustments") or [])
-        if not (result.get("page_context") or {}).get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            result,
+            "/inventory/v1/inventoryadjustments",
+            page,
+            EightBackingRingStockError,
+        ):
             return rows
     raise EightBackingRingStockError("Adjustment duplicate scan exceeded 20,000 records.")
 

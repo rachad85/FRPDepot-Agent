@@ -34,7 +34,9 @@ def list_estimates(token, domain, organization_id):
         query = urlencode({"organization_id": organization_id, "page": page, "per_page": 200})
         result = zoho_tool.api_get(token, domain, f"/books/v3/estimates?{query}")
         rows.extend(result.get("estimates") or [])
-        if not (result.get("page_context") or {}).get("has_more_page"):
+        if not zoho_tool.require_has_more_page(
+            result, "/books/v3/estimates", page
+        ):
             return rows
     raise RuntimeError("Estimate pagination guard stopped.")
 

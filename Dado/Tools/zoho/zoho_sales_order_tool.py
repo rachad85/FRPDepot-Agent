@@ -758,16 +758,16 @@ def list_salesorders(access_token: str, vault: dict[str, Any]) -> tuple[list[dic
             )
         rows.extend(json_copy(batch))
         pages = page
-        context = payload.get("page_context")
-        # An ABSENT has_more_page is not a "no". Treating a context that never
-        # answered the question as "last page" would report a partial sweep as
-        # a complete one, which is the whole failure this guard exists to stop.
-        if not isinstance(context, dict) or "has_more_page" not in context:
+        try:
+            has_more = zoho_tool.require_has_more_page(
+                payload, SALESORDER_COLLECTION_PATH, page, SalesOrderError
+            )
+        except SalesOrderError as exc:
             raise SalesOrderError(
                 f"Zoho did not state whether sales-order page {page} was the last, so the sweep "
                 "cannot be proven complete. Nothing was staged."
-            )
-        if not context["has_more_page"]:
+            ) from exc
+        if not has_more:
             break
     else:
         raise SalesOrderError(
