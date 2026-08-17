@@ -27,18 +27,92 @@ SOURCE_TREE = ast.parse(SOURCE_TEXT)
 
 class FakeAdmin:
     def __init__(self, key: str, *, fail_upload_at: int | None = None,
-                 fail_public: bool = False, fail_after_submit: bool = False):
+                 fail_public: bool = False, fail_after_submit: bool = False,
+                 fail_guard_acquire: bool = False, fail_guard_complete: bool = False):
         self.key = key
         self.fail_upload_at = fail_upload_at
         self.fail_public = fail_public
         self.fail_after_submit = fail_after_submit
+        self.fail_guard_acquire = fail_guard_acquire
+        self.fail_guard_complete = fail_guard_complete
         self.upload_count = 0
+        self.guard_acquire_count = 0
+        self.guard_complete_count = 0
+        self.guard_snapshot_count = 0
+        self.guard_expires_utc = (tool.utc_now() + timedelta(minutes=30)).isoformat()
         self.left = False
         self.id_to_name: dict[int, str] = {}
 
     def enumerate_library(self):
-        return {"rows": [], "total": 0, "pages": 1, "complete": True,
+        return {"rows": [{
+                    "id": tool.GUARD_PRIVATE_EXCEPTION["attachment_id"],
+                    "filename": Path(tool.GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+                    "stem": "hetron-cr-guide-2007_ineos",
+                }], "total": 1, "pages": 1, "complete": True,
                 "unidentified": 0}
+
+    def _snapshot(self, mode, active, total, reserved=0, family=None):
+        matches = ([{"attachment_id": 9000 + position, "fixed_position": position}
+                    for position in range(1, 5)]
+                   if mode == "guarded_snapshot" and total == 4 else [])
+        value = {
+            "schema": tool.GUARD_PROOF_SCHEMA, "plugin_version": tool.GUARD_PLUGIN_VERSION,
+            "mode": mode, "family": family or self.key,
+            "generated_utc": "2026-08-16T12:00:00+00:00",
+            "attachment_total": total + 1, "hashed_total": total, "total_bytes": total * 10,
+            "snapshot_sha256": "a" * 64, "complete": True, "failures": [],
+            "private_exceptions": [deepcopy(tool.GUARD_PRIVATE_EXCEPTION)],
+            "name_conflicts": deepcopy(matches), "hash_conflicts": deepcopy(matches),
+            "fixed_matches": deepcopy(matches), "guard_active": active,
+        }
+        if active:
+            value["guard_expires_utc"] = self.guard_expires_utc
+            value["reserved_uploads"] = reserved
+        return value
+
+    def atomic_snapshot(self, key):
+        return self._snapshot("atomic_snapshot", False, 0, family=key)
+
+    def prepare_guard_acquire(self, key):
+        if key != self.key:
+            raise RuntimeError("wrong modelled family")
+        return object()
+
+    def acquire_prepared_guard(self, key, button, on_submit_attempt=None):
+        self.guard_acquire_count += 1
+        if on_submit_attempt is not None:
+            on_submit_attempt()
+        if self.fail_guard_acquire:
+            raise RuntimeError("modelled guard acquisition failure")
+        return self._snapshot("guard_acquired", True, 0, 0)
+
+    def guarded_snapshot(self, key):
+        if key != self.key:
+            raise RuntimeError("wrong modelled family")
+        self.guard_snapshot_count += 1
+        if self.upload_count == 0:
+            return self._snapshot("guarded_snapshot", True, 0, 0)
+        return self._snapshot("guarded_snapshot", True, 4, 4)
+
+    def complete_guard(self, key, attachment_ids, on_submit_attempt=None):
+        self.guard_complete_count += 1
+        if on_submit_attempt is not None:
+            on_submit_attempt()
+        if self.fail_guard_complete:
+            raise RuntimeError("modelled guard completion failure")
+        return {
+            "proof": {
+                "schema": tool.GUARD_PROOF_SCHEMA, "plugin_version": tool.GUARD_PLUGIN_VERSION,
+                "mode": "guard_completed", "family": key,
+                "product_id": tool.FAMILY_SPECS[key]["product_id"],
+                "attachment_ids": list(attachment_ids), "attachment_total": 5,
+                "snapshot_sha256": "a" * 64,
+            },
+            "post_completion_health": {
+                "plugin_version": tool.GUARD_PLUGIN_VERSION,
+                "status": "Guard inactive", "families": sorted(tool.FAMILY_KEYS),
+            },
+        }
 
     def upload_one(self, expected, known_ids, on_submit_attempt=None):
         self.upload_count += 1
@@ -93,6 +167,56 @@ class ProductFamilyMediaTests(unittest.TestCase):
             patcher.stop()
         self.tmp.cleanup()
 
+    def test_common_transport_forwards_only_the_exact_conditional_gallery_etag(self):
+        captured = {}
+
+        class Response:
+            headers = {}
+            def __enter__(self): return self
+            def __exit__(self, *_args): return False
+            def read(self): return b"{}"
+
+        class Opener:
+            def open(self, request, timeout):
+                captured["headers"] = dict(request.header_items())
+                captured["method"] = request.get_method()
+                return Response()
+
+        vault = {
+            "site_url": tool.EXACT_ORIGIN,
+            "consumer_key": "ck_local_test",
+            "consumer_secret": "cs_local_test",
+            "declared_permissions": "read_write",
+        }
+        etag = '"' + "a" * 64 + '"'
+        with mock.patch.object(tool.wc, "build_opener", return_value=Opener()):
+            tool.wc.api_request(
+                "PUT", "/products/1368", payload={"images": [{"id": 1}]},
+                vault=vault, if_match=etag,
+            )
+        self.assertEqual(captured["method"], "PUT")
+        self.assertEqual(captured["headers"].get("If-match"), etag)
+        with self.assertRaises(tool.wc.WooError):
+            tool.wc.api_request(
+                "PUT", "/products/1368", payload={"images": [{"id": 1}]},
+                vault=vault, if_match="a" * 64,
+            )
+
+    def test_terminal_evidence_is_published_only_after_full_flush(self):
+        final = Path(self.tmp.name) / "terminal.json"
+        with mock.patch.object(tool.os, "fsync", side_effect=OSError("modelled fsync failure")):
+            with self.assertRaises(OSError):
+                tool.write_json(final, {"status": "verified"}, exclusive=True)
+        self.assertFalse(final.exists())
+        self.assertEqual(list(Path(self.tmp.name).glob("*.pending")), [])
+        tool.write_json(final, {"status": "indeterminate_no_retry"}, exclusive=True)
+        self.assertEqual(
+            json.loads(final.read_text(encoding="utf-8"))["status"],
+            "indeterminate_no_retry",
+        )
+        with self.assertRaises(tool.FamilyMediaError):
+            tool.write_json(final, {"status": "second_write_forbidden"}, exclusive=True)
+
     @staticmethod
     def product_record(key="stub_flange", gallery=None):
         spec = tool.FAMILY_SPECS[key]
@@ -143,24 +267,53 @@ class ProductFamilyMediaTests(unittest.TestCase):
     @staticmethod
     def duplicate_ok(families=None):
         return {
-            "checked_utc": "2026-08-15T10:00:00+00:00", "library_total": 0,
-            "enumerated": 0, "pages_read": 1, "enumeration_complete": True,
+            "checked_utc": "2026-08-15T10:00:00+00:00", "library_total": 1,
+            "enumerated": 1, "pages_read": 1, "enumeration_complete": True,
             "image_rows": 0, "image_hashes_completed": 0, "hash_failures": 0,
             "hash_bytes_read": 0, "hash_complete": True,
-            "recheck_total": 0, "recheck_enumerated": 0, "recheck_pages": 1,
+            "recheck_total": 1, "recheck_enumerated": 1, "recheck_pages": 1,
             "recheck_complete": True, "snapshot_stable": True,
             "recheck_image_hashes_completed": 0, "recheck_hash_failures": 0,
             "recheck_hash_bytes_read": 0, "recheck_hash_complete": True,
-            "content_stable": True, "final_total": 0, "final_enumerated": 0,
+            "content_stable": True, "final_total": 1, "final_enumerated": 1,
             "final_pages": 1, "final_complete": True, "final_snapshot_stable": True,
+            "private_exception": {
+                "attachment_id": tool.GUARD_PRIVATE_EXCEPTION["attachment_id"],
+                "filename": Path(tool.GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+            },
+            "private_exception_proven": True,
             "name_conflicts": [],
             "hash_conflicts": [], "target_families": families or ["stub_flange"],
             "complete": True,
         }
 
+    @staticmethod
+    def private_library_row():
+        return {
+            "id": tool.GUARD_PRIVATE_EXCEPTION["attachment_id"],
+            "filename": Path(tool.GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+            "stem": "hetron-cr-guide-2007_ineos",
+        }
+
     def make_plan(self, key="stub_flange"):
         local = tool.validate_local_images(key)
-        return tool.stage_one(key, local, self.product_evidence_for(key), self.duplicate_ok([key]))
+        return tool.stage_one(
+            key, local, self.product_evidence_for(key), self.duplicate_ok([key]),
+            self.guard_snapshot_ok(key),
+        )
+
+    @staticmethod
+    def guard_snapshot_ok(key="stub_flange", total=0):
+        return {
+            "schema": tool.GUARD_PROOF_SCHEMA, "plugin_version": tool.GUARD_PLUGIN_VERSION,
+            "mode": "atomic_snapshot", "family": key,
+            "generated_utc": "2026-08-16T12:00:00+00:00",
+            "attachment_total": total + 1, "hashed_total": total, "total_bytes": total * 10,
+            "snapshot_sha256": "c" * 64, "complete": True, "failures": [],
+            "private_exceptions": [deepcopy(tool.GUARD_PRIVATE_EXCEPTION)],
+            "name_conflicts": [], "hash_conflicts": [], "fixed_matches": [],
+            "guard_active": False,
+        }
 
     @staticmethod
     def plan_sha(path: Path) -> str:
@@ -182,7 +335,8 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def commit_patches(self, key, admin, *, request_failure=False,
                        protected_drift=False, wrong_response_id=False,
-                       pre_put_drift=False, metadata_drift=False):
+                       pre_put_drift=False, metadata_drift=False,
+                       post_completion_drift=False, gallery_race=False):
         before_record = self.product_record(key)
         state = {"put": False, "payload": None, "request_calls": [], "get_calls": 0}
 
@@ -198,12 +352,18 @@ class ProductFamilyMediaTests(unittest.TestCase):
                     record["price"] = "999.00"
                 if metadata_drift:
                     record["meta_data"] = [{"id": 55, "key": "catalog_class", "value": "changed"}]
+                if post_completion_drift and state["get_calls"] >= 5:
+                    record["price"] = "777.00"
             return record, {}
 
-        def api_request(method, endpoint, *, params=None, payload=None, vault=None, timeout=60):
+        def api_request(method, endpoint, *, params=None, payload=None, vault=None, timeout=60,
+                        if_match=None):
             state["request_calls"].append((method, endpoint, deepcopy(payload)))
+            state["if_match"] = if_match
             if request_failure:
                 raise RuntimeError("modelled PUT failure")
+            if gallery_race:
+                raise RuntimeError("modelled server-side gallery precondition failure")
             state["put"] = True
             state["payload"] = deepcopy(payload)
             response = deepcopy(before_record)
@@ -310,6 +470,15 @@ class ProductFamilyMediaTests(unittest.TestCase):
         self.assertNotIn("SMTPLIB", upper)
         self.assertNotIn("MAIL.SEND", upper)
         self.assertNotIn("REQUESTS.DELETE", upper)
+        self.assertNotIn(".cookies(", SOURCE_TEXT)
+        self.assertNotIn("document.cookie", SOURCE_TEXT)
+        self.assertNotIn("storage_state", SOURCE_TEXT)
+
+    def test_guard_completion_precedes_nonessential_public_page_verification(self):
+        self.assertLess(
+            SOURCE_TEXT.index("guard_completion = admin.complete_guard"),
+            SOURCE_TEXT.index("public_verification = admin.verify_public_product"),
+        )
 
     def test_safe_gallery_is_closed_projection(self):
         self.assertEqual(tool.safe_gallery({"images": [{"id": 7, "alt": "a", "src": "x"}]}),
@@ -352,6 +521,96 @@ class ProductFamilyMediaTests(unittest.TestCase):
         self.assertEqual(loaded["endpoint"], "/products/1368")
         self.assertEqual(len(loaded["files"]), 4)
         self.assertEqual(loaded["approval_manifest"]["sha256"], tool.APPROVED_MANIFEST_SHA256)
+        self.assertEqual(loaded["guard_contract"], tool.guard_contract("stub_flange"))
+        self.assertEqual(loaded["guard_stage_snapshot"]["mode"], "atomic_snapshot")
+
+    def test_guard_admin_url_surface_is_exact(self):
+        tool.assert_guard_admin_url(tool.GUARD_ADMIN_URL)
+        tool.assert_guard_admin_url(tool.GUARD_POST_URL)
+        refused = [
+            tool.GUARD_ADMIN_URL + "&page=frpd-media-mutation-guard",
+            tool.GUARD_ADMIN_URL + "&x=1",
+            tool.GUARD_POST_URL + "?action=frpd_media_guard_acquire",
+            "https://example.com/wp-admin/tools.php?page=frpd-media-mutation-guard",
+            "https://frpdepots.com/wp-admin/options.php",
+        ]
+        for url in refused:
+            with self.subTest(url=url), self.assertRaises(
+                    (tool.FamilyMediaError, tool.media_base.MediaUploadError)):
+                tool.assert_guard_admin_url(url)
+
+    def test_guard_snapshot_proof_is_closed_and_requires_no_conflicts(self):
+        good = self.guard_snapshot_ok()
+        self.assertEqual(
+            tool.require_empty_guard_snapshot(
+                good, "stub_flange", "atomic_snapshot", self.duplicate_ok(["stub_flange"])
+            )["snapshot_sha256"],
+            "c" * 64,
+        )
+        bad_values = []
+        extra = deepcopy(good)
+        extra["unexpected"] = True
+        bad_values.append(extra)
+        conflict = deepcopy(good)
+        conflict["name_conflicts"] = [{"attachment_id": 7, "fixed_position": 1}]
+        bad_values.append(conflict)
+        active = deepcopy(good)
+        active["guard_active"] = True
+        bad_values.append(active)
+        incomplete = deepcopy(good)
+        incomplete["complete"] = False
+        bad_values.append(incomplete)
+        private_path_drift = deepcopy(good)
+        private_path_drift["private_exceptions"][0]["attached_file"] = "2026/03/other.pdf"
+        bad_values.append(private_path_drift)
+        private_protector_drift = deepcopy(good)
+        private_protector_drift["private_exceptions"][0]["protector_plugin_sha256"] = "0" * 64
+        bad_values.append(private_protector_drift)
+        for proof in bad_values:
+            with self.subTest(proof=proof), self.assertRaises(tool.FamilyMediaError):
+                tool.require_empty_guard_snapshot(proof, "stub_flange", "atomic_snapshot")
+
+    def test_guard_runtime_manifest_matches_all_five_families_and_excludes_fnpt(self):
+        contract = tool.validate_guard_manifest_contract()
+        self.assertEqual(contract["zip_sha256"], tool.GUARD_ZIP_SHA256)
+        self.assertEqual(contract["plugin_php_sha256"], tool.GUARD_PLUGIN_PHP_SHA256)
+        self.assertEqual(contract["sha256"], tool.GUARD_RUNTIME_MANIFEST_SHA256)
+        self.assertEqual(set(contract["families"]), set(tool.FAMILY_KEYS))
+        self.assertFalse(contract["fnpt_present"])
+
+    def test_guard_runtime_manifest_semantic_drift_refuses_even_with_matching_new_hash(self):
+        data = json.loads(tool.GUARD_RUNTIME_MANIFEST_PATH.read_text(encoding="utf-8"))
+        data["families"]["stub_flange"]["product_id"] = 9999
+        raw = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        tampered = Path(self.tmp.name) / "tampered-approved-media.json"
+        tampered.write_bytes(raw)
+        with mock.patch.object(tool, "GUARD_RUNTIME_MANIFEST_PATH", tampered), \
+                mock.patch.object(tool, "GUARD_RUNTIME_MANIFEST_SHA256",
+                                  hashlib.sha256(raw).hexdigest()):
+            with self.assertRaises(tool.FamilyMediaError):
+                tool.validate_guard_manifest_contract()
+
+    def test_guarded_snapshot_binds_each_uploaded_id_to_its_fixed_position(self):
+        admin = FakeAdmin("stub_flange")
+        proof = admin._snapshot("guarded_snapshot", True, 4, 4)
+        tool.require_guarded_upload_snapshot(
+            proof, "stub_flange", 1, [9001, 9002, 9003, 9004]
+        )
+        bad = deepcopy(proof)
+        bad["hash_conflicts"][2]["attachment_id"] = 9999
+        with self.assertRaises(tool.FamilyMediaError):
+            tool.require_guarded_upload_snapshot(
+                bad, "stub_flange", 1, [9001, 9002, 9003, 9004]
+            )
+
+    def test_authorization_margin_refuses_plan_too_close_to_expiry(self):
+        with self.assertRaises(tool.FamilyMediaError):
+            tool.require_authorization_margin({
+                "expires_utc": (tool.utc_now() + tool.MIN_AUTHORIZATION_MARGIN / 2).isoformat()
+            })
+        tool.require_authorization_margin({
+            "expires_utc": (tool.utc_now() + tool.MIN_AUTHORIZATION_MARGIN * 2).isoformat()
+        })
 
     def test_rehashed_plan_with_unknown_field_is_refused(self):
         path, _ = self.make_plan()
@@ -494,6 +753,33 @@ class ProductFamilyMediaTests(unittest.TestCase):
     def test_duplicate_complete_clean_passes(self):
         tool.require_no_duplicates(self.duplicate_ok())
 
+    def test_duplicate_private_attachment_evidence_is_exact(self):
+        for field, value in (("attachment_id", 9999), ("filename", "other.pdf")):
+            evidence = self.duplicate_ok()
+            evidence["private_exception"][field] = value
+            with self.subTest(field=field), self.assertRaises(tool.FamilyMediaError):
+                tool.validate_duplicate_evidence(evidence, "stub_flange")
+
+    def test_duplicate_scan_refuses_private_filename_or_id_substitution(self):
+        expected_name = Path(tool.GUARD_PRIVATE_EXCEPTION["attached_file"]).name
+        substitutions = [
+            {"id": 9999, "filename": expected_name, "stem": "hetron-cr-guide-2007_ineos"},
+            {"id": tool.GUARD_PRIVATE_EXCEPTION["attachment_id"],
+             "filename": "other.pdf", "stem": "other"},
+        ]
+        targets = {"stub_flange": {"images": [{
+            "filename": "fixed.png", "sha256": "0" * 64,
+        }]}}
+        for row in substitutions:
+            walked = {"rows": [row], "total": 1, "pages": 1,
+                      "complete": True, "unidentified": 0}
+            evidence = tool.duplicate_scan(mock.Mock(), targets, walked)
+            with self.subTest(row=row):
+                self.assertFalse(evidence["private_exception_proven"])
+                self.assertFalse(evidence["complete"])
+                with self.assertRaises(tool.FamilyMediaError):
+                    tool.require_no_duplicates(evidence)
+
     def test_duplicate_incomplete_refuses(self):
         evidence = self.duplicate_ok()
         evidence["hash_complete"] = False
@@ -515,8 +801,9 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def test_duplicate_scan_rejects_list_and_detail_filename_mismatch(self):
         walked = {
-            "rows": [{"id": 99, "filename": "reported.jpg", "stem": "reported"}],
-            "total": 1, "pages": 2, "complete": True, "unidentified": 0,
+            "rows": [self.private_library_row(),
+                     {"id": 99, "filename": "reported.jpg", "stem": "reported"}],
+            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         admin = mock.Mock()
         admin.read_attachment.return_value = {
@@ -539,8 +826,9 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def test_duplicate_scan_rejects_attachment_outside_closed_image_types(self):
         walked = {
-            "rows": [{"id": 100, "filename": "document.pdf", "stem": "document"}],
-            "total": 1, "pages": 2, "complete": True, "unidentified": 0,
+            "rows": [self.private_library_row(),
+                     {"id": 100, "filename": "document.pdf", "stem": "document"}],
+            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         admin = mock.Mock()
         admin.read_attachment.side_effect = tool.media_base.MediaUploadError("not image")
@@ -554,15 +842,17 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def test_duplicate_scan_requires_exact_stable_second_snapshot(self):
         first = {
-            "rows": [{"id": 99, "filename": "benign.png", "stem": "benign"}],
-            "total": 1, "pages": 2, "complete": True, "unidentified": 0,
+            "rows": [self.private_library_row(),
+                     {"id": 99, "filename": "benign.png", "stem": "benign"}],
+            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         changed = {
             "rows": [
+                self.private_library_row(),
                 {"id": 99, "filename": "benign.png", "stem": "benign"},
                 {"id": 100, "filename": "inserted.png", "stem": "inserted"},
             ],
-            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
+            "total": 3, "pages": 2, "complete": True, "unidentified": 0,
         }
         admin = mock.Mock()
         admin.read_attachment.return_value = {
@@ -580,17 +870,18 @@ class ProductFamilyMediaTests(unittest.TestCase):
         self.assertTrue(evidence["recheck_complete"])
         self.assertFalse(evidence["snapshot_stable"])
         self.assertFalse(evidence["complete"])
-        self.assertEqual(evidence["recheck_total"], 2)
+        self.assertEqual(evidence["recheck_total"], 3)
         with self.assertRaises(tool.FamilyMediaError):
             tool.require_no_duplicates(evidence)
 
     def test_duplicate_scan_accepts_same_id_filename_set_in_different_order(self):
         first = {
             "rows": [
+                self.private_library_row(),
                 {"id": 99, "filename": "a.png", "stem": "a"},
                 {"id": 100, "filename": "b.png", "stem": "b"},
             ],
-            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
+            "total": 3, "pages": 2, "complete": True, "unidentified": 0,
         }
         second = deepcopy(first)
         second["rows"].reverse()
@@ -616,8 +907,9 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def test_duplicate_scan_rejects_same_id_filename_when_bytes_change_between_passes(self):
         snapshot = {
-            "rows": [{"id": 99, "filename": "benign.png", "stem": "benign"}],
-            "total": 1, "pages": 2, "complete": True, "unidentified": 0,
+            "rows": [self.private_library_row(),
+                     {"id": 99, "filename": "benign.png", "stem": "benign"}],
+            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         detail = {
             "attachment_id": 99, "filename": "benign.png",
@@ -646,8 +938,9 @@ class ProductFamilyMediaTests(unittest.TestCase):
 
     def test_duplicate_scan_rejects_source_url_change_between_hash_passes(self):
         snapshot = {
-            "rows": [{"id": 99, "filename": "benign.png", "stem": "benign"}],
-            "total": 1, "pages": 2, "complete": True, "unidentified": 0,
+            "rows": [self.private_library_row(),
+                     {"id": 99, "filename": "benign.png", "stem": "benign"}],
+            "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         first_detail = {
             "attachment_id": 99, "filename": "benign.png",
@@ -1132,23 +1425,175 @@ class ProductFamilyMediaTests(unittest.TestCase):
             for patcher in patches:
                 stack.enter_context(patcher)
             tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.guard_acquire_count, 1)
         self.assertEqual(admin.upload_count, 4)
+        self.assertEqual(admin.guard_complete_count, 1)
+        self.assertEqual(admin.guard_snapshot_count, 2)
+        self.assertEqual(state["get_calls"], 5)
         self.assertEqual(len(state["request_calls"]), 1)
         method, endpoint, payload = state["request_calls"][0]
         self.assertEqual((method, endpoint), ("PUT", "/products/1368"))
         self.assertEqual(set(payload), {"images"})
         self.assertEqual([row["id"] for row in payload["images"]], [9001, 9002, 9003, 9004])
         self.assertTrue(all(set(row) == {"id"} for row in payload["images"]))
+        self.assertEqual(
+            state["if_match"], tool.gallery_precondition(tool.safe_gallery(self.product_record(key)))
+        )
         result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
         self.assertEqual(result["status"], "COMMITTED_AND_VERIFIED")
         self.assertEqual(result["public_verification"]["javascript_errors"], 0)
         self.assertTrue(result["protected_product_fields_unchanged"])
+        self.assertFalse(result["guard_active_after_verification"])
+        self.assertEqual(result["guard_acquisition"]["mode"], "guard_acquired")
+        self.assertEqual(result["guard_owner_snapshot"]["reserved_uploads"], 0)
+        self.assertEqual(result["guarded_snapshot"]["reserved_uploads"], 4)
+        self.assertEqual(result["guard_completion"]["proof"]["mode"], "guard_completed")
+        self.assertTrue(result["post_completion_product_verified"])
         self.assertEqual(result["emails"], 0)
         self.assertFalse(result["delete_performed"])
         attempt = json.loads(tool.lock_path(self.operation_sha(path)).read_text(encoding="utf-8"))
         self.assertEqual(attempt["status"], "ATTEMPT_STARTED")
         self.assertFalse(tool.reservation_path(self.operation_sha(path)).exists())
         self.assertTrue(tool.journal_path(self.operation_sha(path), "900_committed_verified").is_file())
+
+    def test_server_side_gallery_precondition_failure_cannot_be_silently_overwritten(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        patches, state = self.commit_patches(key, admin, gallery_race=True)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(len(state["request_calls"]), 1)
+        self.assertRegex(state["if_match"], r'^"[0-9a-f]{64}"$')
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "gallery_put_or_readback")
+        self.assertTrue(result["product_may_have_changed"])
+        self.assertTrue(result["no_retry"])
+
+    def test_guard_acquisition_failure_locks_before_any_upload_or_gallery_put(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key, fail_guard_acquire=True)
+        patches, state = self.commit_patches(key, admin)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.guard_acquire_count, 1)
+        self.assertEqual(admin.upload_count, 0)
+        self.assertEqual(state["request_calls"], [])
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "guard_acquisition")
+        self.assertTrue(result["guard_may_be_active"])
+        self.assertTrue(result["no_retry"])
+
+    def test_missing_post_acquire_owner_proof_locks_before_any_upload(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        admin.guarded_snapshot = mock.Mock(side_effect=RuntimeError("owner cookie unavailable"))
+        patches, state = self.commit_patches(key, admin)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.guard_acquire_count, 1)
+        self.assertEqual(admin.upload_count, 0)
+        self.assertEqual(state["request_calls"], [])
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "guard_owner_snapshot")
+        self.assertTrue(result["guard_may_be_active"])
+        self.assertIsNone(result["guard_owner_snapshot"])
+
+    def test_guarded_snapshot_mismatch_locks_before_gallery_put(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        bad = admin._snapshot("guarded_snapshot", True, 4, 4)
+        bad["fixed_matches"][0]["attachment_id"] = 9999
+        original_guarded_snapshot = admin.guarded_snapshot
+        admin.guarded_snapshot = lambda _key: (
+            original_guarded_snapshot(_key) if admin.upload_count == 0 else bad
+        )
+        patches, state = self.commit_patches(key, admin)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.upload_count, 4)
+        self.assertEqual(state["request_calls"], [])
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "guarded_snapshot")
+        self.assertTrue(result["guard_may_be_active"])
+
+    def test_near_expiry_guard_refuses_after_upload_proofs_and_before_gallery_put(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        patches, state = self.commit_patches(key, admin)
+        checks = {"count": 0}
+
+        def margin(proof):
+            checks["count"] += 1
+            if checks["count"] == 3:
+                raise tool.FamilyMediaError("modelled guard too close to expiry")
+
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            stack.enter_context(mock.patch.object(
+                tool, "require_guard_completion_margin", side_effect=margin
+            ))
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.upload_count, 4)
+        self.assertEqual(state["request_calls"], [])
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "guard_completion_margin")
+        self.assertTrue(result["guard_may_be_active"])
+
+    def test_guard_completion_failure_after_gallery_put_is_indeterminate(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key, fail_guard_complete=True)
+        patches, state = self.commit_patches(key, admin)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.upload_count, 4)
+        self.assertEqual(admin.guard_complete_count, 1)
+        self.assertEqual(len(state["request_calls"]), 1)
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "guard_completion")
+        self.assertTrue(result["product_may_have_changed"])
+        self.assertTrue(result["guard_may_be_active"])
+
+    def test_authorization_margin_is_checked_before_attempt_lock_or_guard_acquisition(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        patches, state = self.commit_patches(key, admin)
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            stack.enter_context(mock.patch.object(
+                tool, "require_authorization_margin",
+                side_effect=tool.FamilyMediaError("too close"),
+            ))
+            with self.assertRaises(tool.FamilyMediaError):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(admin.guard_acquire_count, 0)
+        self.assertEqual(admin.upload_count, 0)
+        self.assertEqual(state["request_calls"], [])
+        self.assertFalse(tool.lock_path(self.operation_sha(path)).exists())
 
     def test_replay_is_refused_without_new_write(self):
         key = "stub_flange"
@@ -1224,8 +1669,29 @@ class ProductFamilyMediaTests(unittest.TestCase):
                 tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
         self.assertEqual(len(state["request_calls"]), 1)
         result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
-        self.assertEqual(result["stage"], "gallery_put_or_final_verification")
+        self.assertEqual(result["stage"], "post_completion_final_verification")
         self.assertTrue(result["product_may_have_changed"])
+        self.assertFalse(result["guard_may_be_active"])
+        self.assertEqual(result["guard_completion"]["proof"]["mode"], "guard_completed")
+
+    def test_post_completion_product_race_is_detected_with_guard_inactive(self):
+        key = "stub_flange"
+        path, _ = self.make_plan(key)
+        admin = FakeAdmin(key)
+        patches, state = self.commit_patches(
+            key, admin, post_completion_drift=True
+        )
+        with contextlib.ExitStack() as stack:
+            for patcher in patches:
+                stack.enter_context(patcher)
+            with self.assertRaises(tool.FamilyMediaIndeterminate):
+                tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
+        self.assertEqual(len(state["request_calls"]), 1)
+        result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
+        self.assertEqual(result["stage"], "post_completion_final_verification")
+        self.assertTrue(result["product_may_have_changed"])
+        self.assertFalse(result["guard_may_be_active"])
+        self.assertEqual(result["guard_completion"]["proof"]["mode"], "guard_completed")
 
     def test_wrong_put_response_id_is_indeterminate(self):
         key = "stub_flange"
@@ -1251,7 +1717,8 @@ class ProductFamilyMediaTests(unittest.TestCase):
             with self.assertRaises(tool.FamilyMediaIndeterminate):
                 tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
         result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
-        self.assertEqual(result["stage"], "gallery_put_or_final_verification")
+        self.assertEqual(result["stage"], "gallery_put_or_readback")
+        self.assertTrue(result["guard_may_be_active"])
 
     def test_plugin_metadata_drift_after_put_is_indeterminate(self):
         key = "stub_flange"
@@ -1290,10 +1757,12 @@ class ProductFamilyMediaTests(unittest.TestCase):
             stack.enter_context(mock.patch.object(tool, "record_event", side_effect=OSError("disk")))
             with self.assertRaises(tool.FamilyMediaIndeterminate):
                 tool.command_commit(argparse.Namespace(plan=str(path), approval="APPROVED"))
-        self.assertEqual(admin.upload_count, 1)
+        self.assertEqual(admin.guard_acquire_count, 1)
+        self.assertEqual(admin.upload_count, 0)
         self.assertEqual(state["request_calls"], [])
         result = json.loads(tool.result_path(self.operation_sha(path)).read_text(encoding="utf-8"))
         self.assertEqual(result["status"], "INDETERMINATE_NO_RETRY")
+        self.assertTrue(result["guard_may_be_active"])
         self.assertIn("journal:OSError", result["evidence_write_failures"])
         self.assertTrue(tool.lock_path(self.operation_sha(path)).is_file())
 

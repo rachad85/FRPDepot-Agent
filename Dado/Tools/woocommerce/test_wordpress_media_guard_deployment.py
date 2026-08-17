@@ -18,13 +18,16 @@ spec.loader.exec_module(tool)
 
 
 class FakeElement:
-    def __init__(self, *, text="", classes="", children=None, attrs=None):
+    def __init__(self, *, text="", classes="", children=None, attrs=None,
+                 evaluate_result=True, on_click=None):
         self.text = text
         self.classes = classes
         self.children = children or {}
         self.attrs = attrs or {}
         self.clicked = 0
         self.files = []
+        self.evaluate_result = evaluate_result
+        self.on_click = on_click
 
     def get_attribute(self, name):
         return self.classes if name == "class" else self.attrs.get(name)
@@ -44,9 +47,14 @@ class FakeElement:
 
     def click(self, **kwargs):
         self.clicked += 1
+        if self.on_click is not None:
+            self.on_click()
 
     def set_input_files(self, path, **kwargs):
         self.files.append(path)
+
+    def evaluate(self, _script):
+        return self.evaluate_result
 
 
 class FakeLocator:
@@ -66,6 +74,7 @@ class FakePage:
         self.guard_version = f"Version {tool.PLUGIN_VERSION}"
         self.guard_status = "Guard inactive"
         self.waits = []
+        self.closed = False
 
     def goto(self, url, **kwargs):
         self.url = url
@@ -85,6 +94,9 @@ class FakePage:
 
     def wait_for_timeout(self, value):
         self.waits.append(value)
+
+    def close(self):
+        self.closed = True
 
     def on(self, event, callback):
         self.handlers[event] = callback
@@ -124,16 +136,40 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(tuple(value["members"]), tuple(sorted(tool.ARTIFACT_MEMBERS)))
         self.assertEqual(value["member_sha256"], tool.ARTIFACT_MEMBER_SHA256)
 
-    def test_only_three_fixed_actions_exist(self):
-        self.assertEqual(tool.ACTIONS, frozenset({"install_inactive", "activate", "deactivate"}))
+    def test_only_four_fixed_actions_exist(self):
+        self.assertEqual(tool.ACTIONS, frozenset({
+            "install_inactive", "replace_active", "activate", "deactivate",
+        }))
         with self.assertRaises(SystemExit):
             tool.parser().parse_args(["stage", "--action", "replace"])
+
+    def test_wordpress_action_ids_pin_the_live_name_slug_not_the_directory_slug(self):
+        self.assertEqual(tool.ACTION_ID_SLUG, "frp-depot-media-mutation-guard")
+        self.assertEqual(tool.ACTIVATE_SELECTOR, "#activate-frp-depot-media-mutation-guard")
+        self.assertEqual(tool.DEACTIVATE_SELECTOR, "#deactivate-frp-depot-media-mutation-guard")
+        self.assertNotEqual(tool.ACTION_ID_SLUG, tool.PLUGIN_SLUG)
 
     def test_exact_approval_only(self):
         tool.require_approval("APPROVED")
         for value in ("approved", " APPROVED", "APPROVED ", "YES", ""):
             with self.assertRaises(tool.DeploymentError):
                 tool.require_approval(value)
+
+    def test_terminal_evidence_is_published_only_after_full_flush(self):
+        with tempfile.TemporaryDirectory() as directory:
+            final = Path(directory) / "result.json"
+            with mock.patch.object(tool.os, "fsync", side_effect=OSError("modelled fsync failure")):
+                with self.assertRaises(OSError):
+                    tool.exclusive_json(final, {"status": "verified"})
+            self.assertFalse(final.exists())
+            self.assertEqual(list(Path(directory).glob("*.pending")), [])
+            tool.exclusive_json(final, {"status": "indeterminate_no_retry"})
+            self.assertEqual(
+                json.loads(final.read_text(encoding="ascii"))["status"],
+                "indeterminate_no_retry",
+            )
+            with self.assertRaises(tool.DeploymentError):
+                tool.exclusive_json(final, {"status": "second_write_forbidden"})
 
 
 class ProjectionTests(unittest.TestCase):
@@ -166,12 +202,17 @@ class ProjectionTests(unittest.TestCase):
         tool.validate_before("install_inactive", tool.project_row(False, None, "", False))
         tool.validate_before("activate", tool.project_row(True, False, tool.PLUGIN_VERSION, False))
         tool.validate_before("deactivate", tool.project_row(True, True, tool.PLUGIN_VERSION, False))
+        tool.validate_before("replace_active", tool.project_row(
+            True, True, tool.WITHDRAWN_PLUGIN_VERSION, False))
         with self.assertRaises(tool.DeploymentError):
             tool.validate_before("install_inactive", tool.project_row(True, False, tool.PLUGIN_VERSION, False))
         with self.assertRaises(tool.DeploymentError):
             tool.validate_before("activate", tool.project_row(True, True, tool.PLUGIN_VERSION, False))
         with self.assertRaises(tool.DeploymentError):
             tool.validate_before("deactivate", tool.project_row(True, False, tool.PLUGIN_VERSION, False))
+        with self.assertRaises(tool.DeploymentError):
+            tool.validate_before("replace_active", tool.project_row(
+                True, False, tool.WITHDRAWN_PLUGIN_VERSION, False))
 
     def test_guard_health_is_exact_and_js_clean(self):
         page = FakePage(fixed_row(True))
@@ -274,16 +315,22 @@ class PlanTests(unittest.TestCase):
         self.assertNotEqual(first["sha256"], second["sha256"])
         self.assertEqual(first["operation_sha256"], second["operation_sha256"])
 
-    def test_each_action_discloses_one_write(self):
+    def test_each_action_discloses_its_exact_write_sequence(self):
         cases = {
             "install_inactive": tool.project_row(False, None, "", False),
             "activate": tool.project_row(True, False, tool.PLUGIN_VERSION, False),
             "deactivate": tool.project_row(True, True, tool.PLUGIN_VERSION, False),
+            "replace_active": tool.project_row(
+                True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
         }
         for action, before in cases.items():
             with self.subTest(action=action):
                 _, plan = tool.stage(action, before, self.artifact)
                 self.assertEqual(len(plan["writes_if_committed"]), 1)
+                if action == "replace_active":
+                    self.assertIn("then one exact replace-current click",
+                                  plan["writes_if_committed"][0])
+                    self.assertIn("not atomic", plan["risk"])
 
     def test_bad_approval_refuses_before_plan_key_or_browser(self):
         args = argparse.Namespace(approval="approved", plan="missing")
@@ -364,11 +411,51 @@ class PlanTests(unittest.TestCase):
         self.assertEqual(result["status"], "indeterminate_no_retry")
         self.assertTrue(tool.attempt_path(plan["operation_sha256"]).exists())
 
+    def test_verified_replacement_locks_before_upload_and_preserves_active_state(self):
+        before = tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False)
+        path, plan = tool.stage("replace_active", before, self.artifact)
+        events = []
+
+        class ReplaceAdmin:
+            def goto_plugins(self): events.append("goto")
+            def read_row(self, allow_absent=True): return before
+            def verify_guard_health(self, expected_version=tool.PLUGIN_VERSION):
+                events.append(f"health:{expected_version}")
+                return {"version": expected_version, "guard_active": False}
+            def prepare_install(self): events.append("prepare"); return object(), object()
+            def execute_replace(self, chooser, submit, artifact_raw, expected_before):
+                self_outer.assertEqual(expected_before, before)
+                self_outer.assertTrue(tool.attempt_path(plan["operation_sha256"]).exists())
+                self_outer.assertEqual(hashlib.sha256(artifact_raw).hexdigest(),
+                                       tool.ARTIFACT_SHA256)
+                events.append("upload_then_replace")
+                return {"comparison_name": tool.PLUGIN_NAME,
+                        "comparison_current_version": tool.WITHDRAWN_PLUGIN_VERSION,
+                        "comparison_uploaded_version": tool.PLUGIN_VERSION,
+                        "wordpress_success_marker_exact": True,
+                        "active_v1_0_0_reverified_immediately_before_overwrite": True,
+                        "after": tool.expected_after("replace_active")}
+
+        self_outer = self
+        @contextlib.contextmanager
+        def session(_purpose):
+            yield ReplaceAdmin()
+
+        with mock.patch.object(tool, "admin_session", session), mock.patch.object(tool, "print_json"):
+            tool.command_commit(argparse.Namespace(approval="APPROVED", plan=str(path)))
+        self.assertEqual(events, [
+            "goto", f"health:{tool.WITHDRAWN_PLUGIN_VERSION}", "goto", "prepare",
+            "upload_then_replace", f"health:{tool.PLUGIN_VERSION}",
+        ])
+        result = json.loads(tool.result_path(plan["operation_sha256"]).read_text(encoding="ascii"))
+        self.assertEqual(result["status"], "verified")
+        self.assertEqual(result["after"], tool.project_row(True, True, tool.PLUGIN_VERSION, False))
+        self.assertEqual(result["writes"], 2)
+
 
 class SourceSurfaceTests(unittest.TestCase):
-    def test_no_replace_delete_or_mail_write_call(self):
+    def test_no_arbitrary_replace_delete_or_mail_write_call(self):
         source = MODULE_PATH.read_text(encoding="utf-8")
-        self.assertNotIn("update-from-upload-overwrite).click", source)
         self.assertNotIn("delete_plugin", source)
         self.assertNotIn("wp-json", source)
         self.assertNotIn("/products/", source)
@@ -377,7 +464,81 @@ class SourceSurfaceTests(unittest.TestCase):
         self.assertNotIn("requests.put", source)
         self.assertNotIn("requests.delete", source)
 
-    def test_install_preparation_has_no_caller_selected_path(self):
+    def test_exact_replace_comparison_and_route_are_required(self):
+        def cells(label, current, uploaded):
+            return FakeElement(children={"td": [
+                FakeElement(text=label), FakeElement(text=current), FakeElement(text=uploaded),
+            ]})
+        table = FakeElement(children={"tr": [
+            cells("Plugin name", tool.PLUGIN_NAME, tool.PLUGIN_NAME),
+            cells("Version", tool.WITHDRAWN_PLUGIN_VERSION, tool.PLUGIN_VERSION),
+        ]})
+        chooser = FakeElement()
+        page = FakePage(fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION))
+        page.url = f"{tool.ORIGIN}/wp-admin/update.php?action=upload-plugin"
+
+        def overwrite():
+            page.row = fixed_row(True, tool.PLUGIN_VERSION)
+            page.url = (f"{tool.ORIGIN}/wp-admin/update.php?action=upload-plugin"
+                        "&overwrite=update-plugin&package=fixed.zip&_wpnonce=abcDEF1234")
+        link = FakeElement(on_click=overwrite)
+        submit = FakeElement()
+        original_query = page.query_selector_all
+        def query(selector):
+            if selector == "table.update-from-upload-comparison": return [table]
+            if selector == tool.OVERWRITE_SELECTOR: return [link]
+            if selector == ".wrap p": return [FakeElement(text=tool.OVERWRITE_SUCCESS_MARKER)]
+            return original_query(selector)
+        page.query_selector_all = query
+        page.evaluate = lambda _script: True
+        audit_page = FakePage(fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION))
+        audit_page.guard_version = f"Version {tool.WITHDRAWN_PLUGIN_VERSION}"
+        page.context = type("FakeContext", (), {"new_page": lambda self: audit_page})()
+        result = tool.AdminPage(page).execute_replace(
+            chooser, submit, tool.ARTIFACT_PATH.read_bytes(),
+            tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
+        )
+        self.assertEqual(result["after"], tool.expected_after("replace_active"))
+        self.assertEqual(link.clicked, 1)
+        self.assertEqual(len(chooser.files), 1)
+        self.assertIsInstance(chooser.files[0], dict)
+        self.assertEqual(hashlib.sha256(chooser.files[0]["buffer"]).hexdigest(),
+                         tool.ARTIFACT_SHA256)
+        self.assertTrue(audit_page.closed)
+        self.assertTrue(result["active_v1_0_0_reverified_immediately_before_overwrite"])
+
+        bad_link = FakeElement(evaluate_result=False)
+        page.row = fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION)
+        page.url = f"{tool.ORIGIN}/wp-admin/update.php?action=upload-plugin"
+        page.query_selector_all = lambda selector: (
+            [table] if selector == "table.update-from-upload-comparison"
+            else [bad_link] if selector == tool.OVERWRITE_SELECTOR else []
+        )
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).execute_replace(
+                FakeElement(), FakeElement(), tool.ARTIFACT_PATH.read_bytes(),
+                tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
+            )
+        self.assertEqual(bad_link.clicked, 0)
+
+        drift_link = FakeElement()
+        drift_audit = FakePage(fixed_row(False, tool.WITHDRAWN_PLUGIN_VERSION))
+        drift_audit.guard_version = f"Version {tool.WITHDRAWN_PLUGIN_VERSION}"
+        page.context = type("DriftContext", (), {"new_page": lambda self: drift_audit})()
+        page.url = f"{tool.ORIGIN}/wp-admin/update.php?action=upload-plugin"
+        page.query_selector_all = lambda selector: (
+            [table] if selector == "table.update-from-upload-comparison"
+            else [drift_link] if selector == tool.OVERWRITE_SELECTOR else []
+        )
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).execute_replace(
+                FakeElement(), FakeElement(), tool.ARTIFACT_PATH.read_bytes(),
+                tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
+            )
+        self.assertEqual(drift_link.clicked, 0)
+        self.assertTrue(drift_audit.closed)
+
+    def test_install_preparation_matches_live_form_without_id_and_has_no_caller_selected_path(self):
         class Chooser:
             def __init__(self): self.value = None
             def set_input_files(self, value, **kwargs): self.value = value
@@ -386,6 +547,7 @@ class SourceSurfaceTests(unittest.TestCase):
         chooser = Chooser(); submit = Submit()
         nonce = FakeElement(attrs={"value": "abcDEF1234"})
         form = FakeElement(
+            classes="wp-upload-form",
             attrs={"action": "update.php?action=upload-plugin"},
             children={
                 'input[type="file"][name="pluginzip"]': [chooser],
@@ -395,11 +557,25 @@ class SourceSurfaceTests(unittest.TestCase):
         )
         fake = FakePage()
         fake.url = tool.UPLOAD_URL
-        fake.query_selector_all = lambda selector: [form] if selector == "form#plugin-upload-form" else []
+        fake.query_selector_all = lambda selector: [form] if selector == tool.UPLOAD_FORM_SELECTOR else []
         admin = tool.AdminPage(fake)
         got_chooser, got_submit = admin.prepare_install()
         self.assertIs(got_chooser, chooser)
         self.assertIs(got_submit, submit)
+        self.assertIsNone(form.get_attribute("id"))
+        self.assertEqual(tool.UPLOAD_FORM_SELECTOR, "form.wp-upload-form")
+
+    def test_install_preparation_refuses_missing_or_duplicate_live_forms(self):
+        fake = FakePage()
+        fake.url = tool.UPLOAD_URL
+        admin = tool.AdminPage(fake)
+        with self.assertRaises(tool.DeploymentError):
+            admin.prepare_install()
+
+        form = FakeElement(classes="wp-upload-form")
+        fake.query_selector_all = lambda selector: [form, form] if selector == tool.UPLOAD_FORM_SELECTOR else []
+        with self.assertRaises(tool.DeploymentError):
+            admin.prepare_install()
 
     def test_action_href_and_result_routes_are_closed(self):
         valid = (f"{tool.PLUGINS_URL}?action=deactivate&plugin=frpdepot-media-mutation-guard%2F"
@@ -407,7 +583,10 @@ class SourceSurfaceTests(unittest.TestCase):
         tool.assert_state_action_url(valid, "deactivate")
         with self.assertRaises(tool.DeploymentError):
             tool.assert_state_action_url(valid.replace("action=deactivate", "action=delete-selected"), "deactivate")
+        tool.assert_admin_url(f"{tool.PLUGINS_URL}?plugin_status=all&paged=1&s=", mode="state_result")
         tool.assert_admin_url(f"{tool.PLUGINS_URL}?deactivate=true&plugin_status=all&paged=1&s=", mode="state_result")
+        with self.assertRaises(tool.DeploymentError):
+            tool.assert_admin_url(f"{tool.PLUGINS_URL}?plugin_status=all&paged=2&s=", mode="state_result")
         with self.assertRaises(tool.DeploymentError):
             tool.assert_admin_url(f"{tool.PLUGINS_URL}?action=delete-selected&checked[]=akismet.php", mode="state_result")
         with self.assertRaises(tool.DeploymentError):

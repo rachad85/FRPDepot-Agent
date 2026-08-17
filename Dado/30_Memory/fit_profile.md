@@ -89,6 +89,19 @@ sheet — ask instead.
   on 2026-08-12 at the approved Fei-cost × 3.6 rates. Their 713 physical units
   are not loaded yet; live starting stock is zero pending a separate approved
   inventory-adjustment plan. The existing 4-inch/10-inch items already hold 113.
+- FRP backing-ring dimensional authority (Rachad, 2026-08-16): the correct
+  specification for FRP Depot's existing ten-size backing-ring range is Plasticon
+  drawing `300-P001E-Rev3.0`, `Back Ring`, sheet 16 of 23, May 2014. For FRP use
+  B5 thickness; B3 is the bore, B7 the outside diameter, and ANSI K/d/N are bolt
+  circle, hole diameter and hole count. The drawing states ANSI B16.5 150#
+  **drill pattern only** for 1–24 inches; it does not prove a 150 psi product or
+  system rating. Its PN column is preserved as published (PN16 at 1–2 inches,
+  PN10 at 3–12 inches, PN6 at 14 inches). It identifies FRP only as unsaturated
+  polyester and does not prove D411; D411 remains Rachad's separate catalogue
+  selection. The former Litek-geometry recommendation is withdrawn for current
+  stock: Litek is comparison/alternate-supplier evidence only, and Permatech or
+  any future supplier must prove exact geometry, tolerances, resin/laminate and
+  rating against a controlled FRP Depot requirement before equivalency is claimed.
 - FNPT WEBSITE GO-LIVE RULE (Rachad, 2026-08-11; supersedes the earlier hold-for-
   every-supplier-price rollout rule): publish product 2061 using the lower of
   (a) revised supplier USD cost × 3.6 CAD and (b) the exactly equivalent

@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 TOOL_NAME = "catalogue_presentation_release_qa_tool"
-TOOL_VERSION = "1.0.1"
+TOOL_VERSION = "1.1.1"
 SCHEMA_VERSION = 1
 EXACT_ORIGIN = "https://frpdepots.com"
 ALLOWED_HOST = "frpdepots.com"
@@ -42,7 +42,7 @@ COMMON = ROOT / "Dado" / "Tools" / "common"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
 PLUGINS_URL = f"{EXACT_ORIGIN}/wp-admin/plugins.php"
 PLUGIN_FILE = "frpdepot-automatic-catalogue-presentation/frpdepot-automatic-catalogue-presentation.php"
-PLUGIN_VERSION = "1.0.4"
+PLUGIN_VERSION = "1.1.1"
 PLUGIN_ROW_SELECTOR = f'tr[data-plugin="{PLUGIN_FILE}"]:not(.plugin-update-tr)'
 PLUGIN_UPDATE_SELECTOR = f'tr.plugin-update-tr[data-plugin="{PLUGIN_FILE}"]'
 ACTIVATE_SELECTOR = ".row-actions .activate a"
@@ -66,6 +66,33 @@ CATEGORY_URLS = {
     45: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/elbows/",
     57: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/flanges/",
     44: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/pipes/",
+}
+FULL_CATALOGUE_URL = f"{EXACT_ORIGIN}/frp-depots-final-hq/"
+SECTION_PDFS = {
+    "stub_flanges": {"filename": "FRP_Depots_Stub_Flanges_2026.pdf", "bytes": 1310780,
+                     "sha256": "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6"},
+    "manways_and_covers": {"filename": "FRP_Depots_Manways_and_Covers_2026.pdf", "bytes": 1503479,
+                            "sha256": "09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65"},
+    "elbows_90": {"filename": "FRP_Depots_90_Degree_Elbows_2026.pdf", "bytes": 4558184,
+                  "sha256": "ead009c50b7f8cc338b80928084c6ef24141477e5addea7806a4b7da6547fcb2"},
+    "filament_wound_pipe": {"filename": "FRP_Depots_Filament_Wound_Pipe_2026.pdf", "bytes": 477528,
+                            "sha256": "f4fbaf8cb72e7b41f22ddb170185595e12d109394c136edde79f902dd2f65fc2"},
+    "fnpt_couplings": {"filename": "FRP_Depots_FNPT_Couplings_2026.pdf", "bytes": 2001467,
+                       "sha256": "19efa8d20a1be17a1451ad24f6b1d45c2f1e53b3fb58cece5aed496acc91db33"},
+}
+SECTION_PDF_URLS = {
+    key: f"{EXACT_ORIGIN}/wp-content/plugins/frpdepot-automatic-catalogue-presentation/"
+         f"catalogue-sections/{row['filename']}"
+    for key, row in SECTION_PDFS.items()
+}
+PRODUCT_SECTION_KEYS = {
+    1368: "stub_flanges", 1397: "manways_and_covers", 1411: "manways_and_covers",
+    1423: "elbows_90", 1455: "filament_wound_pipe", 2061: "fnpt_couplings",
+}
+CATEGORY_SECTION_KEYS = {
+    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges",),
+    58: ("filament_wound_pipe", "stub_flanges", "elbows_90", "fnpt_couplings"),
+    60: ("manways_and_covers",),
 }
 DERAKANE_PAGE_URL = f"{EXACT_ORIGIN}/derakane-resin-resistance-search/"
 DERAKANE_REST_URL = f"{EXACT_ORIGIN}/wp-json/frpdepot-derakane/v1/search"
@@ -107,6 +134,7 @@ ALLOWED_PUBLIC_PATHS = frozenset(
         urlsplit(DERAKANE_REST_URL).path,
         urlsplit(HETRON_ATTACHMENT_URL).path,
         urlsplit(HETRON_DIRECT_PDF_URL).path,
+        *(urlsplit(url).path for url in SECTION_PDF_URLS.values()),
     }
 )
 MIN_BODY_CHARS = 40
@@ -393,10 +421,13 @@ def request_get(request: Any, url: str, *, max_redirects: int = 20) -> dict[str,
         payload = response.json()
     except Exception:
         pass
+    body = response.body()
     return {
         "status": response.status,
         "headers": dict(response.headers),
-        "body_bytes": len(response.body()),
+        "body_bytes": len(body),
+        "body_sha256": hashlib.sha256(body).hexdigest(),
+        "pdf_signature": body.startswith(b"%PDF-"),
         "payload": payload,
     }
 
@@ -424,6 +455,8 @@ def goto_healthy(page: Any, url: str, token: str) -> dict[str, Any]:
 
 def guide_findings(page: Any, product_id: int, token: str) -> dict[str, Any]:
     url = PRODUCT_URLS[product_id]
+    section_key = PRODUCT_SECTION_KEYS[product_id]
+    section_url = SECTION_PDF_URLS[section_key]
     health = goto_healthy(page, url, token)
     html = str(page.content() or "")
     counts = {
@@ -437,6 +470,10 @@ def guide_findings(page: Any, product_id: int, token: str) -> dict[str, Any]:
             ".et_pb_blurb_0_tb_body h4.et_pb_module_header")),
         "inline_cta_count": len(page.query_selector_all(
             f'.et_pb_text_1_tb_body a[href="{INLINE_CTA_PATH}"]')),
+        "full_catalogue_url_count": html.count(FULL_CATALOGUE_URL),
+        "section_catalogue_url_count": html.count(section_url),
+        "section_catalogue_card_count": len(page.query_selector_all(
+            ".et_pb_blurb_2_tb_body h4.et_pb_module_header")),
     }
     expected = {
         "hetron_text_count": 0,
@@ -446,11 +483,54 @@ def guide_findings(page: Any, product_id: int, token: str) -> dict[str, Any]:
         "derakane_new_card_url_count": 1,
         "derakane_card_count": 1,
         "inline_cta_count": 1,
+        "full_catalogue_url_count": 0,
+        "section_catalogue_url_count": 1,
+        "section_catalogue_card_count": 1,
     }
     return {
-        "product_id": product_id, "url": url, "health": health, **counts,
+        "product_id": product_id, "url": url, "section_key": section_key,
+        "section_url": section_url, "health": health, **counts,
         "passed": health["passed"] and counts == expected,
     }
+
+
+def category_catalogue_findings(page: Any, category_id: int, token: str) -> dict[str, Any]:
+    url = CATEGORY_URLS[category_id]
+    health = goto_healthy(page, url, token)
+    html = str(page.content() or "")
+    panels = page.query_selector_all(".frpdepot-acp-section-catalogues")
+    links = page.query_selector_all(".frpdepot-acp-section-catalogue-link")
+    hrefs = [str(link.get_attribute("href") or "") for link in links]
+    targets = [str(link.get_attribute("target") or "") for link in links]
+    rels = [str(link.get_attribute("rel") or "").split() for link in links]
+    expected_hrefs = [SECTION_PDF_URLS[key] for key in CATEGORY_SECTION_KEYS[category_id]]
+    passed = bool(health["passed"] and len(panels) == 1 and hrefs == expected_hrefs
+                  and targets == ["_blank"] * len(expected_hrefs)
+                  and all("noopener" in rel for rel in rels)
+                  and html.count(FULL_CATALOGUE_URL) == 0)
+    return {"passed": passed, "category_id": category_id, "url": url,
+            "health": health, "panel_count": len(panels), "hrefs": hrefs,
+            "expected_hrefs": expected_hrefs,
+            "full_catalogue_url_count": html.count(FULL_CATALOGUE_URL)}
+
+
+def section_pdf_findings(request: Any) -> dict[str, Any]:
+    files: dict[str, Any] = {}
+    for key, expected in SECTION_PDFS.items():
+        result = request_get(request, SECTION_PDF_URLS[key])
+        content_type = str(result["headers"].get("content-type") or "").casefold()
+        row = {
+            "url": SECTION_PDF_URLS[key], "status": result["status"],
+            "content_type": content_type, "bytes": result["body_bytes"],
+            "sha256": result["body_sha256"], "pdf_signature": result["pdf_signature"],
+        }
+        row["passed"] = bool(
+            row["status"] == 200 and "application/pdf" in content_type
+            and row["bytes"] == expected["bytes"]
+            and row["sha256"] == expected["sha256"] and row["pdf_signature"]
+        )
+        files[key] = row
+    return {"passed": all(row["passed"] for row in files.values()), "files": files}
 
 
 def functional_findings(context: Any, run_id: str) -> dict[str, Any]:
@@ -479,6 +559,12 @@ def functional_findings(context: Any, run_id: str) -> dict[str, Any]:
             str(product_id): guide_findings(page, product_id, run_id + f"-guide-{product_id}")
             for product_id in sorted(PRODUCT_URLS)
         }
+        category_catalogues = {
+            str(category_id): category_catalogue_findings(
+                page, category_id, run_id + f"-category-catalogue-{category_id}")
+            for category_id in sorted(CATEGORY_URLS)
+        }
+        section_pdfs = section_pdf_findings(context.request)
         fnpt_result = request_get(context.request, FNPT_STORE_API_URL)
         fnpt_payload = fnpt_result["payload"] if isinstance(fnpt_result["payload"], dict) else {}
         categories = fnpt_payload.get("categories") if isinstance(fnpt_payload.get("categories"), list) else []
@@ -557,6 +643,8 @@ def functional_findings(context: Any, run_id: str) -> dict[str, Any]:
             and all(row["matches_expected"] for row in projections.values())
             and roots["passed"]
             and all(row["passed"] for row in guides.values())
+            and all(row["passed"] for row in category_catalogues.values())
+            and section_pdfs["passed"]
             and fnpt["passed"]
             and derakane["passed"]
             and protected["passed"]
@@ -567,6 +655,8 @@ def functional_findings(context: Any, run_id: str) -> dict[str, Any]:
             "projections": projections,
             "shop_root": roots,
             "guides": guides,
+            "category_catalogues": category_catalogues,
+            "section_pdfs": section_pdfs,
             "fnpt": fnpt,
             "derakane_v2": derakane,
             "hetron_unavailable": protected,

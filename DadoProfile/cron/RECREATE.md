@@ -9,8 +9,12 @@ own lock, so an external writer can silently drop a claim or a completion,
 and copying a mirror over a live schedule is what the neighbouring tree had
 to build a refusal gate against.
 
-11 job(s) live at the time of writing:
+15 job(s) live at the time of writing:
 
+    hermes -p dado cron create "once in 1m" --name catalogue-plugin-build-cross-lane-complete --deliver telegram   # DISABLED in live
+    hermes -p dado cron create "once in 1m" --name catalogue-plugin-build-cross-lane-start --deliver telegram   # DISABLED in live
+    hermes -p dado cron create "once in 1m" --name catalogue-section-cross-lane-complete --deliver telegram   # DISABLED in live
+    hermes -p dado cron create "once in 1m" --name catalogue-section-cross-lane-notice --deliver telegram   # DISABLED in live
     hermes -p dado cron create "10 5 * * *" --name dado-conduct-review --no-agent --script conduct_review.py --deliver telegram:891365639
     hermes -p dado cron create "15 8 * * *" --name dado-daily-banking-review --no-agent --script dado_daily_banking_review.py --deliver origin
     hermes -p dado cron create "0 8 * * 1-5" --name dado-followup-digest --no-agent --script dado_followup_digest.py --deliver local

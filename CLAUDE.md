@@ -46,9 +46,14 @@ engineer.
   verified to stay silent through a forced kill, so a missing exit line there is
   NOT evidence about how a gateway died.
 - Model: gpt-5.6-sol on openai-codex (global OAuth, shared plan with
-  the TDI five — quota pressure is a known watch item). NO fallback
-  provider on purpose: primary down = honest failure, never silent
-  model drift (TDI learned this the hard way 2026-07-16).
+  the TDI five — quota pressure is a known watch item). FALLBACKS as of
+  2026-08-17, by Rachad's explicit order: tier 2 Gemini 3.7 Flash
+  (google/gemini-3.7-flash), tier 3 LongCat 2.0 free
+  (meituan/longcat-2.0:free). Every agent carries both, no exceptions.
+  This RETIRES the previous "NO fallback provider on purpose" rule
+  (primary down = honest failure, the 2026-07-16 lesson); the honesty
+  requirement now lives in the SOUL backup-brain tripwire instead, which
+  makes her name the model she is actually on in every reply.
 - Hermes is PINNED — never `hermes update` casually (TDI rule, same
   install).
 - *** LOCAL PATCH TO SHARED HERMES (2026-07-24) — RE-APPLY AFTER ANY UPDATE. ***

@@ -3,31 +3,24 @@ model:
   provider: openai-codex
   base_url: ''
   api_mode: chat_completions
-# *** NO FALLBACK PROVIDER, AND THAT IS DELIBERATE. ***
-# CLAUDE.md: "NO fallback provider on purpose: primary down = honest failure,
-# never silent model drift (TDI learned this the hard way 2026-07-16)."
-# Do not replace [] with a provider. Retiring the no-fallback rule is Rachad's
-# call and needs a gateway restart to take effect.
-#
-# WHY THE KEY IS NOW WRITTEN EXPLICITLY EMPTY (2026-08-13). It used to be
-# omitted, so that a runtime import would REMOVE the unintended
-# `[{provider: nous, model: deepseek/deepseek-v4-pro}]` that had appeared in
-# live rather than cement it. That fallback is gone — live has read
-# `fallback_providers: []` since 2026-08-12 — so the omission no longer removed
-# anything and instead left the mirror ONE PARSED KEY BEHIND LIVE, which the
-# profile-mirror check reported every five minutes into the watchdog log. An
-# explicit empty list states the same intent, survives a runtime import
-# identically, and the checker goes quiet. A text diff cannot see this class of
-# drift, which is exactly why that checker parses instead of diffing.
-#
-# CORRECTION 2026-08-13 — the claim that used to sit here is STALE, do not
-# restore it. It called nous UNFUNDED ("marking nous unhealthy for 600s
-# (payment / credit error)", plus a hard 404 on the model). That is no longer
-# true: nous served Dado a complete turn at 22:59 on 2026-08-12 while Codex was
-# quota-blocked, and both Aze and Sary run it as their own fallback today. The
-# reason Dado has none is the honest-failure rule above, NOT a broken provider.
-# Her SOUL carries a BACKUP BRAIN TRIPWIRE covering the drift risk instead.
-fallback_providers: []
+fallback_providers:
+  # Tier 2 - Gemini 3.7. Rachad's call 2026-08-17: default stays GPT Codex on
+  # OAuth, tier 2 becomes Gemini 3.7, tier 3 stays the free model, and EVERY
+  # agent carries both - no exceptions. This RETIRES the 2026-08-12 "NO
+  # fallback_providers HERE, AND THAT IS DELIBERATE" decision for Dado. The old
+  # instruction "Do not fix this by copying live" no longer applies: Rachad
+  # reversed the policy himself, in front of the evidence, on 2026-08-17.
+  # NOTE: there is no Gemini 3.7 "pro" on the nous catalog - google/gemini-3.7-flash
+  # is the only 3.7 published. Verified invokable 2026-08-17.
+  # It is a reasoning model (~75 reasoning tokens for a one-word reply), so a small
+  # max_tokens returns EMPTY content rather than an error. Do not diagnose that as down.
+  - provider: nous
+    model: google/gemini-3.7-flash
+  # Tier 3 - free, so it survives the paid pool running dry. 1M context chosen
+  # deliberately: these agents run very long turns, and a last resort that dies
+  # on context length is not a last resort.
+  - provider: nous
+    model: "meituan/longcat-2.0:free"
 agent:
   # How often the gateway reports a long-running turn. Live since the
   # Discord lane landed; absent from this mirror until 2026-08-12.
@@ -76,21 +69,56 @@ auxiliary:
   vision:
     provider: nous
     model: deepseek/deepseek-v4-pro
+  # AUXILIARY FALLBACK (Rachad, 2026-08-17). The five tasks below ran ONLY on
+  # openai-codex, so when the Codex plan hit its usage cap every one of them died -
+  # compression aborted mid-session with "Provider 'openai-codex' is set in
+  # config.yaml but no API key was found", which is a MISLEADING message for
+  # "the OAuth credential pool is exhausted and this task has no fallback".
+  # The top-level fallback_providers chain does NOT cover these: per
+  # agent/auxiliary_client.py the main chain is consulted only for `provider: auto`;
+  # an explicit provider gets ONLY its own per-task fallback_chain. So the
+  # repetition below is REQUIRED, not redundant - do not factor it out.
+  # vision is left alone: it already runs on nous (free) and needs a vision model.
   title_generation:
     provider: openai-codex
     model: gpt-5.6-sol
+    fallback_chain:
+      - provider: nous
+        model: google/gemini-3.7-flash
+      - provider: nous
+        model: "meituan/longcat-2.0:free"
   compression:
     provider: openai-codex
     model: gpt-5.6-sol
+    fallback_chain:
+      - provider: nous
+        model: google/gemini-3.7-flash
+      - provider: nous
+        model: "meituan/longcat-2.0:free"
   summary:
     provider: openai-codex
     model: gpt-5.6-sol
+    fallback_chain:
+      - provider: nous
+        model: google/gemini-3.7-flash
+      - provider: nous
+        model: "meituan/longcat-2.0:free"
   web_extract:
     provider: openai-codex
     model: gpt-5.6-sol
+    fallback_chain:
+      - provider: nous
+        model: google/gemini-3.7-flash
+      - provider: nous
+        model: "meituan/longcat-2.0:free"
   approval:
     provider: openai-codex
     model: gpt-5.6-sol
+    fallback_chain:
+      - provider: nous
+        model: google/gemini-3.7-flash
+      - provider: nous
+        model: "meituan/longcat-2.0:free"
 display:
   compact: false
   busy_input_mode: queue

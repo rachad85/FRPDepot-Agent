@@ -2,6 +2,8 @@
 // Local offline harness for FRP Depot Media Mutation Guard. No WordPress/network writes.
 define('ABSPATH', __DIR__ . DIRECTORY_SEPARATOR);
 define('ARRAY_A', 'ARRAY_A');
+define('WP_PLUGIN_DIR', dirname(__DIR__) . DIRECTORY_SEPARATOR . 'hetron_private_history'
+    . DIRECTORY_SEPARATOR . 'plugin');
 
 class WP_Error {
     private string $code;
@@ -17,7 +19,9 @@ function plugin_dir_path($file) { return dirname($file) . DIRECTORY_SEPARATOR; }
 function add_action($hook, $callback, $priority = 10, $accepted_args = 1) {
     $GLOBALS['registered_actions'][(string) $hook][] = array($callback, $priority, $accepted_args);
 }
-function add_filter(...$args) {}
+function add_filter($hook, $callback, $priority = 10, $accepted_args = 1) {
+    $GLOBALS['registered_filters'][(string) $hook][] = array($callback, $priority, $accepted_args);
+}
 function register_activation_hook($file, $callback) {}
 function register_deactivation_hook($file, $callback) {}
 function wp_get_session_token() { return 'offline-session-token'; }
@@ -36,7 +40,16 @@ function delete_option($name) {
     unset($GLOBALS['options'][$name]); return true;
 }
 function get_attached_file($id, $unfiltered = false) { return $GLOBALS['attachment_paths'][(int) $id] ?? false; }
-function get_post_meta($id, $key, $single = false) { return $GLOBALS['post_meta'][(int) $id][$key] ?? ($single ? '' : array()); }
+function get_post_meta($id, $key, $single = false) {
+    return $GLOBALS['post_meta'][(int) $id][(string) $key] ?? ($single ? '' : array());
+}
+function get_metadata_by_mid($type, $meta_id) {
+    return 'post' === $type ? ($GLOBALS['metadata_by_mid'][(int) $meta_id] ?? false) : false;
+}
+function get_post($id) { return $GLOBALS['attachment_posts'][(int) $id] ?? null; }
+function get_post_status($post) { return is_object($post) ? ($post->post_status ?? '') : ''; }
+function get_post_mime_type($post) { return is_object($post) ? ($post->post_mime_type ?? '') : ''; }
+function is_plugin_active($file) { return in_array((string) $file, $GLOBALS['active_plugins'], true); }
 function get_post_type($id) {
     if (in_array((int) $id, $GLOBALS['attachment_ids'], true)) { return 'attachment'; }
     return in_array((int) $id, $GLOBALS['product_ids'], true) ? 'product' : 'post';
@@ -71,8 +84,16 @@ class FakeWpdb {
     public array $prepared_args = array();
     public bool $reconnect_on_state_read = false;
     public bool $fail_attachment_enumeration = false;
+    public bool $fail_meta_collation = false;
     public function prepare($query, ...$args) { $this->prepared_args = $args; return $query; }
     public function get_var($query) {
+        if (str_contains($query, 'SELECT CASE') && str_contains($query, "'_thumbnail_id'")) {
+            $key = (string) ($this->prepared_args[0] ?? '');
+            $folded = rtrim(strtolower(strtr($key, array('í' => 'i', 'Í' => 'i'))));
+            if ('_thumbnail_id' === $folded) { return '_thumbnail_id'; }
+            if ('_product_image_gallery' === $folded) { return '_product_image_gallery'; }
+            return '';
+        }
         if (str_contains($query, 'CONNECTION_ID')) { return $this->connection_id; }
         if (str_contains($query, 'IS_USED_LOCK')) { return $this->lock_owner_id; }
         return 1;
@@ -85,6 +106,13 @@ class FakeWpdb {
         return $GLOBALS['attachment_ids'];
     }
     public function get_row($query, $format = null) {
+        if (str_contains($query, 'information_schema.COLUMNS')) {
+            if ($this->fail_meta_collation) {
+                $this->last_error = 'simulated metadata collation lookup failure';
+                return null;
+            }
+            return array('charset_name' => 'utf8mb4', 'collation_name' => 'utf8mb4_unicode_ci');
+        }
         if (str_contains($query, 'SHOW TABLE STATUS')) { return array('Engine' => 'InnoDB'); }
         if (str_contains($query, 'UTC_TIMESTAMP(6) AS issued_utc')) {
             return array(
@@ -102,7 +130,7 @@ class FakeWpdb {
                 $this->reconnect_on_state_read = false;
             }
             $row = is_array($this->state) ? $this->state : array('guard_id' => null);
-            $row['is_active'] = (($row['state_status'] ?? 'active') === 'active'
+            $row['is_active'] = (in_array(($row['state_status'] ?? 'active'), array('active', 'gallery'), true)
                 && (int) ($row['expires_epoch'] ?? 0) > time()) ? '1' : '0';
             $row['db_connection_id'] = $this->connection_id;
             $row['lock_owner_id'] = $this->lock_owner_id;
@@ -112,7 +140,7 @@ class FakeWpdb {
     }
     public function query($query) {
         if (str_contains($query, "SET state_status = 'completed'")) {
-            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'active'
+            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'gallery'
                 || (int) $this->state['expires_epoch'] <= time()
                 || $this->connection_id !== 1 || $this->lock_owner_id !== 1
                 || (int) ($GLOBALS['thumbnail_ids'][1368] ?? 0) !== 201
@@ -128,6 +156,17 @@ class FakeWpdb {
             $this->state['state_version']++;
             return 1;
         }
+        if (str_contains($query, "SET state_status = 'gallery'")) {
+            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'active'
+                || (int) $this->state['state_version'] !== (int) ($this->prepared_args[1] ?? 0)
+                || (int) $this->state['expires_epoch'] <= time()
+                || $this->connection_id !== 1 || $this->lock_owner_id !== 1) {
+                return 0;
+            }
+            $this->state['state_status'] = 'gallery';
+            $this->state['state_version'] = (int) ($this->prepared_args[0] ?? 0);
+            return 1;
+        }
         if (str_contains($query, 'SET reserved_json = %s')) {
             if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'active'
                 || (int) $this->state['expires_epoch'] <= time()
@@ -139,10 +178,16 @@ class FakeWpdb {
             $this->state['state_version'] = (int) ($this->prepared_args[2] ?? $this->state['state_version']);
             return 1;
         }
-        if (str_contains($query, "SET state_status = 'expired'") && is_array($this->state)
-            && (int) $this->state['expires_epoch'] <= time()) {
+        if (str_contains($query, "SET state_status = 'expired'")) {
+            $allows_gallery = str_contains($query, "state_status IN ('active','gallery')");
+            $eligible = is_array($this->state)
+                && (($this->state['state_status'] ?? '') === 'active'
+                    || ($allows_gallery && ($this->state['state_status'] ?? '') === 'gallery'))
+                && (int) $this->state['expires_epoch'] <= time();
+            if (!$eligible) { return 0; }
             $this->state['state_status'] = 'expired';
             $this->state['state_version']++;
+            return 1;
         }
         return 1;
     }
@@ -168,6 +213,8 @@ $GLOBALS['wpdb'] = new FakeWpdb();
 $GLOBALS['options'] = array();
 $GLOBALS['attachment_ids'] = array();
 $GLOBALS['attachment_paths'] = array();
+$GLOBALS['attachment_posts'] = array();
+$GLOBALS['active_plugins'] = array('frpdepot-hetron-private-history/frpdepot-hetron-private-history.php');
 $GLOBALS['post_meta'] = array();
 $GLOBALS['product_meta_counts'] = array();
 $GLOBALS['product_ids'] = array(1368);
@@ -192,6 +239,39 @@ function reset_lock() {
     $GLOBALS['frpd_mg_allowed_upload_filename'] = '';
     $GLOBALS['frpd_mg_allowed_attachment_id'] = 0;
     $GLOBALS['frpd_mg_attachment_insert_consumed'] = false;
+    $GLOBALS['frpd_mg_allowed_gallery_request'] = false;
+    $GLOBALS['frpd_mg_allowed_gallery_product_id'] = 0;
+    $GLOBALS['frpd_mg_allowed_gallery_ids'] = array();
+}
+
+class FakeProduct {
+    private int $id;
+    public function __construct($id) { $this->id = (int) $id; }
+    public function get_id() { return $this->id; }
+}
+class FakeRestRequest {
+    private string $method;
+    private array $json;
+    private string $if_match;
+    private array $query;
+    private array $body;
+    private array $files;
+    public function __construct($method, $json, $if_match, $query = array(), $body = array(), $files = array()) {
+        $this->method = (string) $method;
+        $this->json = $json;
+        $this->if_match = (string) $if_match;
+        $this->query = is_array($query) ? $query : array();
+        $this->body = is_array($body) ? $body : array();
+        $this->files = is_array($files) ? $files : array();
+    }
+    public function get_method() { return $this->method; }
+    public function get_json_params() { return $this->json; }
+    public function get_query_params() { return $this->query; }
+    public function get_body_params() { return $this->body; }
+    public function get_file_params() { return $this->files; }
+    public function get_header($name) {
+        return 'if-match' === strtolower((string) $name) ? $this->if_match : '';
+    }
 }
 function set_test_state($state) {
     $manifest = frpd_mg_manifest();
@@ -244,6 +324,20 @@ check(isset($GLOBALS['registered_actions']['wp_ajax_image-editor'])
     && $GLOBALS['registered_actions']['wp_ajax_image-editor'][0][0] === 'frpd_mg_ajax_image_editor_gate'
     && $GLOBALS['registered_actions']['wp_ajax_image-editor'][0][1] === PHP_INT_MIN,
     'core image editor is intercepted before restore-original dispatch');
+check(isset($GLOBALS['registered_filters']['woocommerce_rest_pre_insert_product_object'])
+    && $GLOBALS['registered_filters']['woocommerce_rest_pre_insert_product_object'][0]
+        === array('frpd_mg_rest_pre_insert_product_object', PHP_INT_MIN, 3),
+    'Woo product gallery claim is intercepted before product persistence');
+check(isset($GLOBALS['registered_filters']['update_post_metadata_by_mid'])
+    && $GLOBALS['registered_filters']['update_post_metadata_by_mid'][0]
+        === array('frpd_mg_update_post_metadata_by_mid', PHP_INT_MIN, 4),
+    'metadata-by-ID updates are intercepted under the guard lock');
+check(isset($GLOBALS['registered_filters']['delete_post_metadata_by_mid'])
+    && $GLOBALS['registered_filters']['delete_post_metadata_by_mid'][0]
+        === array('frpd_mg_delete_post_metadata_by_mid', PHP_INT_MIN, 2),
+    'metadata-by-ID deletes are intercepted under the guard lock');
+check(!isset($GLOBALS['registered_filters']['pre_wp_unique_filename_file_list']),
+    'WordPress core alternate-image filename collision scanning remains enabled');
 
 $benign = tempnam(sys_get_temp_dir(), 'frpd-mg-benign-');
 file_put_contents($benign, 'benign attachment bytes');
@@ -263,6 +357,54 @@ check(!is_wp_error($snapshot) && $snapshot['complete'] === true,
     'benign snapshot complete' . (is_wp_error($snapshot) ? ': ' . $snapshot->get_error_message() : ''));
 check($snapshot['attachment_total'] === 1 && $snapshot['hashed_total'] === 1, 'snapshot counts exact');
 check($snapshot['name_conflicts'] === array() && $snapshot['hash_conflicts'] === array(), 'benign snapshot has no conflict');
+check($snapshot['schema'] === 2 && $snapshot['private_exceptions'] === array(),
+    'ordinary complete snapshot uses schema 2 with no private exception');
+reset_lock();
+$GLOBALS['attachment_ids'] = array(11, 1832);
+$GLOBALS['attachment_paths'] = array(11 => $benign, 1832 => false);
+$GLOBALS['attachment_posts'][1832] = (object) array(
+    'ID' => 1832,
+    'post_type' => 'attachment',
+    'post_status' => 'private',
+    'post_mime_type' => 'application/pdf',
+    'post_name' => 'hetron-cr-guide-2007_ineos',
+    'post_date_gmt' => '2026-03-17 15:20:38',
+);
+$GLOBALS['post_meta'][1832]['_wp_attached_file'] = '2026/03/HETRON-CR-Guide-2007_Ineos.pdf';
+check(frpd_mg_hold_request_lock() === true, 'advisory lock acquired for fixed private attachment');
+$private_snapshot = frpd_mg_snapshot('stub_flange', 'test', false);
+check(!is_wp_error($private_snapshot) && $private_snapshot['complete'] === true,
+    'exact protected private attachment is accepted without reading its file');
+check($private_snapshot['attachment_total'] === 2 && $private_snapshot['hashed_total'] === 1
+    && count($private_snapshot['private_exceptions']) === 1
+    && $private_snapshot['private_exceptions'][0]['attachment_id'] === 1832,
+    'private attachment is counted once and bound into proof');
+$GLOBALS['attachment_paths'][1832] = $benign;
+reset_lock();
+check(frpd_mg_hold_request_lock() === true, 'advisory lock reacquired for readable private attachment');
+$readable_private = frpd_mg_snapshot('stub_flange', 'test', false);
+check(!is_wp_error($readable_private) && $readable_private['complete'] === true
+    && $readable_private['hashed_total'] === 1
+    && count($readable_private['private_exceptions']) === 1,
+    'fixed private contract is enforced and classified identically even if its file becomes readable');
+reset_lock();
+$GLOBALS['attachment_posts'][1832]->post_status = 'publish';
+check(frpd_mg_hold_request_lock() === true, 'advisory lock reacquired for private identity drift');
+$private_drift = frpd_mg_snapshot('stub_flange', 'test', false);
+check(!is_wp_error($private_drift) && $private_drift['complete'] === false
+    && $private_drift['failures'][0]['reason'] === 'private_attachment_proof_failed',
+    'private attachment identity drift fails closed');
+$GLOBALS['attachment_posts'][1832]->post_status = 'private';
+reset_lock();
+$GLOBALS['active_plugins'] = array();
+check(frpd_mg_hold_request_lock() === true, 'advisory lock reacquired for missing private protector');
+$private_unprotected = frpd_mg_snapshot('stub_flange', 'test', false);
+check(!is_wp_error($private_unprotected) && $private_unprotected['complete'] === false
+    && $private_unprotected['failures'][0]['reason'] === 'private_attachment_proof_failed',
+    'inactive private protector fails closed');
+$GLOBALS['active_plugins'] = array('frpdepot-hetron-private-history/frpdepot-hetron-private-history.php');
+$GLOBALS['attachment_ids'] = array(11);
+$GLOBALS['attachment_paths'] = array(11 => $benign);
 reset_lock();
 check(frpd_mg_hold_request_lock() === true, 'advisory lock acquired for enumeration-failure test');
 $GLOBALS['wpdb']->fail_attachment_enumeration = true;
@@ -391,6 +533,118 @@ $GLOBALS['attachment_paths'] = array(11 => $benign);
 for ($position = 1; $position <= 4; $position++) {
     $GLOBALS['attachment_paths'][200 + $position] = fixed_source('stub_flange', $position);
 }
+$GLOBALS['thumbnail_ids'][1368] = 11;
+$GLOBALS['post_meta'][1368]['_product_image_gallery'] = '';
+$target_payload = array('images' => array(
+   array('id' => 201), array('id' => 202), array('id' => 203), array('id' => 204),
+));
+$product = new FakeProduct(1368);
+$etag = frpd_mg_gallery_etag(array(11));
+$GLOBALS['metadata_by_mid'] = array(
+    501 => (object) array('post_id' => 1368, 'meta_key' => '_thumbnail_id'),
+    502 => (object) array('post_id' => 1368, 'meta_key' => '_product_image_gallery'),
+    503 => (object) array('post_id' => 11, 'meta_key' => '_wp_attached_file'),
+    504 => (object) array('post_id' => 1368, 'meta_key' => 'unrelated_key'),
+    505 => (object) array('post_id' => 1368, 'meta_key' => '_PRODUCT_IMAGE_GALLERY'),
+    506 => (object) array('post_id' => 1368, 'meta_key' => '_thumbnail_id '),
+    507 => (object) array('post_id' => 1368, 'meta_key' => '_thumbnaíl_id'),
+);
+reset_lock();
+check(frpd_mg_update_post_metadata_by_mid(null, 501, 201) === false,
+    'metadata-by-ID cannot change a guarded product thumbnail before the exact claim');
+check(frpd_mg_delete_post_metadata_by_mid(null, 502) === false,
+    'metadata-by-ID cannot delete guarded gallery metadata');
+check(frpd_mg_update_post_metadata_by_mid(null, 503, 'changed.pdf') === false,
+    'metadata-by-ID cannot alter attachment metadata while the guard is active');
+check(frpd_mg_delete_post_metadata_by_mid(null, 503) === false,
+    'metadata-by-ID cannot delete attachment metadata while the guard is active');
+check(frpd_mg_update_post_metadata_by_mid(null, 504, 'unchanged-scope') === null,
+    'unrelated product metadata remains outside the gallery guard');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_THUMBNAIL_ID', 999) === false,
+    'case-insensitive thumbnail aliases cannot bypass ordinary metadata protection');
+check(frpd_mg_delete_product_gallery_metadata(null, 1368, '_PRODUCT_IMAGE_GALLERY') === false,
+    'case-insensitive gallery aliases cannot bypass ordinary metadata deletion protection');
+check(frpd_mg_update_post_metadata_by_mid(null, 504, '999', '_THUMBNAIL_ID') === false,
+    'metadata-by-ID cannot substitute an unrelated key for a case-insensitive protected alias');
+check(frpd_mg_delete_post_metadata_by_mid(null, 505) === false,
+    'metadata-by-ID deletion blocks a case-insensitive protected key already in the database');
+check(frpd_mg_gallery_meta_key_identity('_thumbnail_id ') === '_thumbnail_id',
+    'live MySQL PAD SPACE collation classifies a trailing-space thumbnail alias');
+check(frpd_mg_gallery_meta_key_identity('_thumbnaíl_id') === '_thumbnail_id',
+    'live MySQL accent-insensitive collation classifies an accented thumbnail alias');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_thumbnail_id ', 999) === false,
+    'ordinary metadata cannot bypass protection through a trailing-space alias');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_thumbnaíl_id', 999) === false,
+    'ordinary metadata cannot bypass protection through an accent-insensitive alias');
+check(frpd_mg_delete_product_gallery_metadata(null, 1368, '_product_image_gallery ') === false,
+    'ordinary deletion cannot bypass protection through a PAD SPACE alias');
+check(frpd_mg_update_post_metadata_by_mid(null, 504, '999', '_thumbnail_id ') === false,
+    'metadata-by-ID substitution cannot use a trailing-space protected alias');
+check(frpd_mg_update_post_metadata_by_mid(null, 504, '999', '_thumbnaíl_id') === false,
+    'metadata-by-ID substitution cannot use an accent-insensitive protected alias');
+check(frpd_mg_delete_post_metadata_by_mid(null, 506) === false
+    && frpd_mg_delete_post_metadata_by_mid(null, 507) === false,
+    'metadata-by-ID deletion blocks stored PAD SPACE and accented aliases');
+$GLOBALS['wpdb']->fail_meta_collation = true;
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, 'unrelated_key', 'x') === false,
+    'collation lookup failure blocks target-product metadata rather than guessing');
+$GLOBALS['wpdb']->fail_meta_collation = false;
+reset_lock();
+$query_mutation = frpd_mg_rest_pre_insert_product_object(
+    $product, new FakeRestRequest('PUT', $target_payload, $etag, array('regular_price' => '0.01')), false
+);
+check(is_wp_error($query_mutation), 'images-only claim refuses every write query parameter');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'query parameters cannot claim gallery mutation');
+reset_lock();
+$body_mutation = frpd_mg_rest_pre_insert_product_object(
+    $product, new FakeRestRequest(
+        'PUT', $target_payload, $etag, array(), array('regular_price' => '0.01')
+    ), false
+);
+check(is_wp_error($body_mutation), 'images-only claim refuses form/body parameters beside JSON');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'body parameters cannot claim gallery mutation');
+reset_lock();
+$file_mutation = frpd_mg_rest_pre_insert_product_object(
+    $product, new FakeRestRequest(
+        'PUT', $target_payload, $etag, array(), array(), array('unexpected' => array('name' => 'x'))
+    ), false
+);
+check(is_wp_error($file_mutation), 'images-only claim refuses file parameters');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'file parameters cannot claim gallery mutation');
+reset_lock();
+$wrong_precondition = frpd_mg_rest_pre_insert_product_object(
+   $product, new FakeRestRequest('PUT', $target_payload, '"' . str_repeat('0', 64) . '"'), false
+);
+check(is_wp_error($wrong_precondition), 'stale gallery If-Match is refused before a claim');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'stale precondition cannot claim gallery mutation');
+reset_lock();
+$wrong_payload = array('images' => $target_payload['images']);
+$wrong_payload['images'][3] = array('id' => 999);
+check(is_wp_error(frpd_mg_rest_pre_insert_product_object(
+   $product, new FakeRestRequest('PUT', $wrong_payload, $etag), false
+)), 'non-fixed gallery ID sequence is refused');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'wrong gallery payload cannot claim mutation');
+reset_lock();
+$claimed = frpd_mg_rest_pre_insert_product_object(
+   $product, new FakeRestRequest('PUT', $target_payload, $etag), false
+);
+check($claimed === $product, 'exact conditional images-only gallery request is claimed');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'gallery', 'gallery claim transitions active state atomically');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_thumbnail_id', 201) === null,
+   'claimed request may write the exact primary attachment');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_product_image_gallery', '202,203,204') === null,
+    'claimed request may write the exact gallery tail');
+check(frpd_mg_update_post_metadata_by_mid(null, 501, 201) === null,
+    'claimed request may use the exact thumbnail metadata-by-ID value');
+check(frpd_mg_update_post_metadata_by_mid(null, 502, '202,203,204') === null,
+    'claimed request may use the exact gallery metadata-by-ID value');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_product_image_gallery', '202,203,999') === false,
+   'claimed request cannot substitute one gallery attachment');
+check(frpd_mg_product_gallery_metadata_filter(null, 1368, '_PRODUCT_IMAGE_GALLERY', '202,203,999') === false,
+   'claimed request cannot substitute through a case-insensitive gallery alias');
+check(frpd_mg_delete_product_gallery_metadata(null, 1368, '_thumbnail_id') === false,
+   'guarded product gallery metadata cannot be deleted');
+
 $GLOBALS['thumbnail_ids'][1368] = 201;
 $GLOBALS['post_meta'][1368]['_product_image_gallery'] = '202,203,999';
 reset_lock();
@@ -402,7 +656,7 @@ reset_lock();
 frpd_mg_hold_request_lock();
 $duplicate_meta_completion = frpd_mg_complete_state(frpd_mg_active_state());
 check(is_wp_error($duplicate_meta_completion), 'completion refuses a conflicting duplicate thumbnail metadata row');
-check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'ambiguous product metadata cannot complete the guard');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'gallery', 'ambiguous product metadata cannot complete the guard');
 $GLOBALS['product_meta_counts'][1368] = array('_thumbnail_id' => 1, '_product_image_gallery' => 1);
 reset_lock();
 frpd_mg_hold_request_lock();
@@ -414,7 +668,7 @@ $db_before_completion = $GLOBALS['wpdb']->state;
 $GLOBALS['post_meta'][1368]['_product_image_gallery'] = '202,203,999';
 $stale_product_completion = frpd_mg_complete_state($active_before_completion);
 check(is_wp_error($stale_product_completion), 'atomic completion refuses product identity changed after cached proof');
-check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active', 'stale product proof cannot transition guard terminal');
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'gallery', 'stale product proof cannot transition guard terminal');
 $GLOBALS['post_meta'][1368]['_product_image_gallery'] = '202,203,204';
 $GLOBALS['wpdb']->state['expires_epoch'] = time() - 1;
 $expired_completion = frpd_mg_complete_state($active_before_completion);

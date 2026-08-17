@@ -221,6 +221,7 @@ def api_request(
     payload: dict[str, Any] | None = None,
     vault: dict[str, Any] | None = None,
     timeout: int = 60,
+    if_match: str | None = None,
 ) -> tuple[Any, dict[str, str]]:
     vault = vault or load_vault()
     verb = str(method or "").upper()
@@ -228,6 +229,11 @@ def api_request(
         raise WooError("WooCommerce transport refuses methods other than GET, POST, and PUT.")
     if verb != "GET" and params:
         raise WooError("WooCommerce writes refuse query parameters.")
+    if if_match is not None:
+        if verb != "PUT" or not re.fullmatch(r'"[0-9a-f]{64}"', if_match):
+            raise WooError(
+                "WooCommerce conditional writes require PUT and one quoted lowercase SHA-256."
+            )
     safe_endpoint = _safe_endpoint(endpoint)
     query = urlencode(params or {}, doseq=True)
     url = str(vault["site_url"]) + API_PREFIX + safe_endpoint
@@ -239,6 +245,8 @@ def api_request(
         "Accept": "application/json",
         "User-Agent": "FRPDepot-Dado-WooCommerce/1.0",
     }
+    if if_match is not None:
+        headers["If-Match"] = if_match
     data = None
     if payload is not None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")

@@ -11,15 +11,22 @@ Commands:
     stage-all            One read-only library scan, then five independent plans.
     commit --plan PATH --approval APPROVED
 
-Each commit uploads four exact, hard-coded files through the already authenticated
-WordPress browser, verifies every public copy by SHA-256, then makes one PUT to
-the fixed existing WooCommerce product with only the ordered image IDs. Uploads
-are independent and the gallery PUT is a later independent
-write. The operation is therefore NOT atomic and has NO rollback: verified early
-uploads remain unattached if a later upload fails; if the gallery PUT lands but
-read-back cannot prove it, the plan is permanently indeterminate. No retry,
-delete, media edit, product-content/price/stock/status write, customer/order,
-plugin, setting, user, Drive, Zoho, or email route exists.
+Each commit first acquires the exact active FRP Depot Media Mutation Guard for
+its fixed family, then uploads four exact hard-coded files through the same
+already-authenticated WordPress browser. The tool verifies the server's guarded
+snapshot, verifies every public copy by SHA-256, makes one PUT to the fixed
+existing WooCommerce product containing only the ordered image IDs, and asks
+the guard to prove and complete that exact gallery. The guard blocks every
+other attachment mutation during its 30-minute owner session; this tool never
+reads its nonce or owner cookie.
+
+The guard acquisition, four uploads, gallery PUT, and guard completion are
+independent writes. The operation is therefore NOT atomic and has NO rollback:
+verified early uploads remain unattached if a later upload fails; if any write
+lands but read-back cannot prove it, the plan is permanently indeterminate and
+the guard may remain active until automatic expiry. No retry, delete, media
+edit, product-content/price/stock/status write, customer/order, plugin, setting,
+user, Drive, Zoho, or email route exists.
 """
 from __future__ import annotations
 
@@ -48,13 +55,38 @@ import wordpress_packing_ring_media_tool as media_base  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Fixed Product Family Media Tool"
-TOOL_VERSION = "1.3.8"
-SCHEMA_VERSION = 4
+TOOL_VERSION = "1.4.8"
+SCHEMA_VERSION = 5
 ACTION = "upload_and_assign_fixed_product_family_gallery"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
+MIN_AUTHORIZATION_MARGIN = timedelta(minutes=2)
+MIN_GUARD_COMPLETION_MARGIN = timedelta(minutes=2)
 EXACT_ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
+GUARD_PLUGIN_VERSION = "1.0.1"
+GUARD_PROOF_SCHEMA = 2
+GUARD_ZIP_SHA256 = "656d9cc1f428c409459b38e096ea427763dc69fdb88f8b1d08ec30ec66c1dbbd"
+GUARD_PLUGIN_PHP_SHA256 = "65c3381601c6b61bd4a481e9cf082cfaf41d99df838f66c9667c68b037ba5451"
+GUARD_RUNTIME_MANIFEST_SHA256 = "2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b"
+GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.1.zip"
+GUARD_PLUGIN_PHP_PATH = (
+    THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
+    / "frpdepot-media-mutation-guard.php"
+)
+GUARD_RUNTIME_MANIFEST_PATH = (
+    THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
+    / "approved-media.json"
+)
+GUARD_TTL_SECONDS = 1800
+GUARD_ADMIN_PATH = "/wp-admin/tools.php"
+GUARD_POST_PATH = "/wp-admin/admin-post.php"
+GUARD_PAGE_SLUG = "frpd-media-mutation-guard"
+GUARD_ADMIN_URL = f"{EXACT_ORIGIN}{GUARD_ADMIN_PATH}?page={GUARD_PAGE_SLUG}"
+GUARD_POST_URL = f"{EXACT_ORIGIN}{GUARD_POST_PATH}"
+GUARD_PROOF_SELECTOR = "script#frpd-media-guard-proof[type='application/json']"
+GUARD_STATUS_SELECTOR = "#frpd-mg-status"
+GUARD_VERSION_SELECTOR = "#frpd-mg-version"
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_product_family_media_plans"
 STAGE_REGISTRY_DIR = PLAN_DIR / "stage-registry"
 ATTEMPT_LEDGER_DIR = PLAN_DIR / "attempt-ledger"
@@ -70,6 +102,20 @@ APPROVED_MANIFEST_PATH = (
     / "final_family_review_20260815" / "approved_product_family_media_manifest_20260815.json"
 )
 APPROVED_MANIFEST_SHA256 = "9020dfbbedec473430fa02a4e07578284ec3da33009444a1467c28aa75cc9748"
+GUARD_PRIVATE_EXCEPTION = {
+    "attachment_id": 1832,
+    "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+    "post_name": "hetron-cr-guide-2007_ineos",
+    "post_status": "private",
+    "mime_type": "application/pdf",
+    "post_date_gmt": "2026-03-17 15:20:38",
+    "protector_plugin_file": (
+        "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php"
+    ),
+    "protector_plugin_sha256": (
+        "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+    ),
+}
 
 
 class FamilyMediaError(RuntimeError):
@@ -228,17 +274,29 @@ PERMITTED_PRODUCT_READBACK_DRIFT_FIELDS = frozenset({
 })
 
 RISK_DISCLOSURE = (
-    "NOT ATOMIC; NO ROLLBACK. Four independent WordPress uploads happen first, then one "
-    "independent WooCommerce gallery PUT containing only the four returned media IDs. If "
+    "NOT ATOMIC; NO ROLLBACK. One server-side guarded-commit acquisition happens first, "
+    "then four independent WordPress uploads, then one independent WooCommerce gallery PUT "
+    "containing only the four returned media IDs, then one guard-completion write. If "
     "upload N fails, it may itself have landed and earlier verified uploads remain live but "
-    "unattached; later uploads do "
+    "unattached; the guard reserves each fixed filename durably before WordPress moves the file. "
+    "Later uploads do "
     "not happen, the product gallery is not written, and the plan is permanently no-retry. "
     "If the gallery PUT lands but fresh API, media, public-page, JavaScript-error and "
     "protected-field checks do not all pass, the product may be changed and the plan is "
     "permanently indeterminate. Replaced gallery attachments remain in the Media Library; "
-    "the tool does not delete or edit them. The tool cannot delete, detach, roll back, retry, "
-    "or clean up anything. Every attempted upload and possible landed-media state is recorded "
-    "in a hash-keyed append-only attempt journal."
+    "the tool does not delete or edit them. A failure after guard acquisition can leave the "
+    "fixed or poisoned guard active until its authoritative 30-minute database expiry, blocking other "
+    "attachment mutations during that interval. The tool cannot delete, detach, roll back, "
+    "retry, clear, or clean up anything. Every attempted guard transition, upload and possible "
+    "landed-media state is recorded in a hash-keyed append-only attempt journal. The guard "
+    "serializes the fixed product's gallery metadata for the active family and atomically claims "
+    "the one exact images-only PUT only when its non-secret If-Match SHA-256 still proves the complete "
+    "pre-write gallery ID list. Independent writes to unrelated product fields are not serialized, "
+    "but the images-only PUT cannot overwrite them; fresh protected reads before the PUT, after the "
+    "PUT and after guard completion still fail closed on any such drift. The live guard UI "
+    "exposes exact version, health, family keys and proof schemas but no source-byte or manifest-"
+    "digest endpoint; live-byte identity relies on the previously pinned exact ZIP installation "
+    "provenance plus those live checks."
 )
 
 
@@ -268,6 +326,249 @@ def append_receipt(action: str, evidence: str) -> None:
 def require_approval(value: Any) -> None:
     if not isinstance(value, str) or not secrets.compare_digest(value, APPROVAL_WORD):
         raise FamilyMediaError("REFUSED: approval must be exact unpadded uppercase APPROVED.")
+
+
+def validate_guard_manifest_contract() -> dict[str, Any]:
+    try:
+        zip_raw = GUARD_ZIP_PATH.read_bytes()
+        plugin_raw = GUARD_PLUGIN_PHP_PATH.read_bytes()
+        raw = GUARD_RUNTIME_MANIFEST_PATH.read_bytes()
+        parsed = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise FamilyMediaError("REFUSED: fixed guard package artifacts are unreadable.") from exc
+    actual_zip_sha256 = hashlib.sha256(zip_raw).hexdigest()
+    actual_plugin_sha256 = hashlib.sha256(plugin_raw).hexdigest()
+    actual_sha256 = hashlib.sha256(raw).hexdigest()
+    if (not secrets.compare_digest(actual_zip_sha256, GUARD_ZIP_SHA256)
+            or not secrets.compare_digest(actual_plugin_sha256, GUARD_PLUGIN_PHP_SHA256)):
+        raise FamilyMediaError("REFUSED: fixed guard package or PHP source hash changed.")
+    if not secrets.compare_digest(actual_sha256, GUARD_RUNTIME_MANIFEST_SHA256):
+        raise FamilyMediaError("REFUSED: fixed guard runtime manifest hash changed.")
+    if (not isinstance(parsed, dict)
+            or set(parsed) != {"schema", "source_manifest_sha256", "families"}
+            or parsed.get("schema") != 1
+            or parsed.get("source_manifest_sha256") != APPROVED_MANIFEST_SHA256
+            or not isinstance(parsed.get("families"), dict)
+            or set(parsed["families"]) != set(FAMILY_KEYS)
+            or "fnpt" in parsed["families"]):
+        raise FamilyMediaError("REFUSED: fixed guard runtime manifest contract changed.")
+    for key in FAMILY_KEYS:
+        spec = FAMILY_SPECS[key]
+        expected = {
+            "product_id": spec["product_id"],
+            "images": [{"position": row["position"], "filename": row["filename"],
+                        "bytes": row["bytes"], "sha256": row["sha256"]}
+                       for row in spec["images"]],
+        }
+        if parsed["families"].get(key) != expected:
+            raise FamilyMediaError(
+                f"REFUSED: guard runtime manifest disagrees with fixed family {key}."
+            )
+    return {
+        "schema": 1,
+        "zip_sha256": actual_zip_sha256,
+        "plugin_php_sha256": actual_plugin_sha256,
+        "sha256": actual_sha256,
+        "source_manifest_sha256": APPROVED_MANIFEST_SHA256,
+        "families": list(FAMILY_KEYS),
+        "fnpt_present": False,
+    }
+
+
+def guard_contract(key: str) -> dict[str, Any]:
+    spec = family_spec(key)
+    return {
+        "plugin_version": GUARD_PLUGIN_VERSION,
+        "proof_schema": GUARD_PROOF_SCHEMA,
+        "runtime_manifest": validate_guard_manifest_contract(),
+        "live_identity": {
+            "checks": ["exact_version", "exact_health", "exact_family_keys", "closed_proof_schema"],
+            "live_byte_digest_exposed": False,
+            "byte_identity_basis": "pinned_exact_zip_installation_provenance",
+        },
+        "ttl_seconds": GUARD_TTL_SECONDS,
+        "minimum_completion_margin_seconds": int(MIN_GUARD_COMPLETION_MARGIN.total_seconds()),
+        "family": key,
+        "product_id": spec["product_id"],
+        "fixed_private_exception": copy.deepcopy(GUARD_PRIVATE_EXCEPTION),
+        "flow": ["atomic_snapshot", "acquire", "four_fixed_uploads",
+                 "post_acquire_owner_snapshot", "guarded_snapshot",
+                 "images_only_put", "complete", "post_completion_public_verification"],
+    }
+
+
+def assert_guard_admin_url(url: str) -> None:
+    media_base.assert_origin(url)
+    parsed = urlsplit(str(url))
+    if parsed.fragment:
+        raise FamilyMediaError("REFUSED: guard administration URL carries a fragment.")
+    pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
+    if len({key for key, _value in pairs}) != len(pairs):
+        raise FamilyMediaError("REFUSED: guard administration URL repeats a query key.")
+    if parsed.path == GUARD_ADMIN_PATH and pairs == [("page", GUARD_PAGE_SLUG)]:
+        return
+    if parsed.path == GUARD_POST_PATH and not pairs:
+        return
+    raise FamilyMediaError("REFUSED: WordPress guard URL is outside its two exact fixed routes.")
+
+
+def assert_product_family_admin_url(url: str) -> None:
+    if urlsplit(str(url)).path in media_base.ALLOWED_ADMIN_PATHS:
+        media_base.assert_admin_url(url)
+        return
+    assert_guard_admin_url(url)
+
+
+def _guard_timestamp(value: Any, label: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise FamilyMediaError(f"REFUSED: guard {label} timestamp is invalid.")
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise FamilyMediaError(f"REFUSED: guard {label} timestamp is invalid.") from exc
+    if parsed.tzinfo is None:
+        raise FamilyMediaError(f"REFUSED: guard {label} timestamp has no timezone.")
+    return value
+
+
+def _guard_match_rows(value: Any, label: str) -> list[dict[str, int]]:
+    if not isinstance(value, list):
+        raise FamilyMediaError(f"REFUSED: guard {label} evidence is not a list.")
+    rows: list[dict[str, int]] = []
+    for row in value:
+        if (not isinstance(row, dict) or set(row) != {"attachment_id", "fixed_position"}
+                or type(row["attachment_id"]) is not int or row["attachment_id"] <= 0
+                or type(row["fixed_position"]) is not int
+                or row["fixed_position"] not in (1, 2, 3, 4)):
+            raise FamilyMediaError(f"REFUSED: guard {label} evidence has an invalid row.")
+        rows.append({"attachment_id": row["attachment_id"],
+                     "fixed_position": row["fixed_position"]})
+    if len({(row["attachment_id"], row["fixed_position"]) for row in rows}) != len(rows):
+        raise FamilyMediaError(f"REFUSED: guard {label} evidence repeats a row.")
+    return rows
+
+
+def _guard_private_exception_rows(value: Any) -> list[dict[str, Any]]:
+    if not isinstance(value, list) or value != [GUARD_PRIVATE_EXCEPTION]:
+        raise FamilyMediaError(
+            "REFUSED: guard private-attachment exception evidence is not exact."
+        )
+    return copy.deepcopy(value)
+
+
+def validate_guard_snapshot_proof(value: Any, key: str, mode: str,
+                                  guard_active: bool) -> dict[str, Any]:
+    base_keys = {
+        "schema", "plugin_version", "mode", "family", "generated_utc",
+        "attachment_total", "hashed_total", "total_bytes", "snapshot_sha256",
+        "complete", "failures", "private_exceptions", "name_conflicts", "hash_conflicts",
+        "fixed_matches", "guard_active",
+    }
+    if mode in {"guard_acquired", "guarded_snapshot"}:
+        base_keys |= {"guard_expires_utc", "reserved_uploads"}
+    if not isinstance(value, dict) or set(value) != base_keys:
+        raise FamilyMediaError("REFUSED: guard snapshot proof has the wrong closed schema.")
+    if (value["schema"] != GUARD_PROOF_SCHEMA or value["plugin_version"] != GUARD_PLUGIN_VERSION
+            or value["mode"] != mode or value["family"] != key
+            or value["guard_active"] is not guard_active):
+        raise FamilyMediaError("REFUSED: guard snapshot identity or state is wrong.")
+    _guard_timestamp(value["generated_utc"], "generated")
+    for field in ("attachment_total", "hashed_total", "total_bytes"):
+        if type(value[field]) is not int or value[field] < 0:
+            raise FamilyMediaError("REFUSED: guard snapshot counters are invalid.")
+    digest = value["snapshot_sha256"]
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)):
+        raise FamilyMediaError("REFUSED: guard snapshot SHA-256 is invalid.")
+    if type(value["complete"]) is not bool or not isinstance(value["failures"], list):
+        raise FamilyMediaError("REFUSED: guard snapshot completeness evidence is invalid.")
+    for failure in value["failures"]:
+        if (not isinstance(failure, dict) or set(failure) != {"attachment_id", "reason"}
+                or type(failure["attachment_id"]) is not int
+                or not isinstance(failure["reason"], str) or not failure["reason"]):
+            raise FamilyMediaError("REFUSED: guard snapshot failure evidence is invalid.")
+    private_exceptions = _guard_private_exception_rows(value["private_exceptions"])
+    if value["attachment_total"] != value["hashed_total"] + len(private_exceptions):
+        raise FamilyMediaError("REFUSED: guard snapshot counters do not reconcile.")
+    _guard_match_rows(value["name_conflicts"], "name-conflict")
+    _guard_match_rows(value["hash_conflicts"], "hash-conflict")
+    _guard_match_rows(value["fixed_matches"], "fixed-match")
+    if mode in {"guard_acquired", "guarded_snapshot"}:
+        _guard_timestamp(value["guard_expires_utc"], "expiry")
+        if type(value["reserved_uploads"]) is not int or not 0 <= value["reserved_uploads"] <= 4:
+            raise FamilyMediaError("REFUSED: guard reserved-upload count is invalid.")
+    return copy.deepcopy(value)
+
+
+def require_empty_guard_snapshot(proof: Any, key: str, mode: str,
+                                 duplicate: dict[str, Any] | None = None) -> dict[str, Any]:
+    checked = validate_guard_snapshot_proof(
+        proof, key, mode, mode in {"guard_acquired", "guarded_snapshot"}
+    )
+    if (checked["complete"] is not True or checked["failures"]
+            or checked["attachment_total"] != checked["hashed_total"] + 1
+            or checked["name_conflicts"] or checked["hash_conflicts"]
+            or checked["fixed_matches"]):
+        raise FamilyMediaError("REFUSED: server-side guard snapshot did not prove duplicate absence.")
+    if duplicate is not None and checked["attachment_total"] != duplicate.get("library_total"):
+        raise FamilyMediaError("REFUSED: browser and server attachment totals disagree.")
+    if mode == "guard_acquired" and checked["reserved_uploads"] != 0:
+        raise FamilyMediaError("REFUSED: newly acquired guard already reserves an upload.")
+    return checked
+
+
+def require_guarded_upload_snapshot(proof: dict[str, Any], key: str,
+                                    baseline_total: int,
+                                    attachment_ids: list[int]) -> dict[str, Any]:
+    checked = validate_guard_snapshot_proof(proof, key, "guarded_snapshot", True)
+    wanted = [{"attachment_id": attachment_id, "fixed_position": position}
+              for position, attachment_id in enumerate(attachment_ids, 1)]
+    if (checked["complete"] is not True or checked["failures"]
+            or checked["attachment_total"] != baseline_total + 4
+            or checked["hashed_total"] != baseline_total + 3
+            or checked["reserved_uploads"] != 4
+            or sorted(checked["name_conflicts"], key=lambda row: row["fixed_position"]) != wanted
+            or sorted(checked["hash_conflicts"], key=lambda row: row["fixed_position"]) != wanted
+            or sorted(checked["fixed_matches"], key=lambda row: row["fixed_position"]) != wanted):
+        raise FamilyMediaError("Guarded snapshot does not prove the four exact uploaded attachments.")
+    return checked
+
+
+def validate_guard_completion_proof(value: Any, key: str,
+                                    attachment_ids: list[int]) -> dict[str, Any]:
+    expected_keys = {
+        "schema", "plugin_version", "mode", "family", "product_id",
+        "attachment_ids", "attachment_total", "snapshot_sha256",
+    }
+    spec = family_spec(key)
+    if (not isinstance(value, dict) or set(value) != expected_keys
+            or value["schema"] != GUARD_PROOF_SCHEMA or value["plugin_version"] != GUARD_PLUGIN_VERSION
+            or value["mode"] != "guard_completed" or value["family"] != key
+            or value["product_id"] != spec["product_id"]
+            or value["attachment_ids"] != attachment_ids
+            or type(value["attachment_total"]) is not int or value["attachment_total"] < 4):
+        raise FamilyMediaError("REFUSED: guard completion proof is not exact.")
+    digest = value["snapshot_sha256"]
+    if (not isinstance(digest, str) or len(digest) != 64
+            or any(char not in "0123456789abcdef" for char in digest)):
+        raise FamilyMediaError("REFUSED: guard completion SHA-256 is invalid.")
+    return copy.deepcopy(value)
+
+
+def require_authorization_margin(plan: dict[str, Any]) -> None:
+    expires = datetime.fromisoformat(str(plan["expires_utc"]))
+    if expires - utc_now() < MIN_AUTHORIZATION_MARGIN:
+        raise FamilyMediaError(
+            "REFUSED: fewer than two minutes remain before plan expiry; stage a fresh plan."
+        )
+
+
+def require_guard_completion_margin(proof: dict[str, Any]) -> None:
+    expires = datetime.fromisoformat(str(proof["guard_expires_utc"]).replace("Z", "+00:00"))
+    if expires - utc_now() < MIN_GUARD_COMPLETION_MARGIN:
+        raise FamilyMediaError(
+            "REFUSED: fewer than two minutes remain before the active guard expires."
+        )
 
 
 def family_spec(key: str) -> dict[str, Any]:
@@ -484,6 +785,19 @@ def product_evidence(key: str, vault: dict[str, Any] | None = None) -> dict[str,
     return evidence
 
 
+def gallery_precondition(before_gallery: Any) -> str:
+    if (not isinstance(before_gallery, list)
+            or any(not isinstance(row, dict) or set(row) != {"id", "alt"}
+                   or type(row["id"]) is not int or row["id"] <= 0
+                   or not isinstance(row["alt"], str) for row in before_gallery)
+            or len({row["id"] for row in before_gallery}) != len(before_gallery)):
+        raise FamilyMediaError("REFUSED: gallery precondition is not an exact unique ID list.")
+    digest = hashlib.sha256(
+        canonical([row["id"] for row in before_gallery]).encode("ascii")
+    ).hexdigest()
+    return f'"{digest}"'
+
+
 def assign_fixed_gallery(key: str, attachment_ids: list[int], vault: dict[str, Any],
                          expected_product: dict[str, Any],
                          on_put_attempt: Any | None = None) -> dict[str, Any]:
@@ -498,7 +812,8 @@ def assign_fixed_gallery(key: str, attachment_ids: list[int], vault: dict[str, A
         on_put_attempt()
     payload = {"images": [{"id": value} for value in attachment_ids]}
     response, _ = wc.api_request(
-        "PUT", f"/products/{spec['product_id']}", payload=payload, vault=vault
+        "PUT", f"/products/{spec['product_id']}", payload=payload, vault=vault,
+        if_match=gallery_precondition(fresh_product["before_gallery"]),
     )
     if not isinstance(response, dict) or int(response.get("id") or 0) != spec["product_id"]:
         raise FamilyMediaError("Gallery PUT returned a different or missing product ID.")
@@ -513,16 +828,11 @@ class ProductFamilyAdmin(media_base.AdminPage):
         self._allowed_paths = allowed_paths
 
     def _goto(self, url: str) -> None:
-        """Bind every attachment navigation to the exact requested attachment.
-
-        The base allowlist proves only that a redirect stayed on an allowed
-        WordPress admin route. For complete hashing that is insufficient: a
-        redirect from attachment A to valid attachment B would otherwise let B
-        be read and hashed twice while A was sampled out. Check the landed ID
-        immediately after navigation, before `read_attachment` reads identity.
-        """
+        """Bind every navigation to the media or guard closed route and identity."""
         requested_attachment_id = parse_exact_attachment_edit_url(url)
-        super()._goto(url)
+        assert_product_family_admin_url(url)
+        self._page.goto(url, wait_until="domcontentloaded", timeout=media_base.NAV_TIMEOUT_MS)
+        self._assert_landed()
         if requested_attachment_id is not None:
             landed_attachment_id = parse_exact_attachment_edit_url(self.url)
             if landed_attachment_id != requested_attachment_id:
@@ -530,6 +840,139 @@ class ProductFamilyAdmin(media_base.AdminPage):
                     "REFUSED: the attachment details screen redirected to a different "
                     "or ambiguous attachment ID."
                 )
+
+    def _assert_landed(self) -> None:
+        assert_product_family_admin_url(self.url)
+        if self._page.query_selector(media_base.LOGIN_FORM_SELECTOR) is not None:
+            raise FamilyMediaError(
+                "REFUSED: authenticated WordPress browser is showing a sign-in screen."
+            )
+
+    def _guard_status(self, expected: str) -> dict[str, Any]:
+        self._goto(GUARD_ADMIN_URL)
+        version_nodes = self._page.query_selector_all(GUARD_VERSION_SELECTOR)
+        status_nodes = self._page.query_selector_all(GUARD_STATUS_SELECTOR)
+        sections = self._page.query_selector_all("section[data-frpd-family]")
+        families = [str(section.get_attribute("data-frpd-family") or "") for section in sections]
+        if (len(version_nodes) != 1
+                or str(version_nodes[0].inner_text() or "").strip()
+                    != f"Version {GUARD_PLUGIN_VERSION}"
+                or len(status_nodes) != 1
+                or str(status_nodes[0].inner_text() or "").strip() != expected
+                or len(families) != len(FAMILY_KEYS) or set(families) != set(FAMILY_KEYS)):
+            raise FamilyMediaError("REFUSED: live Media Mutation Guard identity or state is not exact.")
+        return {"plugin_version": GUARD_PLUGIN_VERSION, "status": expected,
+                "families": sorted(families)}
+
+    @staticmethod
+    def _validate_guard_form(form: Any, *, action: str, family: str | None) -> Any:
+        if (str(form.get_attribute("method") or "").casefold() != "post"
+                or str(form.get_attribute("action") or "") != GUARD_POST_URL):
+            raise FamilyMediaError("REFUSED: guard form method or destination is not exact.")
+        inputs = form.query_selector_all("input[type='hidden'][name]")
+        names = [str(node.get_attribute("name") or "") for node in inputs]
+        expected_names = {"_wpnonce", "_wp_http_referer", "action"}
+        if family is not None:
+            expected_names.add("family")
+        if len(names) != len(expected_names) or set(names) != expected_names:
+            raise FamilyMediaError("REFUSED: guard form hidden-field surface is not exact.")
+        action_nodes = form.query_selector_all("input[type='hidden'][name='action']")
+        family_nodes = form.query_selector_all("input[type='hidden'][name='family']")
+        if (len(action_nodes) != 1
+                or str(action_nodes[0].get_attribute("value") or "") != action
+                or (family is None and family_nodes)
+                or (family is not None and (len(family_nodes) != 1
+                    or str(family_nodes[0].get_attribute("value") or "") != family))):
+            raise FamilyMediaError("REFUSED: guard form action or family is not exact.")
+        # Nonce and owner-cookie values are deliberately never read.
+        buttons = form.query_selector_all("button[type='submit'],button:not([type])")
+        if len(buttons) != 1:
+            raise FamilyMediaError("REFUSED: guard form does not expose exactly one submit button.")
+        return buttons[0]
+
+    def _family_guard_button(self, key: str, action: str, expected_status: str) -> Any:
+        family_spec(key)
+        self._guard_status(expected_status)
+        sections = self._page.query_selector_all(f'section[data-frpd-family="{key}"]')
+        if len(sections) != 1:
+            raise FamilyMediaError("REFUSED: guard family section is missing or duplicated.")
+        selector = f'form:has(button[data-frpd-action="{action}"][data-frpd-family="{key}"])'
+        forms = sections[0].query_selector_all(selector)
+        if len(forms) != 1:
+            raise FamilyMediaError("REFUSED: exact guard family action is missing or duplicated.")
+        return self._validate_guard_form(
+            forms[0], action=f"frpd_media_guard_{action}", family=key
+        )
+
+    def _global_guard_button(self, selector: str, action: str) -> Any:
+        self._guard_status("Guard active")
+        buttons = self._page.query_selector_all(selector)
+        if len(buttons) != 1:
+            raise FamilyMediaError("REFUSED: exact active-guard action is missing or duplicated.")
+        form = buttons[0].evaluate_handle("button => button.form").as_element()
+        if form is None:
+            raise FamilyMediaError("REFUSED: active-guard action has no exact form.")
+        return self._validate_guard_form(form, action=action, family=None)
+
+    def _read_guard_proof(self) -> dict[str, Any]:
+        assert_guard_admin_url(self.url)
+        if urlsplit(self.url).path != GUARD_POST_PATH:
+            raise FamilyMediaError("REFUSED: guard proof did not land on the exact result route.")
+        scripts = self._page.query_selector_all(GUARD_PROOF_SELECTOR)
+        headings = self._page.query_selector_all("body > h1")
+        if len(scripts) != 1 or len(headings) != 1:
+            raise FamilyMediaError("REFUSED: guard proof page is missing or ambiguous.")
+        try:
+            value = json.loads(str(scripts[0].text_content() or ""))
+        except json.JSONDecodeError as exc:
+            raise FamilyMediaError("REFUSED: guard proof JSON is invalid.") from exc
+        if not isinstance(value, dict):
+            raise FamilyMediaError("REFUSED: guard proof is not one JSON object.")
+        return value
+
+    def _submit_guard_button(self, button: Any,
+                             on_submit_attempt: Any | None = None) -> dict[str, Any]:
+        if on_submit_attempt is not None:
+            on_submit_attempt()
+        button.click(timeout=media_base.ACTION_TIMEOUT_MS)
+        self._page.wait_for_load_state("domcontentloaded", timeout=media_base.UPLOAD_TIMEOUT_MS)
+        self._assert_landed()
+        return self._read_guard_proof()
+
+    def atomic_snapshot(self, key: str) -> dict[str, Any]:
+        button = self._family_guard_button(key, "snapshot", "Guard inactive")
+        return validate_guard_snapshot_proof(
+            self._submit_guard_button(button), key, "atomic_snapshot", False
+        )
+
+    def prepare_guard_acquire(self, key: str) -> Any:
+        return self._family_guard_button(key, "acquire", "Guard inactive")
+
+    def acquire_prepared_guard(self, key: str, button: Any,
+                               on_submit_attempt: Any | None = None) -> dict[str, Any]:
+        return validate_guard_snapshot_proof(
+            self._submit_guard_button(button, on_submit_attempt),
+            key, "guard_acquired", True,
+        )
+
+    def guarded_snapshot(self, key: str) -> dict[str, Any]:
+        button = self._global_guard_button(
+            "#frpd-mg-guarded-snapshot", "frpd_media_guard_guarded_snapshot"
+        )
+        return validate_guard_snapshot_proof(
+            self._submit_guard_button(button), key, "guarded_snapshot", True
+        )
+
+    def complete_guard(self, key: str, attachment_ids: list[int],
+                       on_submit_attempt: Any | None = None) -> dict[str, Any]:
+        button = self._global_guard_button(
+            "#frpd-mg-complete", "frpd_media_guard_complete"
+        )
+        proof = validate_guard_completion_proof(
+            self._submit_guard_button(button, on_submit_attempt), key, attachment_ids
+        )
+        health = self._guard_status("Guard inactive")
+        return {"proof": proof, "post_completion_health": health}
 
     def _row_records(self) -> list[dict[str, Any]]:
         """Preserve a unique attachment ID when the list filename cell is blank.
@@ -810,12 +1253,25 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
 
     walked = walked if walked is not None else admin.enumerate_library()
     rows = walked["rows"]
+    private_library_record = {
+        "attachment_id": GUARD_PRIVATE_EXCEPTION["attachment_id"],
+        "filename": Path(GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+    }
+    private_rows = [
+        {"attachment_id": row.get("id"), "filename": row.get("filename")}
+        for row in rows if isinstance(row, dict)
+        and (row.get("id") == private_library_record["attachment_id"]
+             or row.get("filename") == private_library_record["filename"])
+    ]
+    private_exception_proven = private_rows == [private_library_record]
     target_names = {record["filename"] for spec in target_specs.values() for record in spec["images"]}
     target_stems = {media_base._normalise_stem(name) for name in target_names}
     target_hashes = {record["sha256"]: f"{key}:{record['filename']}"
                      for key, spec in target_specs.items() for record in spec["images"]}
     name_conflicts: list[dict[str, Any]] = []
-    image_rows = list(rows) if walked.get("complete") is True else []
+    image_rows = ([row for row in rows
+                   if row.get("id") != private_library_record["attachment_id"]]
+                  if walked.get("complete") is True and private_exception_proven else [])
     completed = 0
     failures = 0
     total_bytes = 0
@@ -876,7 +1332,11 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
         snapshot_stable = before_projection is not None and before_projection == after_projection
         if snapshot_stable:
             content_stable = True
-            for row in rechecked["rows"]:
+            recheck_image_rows = [
+                row for row in rechecked["rows"]
+                if row.get("id") != private_library_record["attachment_id"]
+            ]
+            for row in recheck_image_rows:
                 try:
                     detail = admin.read_attachment(
                         row["id"], allowed_extensions=media_base.SCANNED_EXTENSIONS
@@ -915,7 +1375,7 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
                         hash_conflicts.append(conflict)
             recheck_hash_complete = bool(
                 recheck_hash_failures == 0
-                and recheck_hashes_completed == len(rechecked["rows"])
+                and recheck_hashes_completed == len(recheck_image_rows)
             )
             if recheck_hash_complete:
                 final_checked = admin.enumerate_library()
@@ -951,12 +1411,15 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
         "final_pages": final_checked.get("pages") if type(final_checked.get("pages")) is int else 0,
         "final_complete": final_checked.get("complete") is True,
         "final_snapshot_stable": final_snapshot_stable,
+        "private_exception": private_library_record if private_exception_proven else None,
+        "private_exception_proven": private_exception_proven,
         "name_conflicts": name_conflicts,
         "hash_conflicts": hash_conflicts,
         "target_families": sorted(target_specs),
     }
     evidence["complete"] = bool(
-        evidence["enumeration_complete"] and evidence["hash_complete"]
+        evidence["enumeration_complete"] and evidence["private_exception_proven"]
+        and evidence["hash_complete"]
         and evidence["recheck_complete"] and evidence["snapshot_stable"]
         and evidence["recheck_hash_complete"] and evidence["content_stable"]
         and evidence["final_complete"] and evidence["final_snapshot_stable"]
@@ -974,6 +1437,11 @@ def require_no_duplicates(evidence: dict[str, Any]) -> None:
             or evidence.get("content_stable") is not True
             or evidence.get("final_complete") is not True
             or evidence.get("final_snapshot_stable") is not True
+            or evidence.get("private_exception_proven") is not True
+            or evidence.get("private_exception") != {
+                "attachment_id": GUARD_PRIVATE_EXCEPTION["attachment_id"],
+                "filename": Path(GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+            }
             or evidence.get("hash_failures") != 0
             or evidence.get("image_hashes_completed") != evidence.get("image_rows")
             or evidence.get("recheck_hash_failures") != 0
@@ -992,7 +1460,7 @@ def validate_duplicate_evidence(evidence: Any, key: str) -> None:
         "recheck_hash_failures", "recheck_hash_bytes_read", "recheck_hash_complete",
         "content_stable", "final_total", "final_enumerated", "final_pages",
         "final_complete", "final_snapshot_stable", "name_conflicts", "hash_conflicts",
-        "target_families", "complete",
+        "private_exception", "private_exception_proven", "target_families", "complete",
     }
     if not isinstance(evidence, dict) or set(evidence) != expected_keys:
         raise FamilyMediaError("REFUSED: duplicate evidence schema is invalid.")
@@ -1024,6 +1492,12 @@ def validate_duplicate_evidence(evidence: Any, key: str) -> None:
         raise FamilyMediaError("REFUSED: duplicate evidence covers the wrong families.")
     if not isinstance(evidence["name_conflicts"], list) or not isinstance(evidence["hash_conflicts"], list):
         raise FamilyMediaError("REFUSED: duplicate conflict evidence is invalid.")
+    if (evidence["private_exception_proven"] is not True
+            or evidence["private_exception"] != {
+                "attachment_id": GUARD_PRIVATE_EXCEPTION["attachment_id"],
+                "filename": Path(GUARD_PRIVATE_EXCEPTION["attached_file"]).name,
+            }):
+        raise FamilyMediaError("REFUSED: duplicate evidence lacks the exact private attachment.")
     require_no_duplicates(evidence)
 
 
@@ -1059,27 +1533,58 @@ def journal_path(plan_sha256: str, event: str) -> Path:
 def write_json(path: Path, value: dict[str, Any], *, exclusive: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = (json.dumps(value, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
     if exclusive:
-        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+        pending = path.with_name(f".{path.name}.{secrets.token_hex(12)}.pending")
+        descriptor = None
         try:
-            descriptor = os.open(str(path), flags, 0o600)
-        except FileExistsError as exc:
-            raise FamilyMediaError("REFUSED: immutable evidence already exists; no replay or overwrite.") from exc
-        try:
+            descriptor = os.open(str(pending), flags, 0o600)
             with os.fdopen(descriptor, "wb") as handle:
-                handle.write(payload)
+                descriptor = None
+                written = handle.write(payload)
+                if written != len(payload):
+                    raise OSError("immutable evidence write was short")
                 handle.flush()
                 os.fsync(handle.fileno())
-        except Exception:
+        except BaseException:
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            try:
+                pending.unlink(missing_ok=True)
+            except OSError:
+                pass
             raise
+        try:
+            os.link(str(pending), str(path))
+        except FileExistsError as exc:
+            try:
+                pending.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise FamilyMediaError(
+                "REFUSED: immutable evidence already exists; no replay or overwrite."
+            ) from exc
+        except BaseException:
+            try:
+                pending.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        try:
+            pending.unlink(missing_ok=True)
+        except OSError:
+            pass
         return
     temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
-    descriptor = os.open(
-        str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0), 0o600
-    )
+    descriptor = os.open(str(temporary), flags, 0o600)
     try:
         with os.fdopen(descriptor, "wb") as handle:
-            handle.write(payload)
+            written = handle.write(payload)
+            if written != len(payload):
+                raise OSError("JSON evidence write was short")
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(str(temporary), str(path))
@@ -1108,6 +1613,7 @@ def operation_sha256(key: str, local: list[dict[str, Any]],
         "product_identity": product["identity"],
         "protected_fingerprint": product["protected_fingerprint"],
         "before_gallery": product["before_gallery"],
+        "guard_contract": guard_contract(key),
     }
     return digest_for(semantic)
 
@@ -1195,11 +1701,15 @@ def _verify_stage_registry(path: Path, plan: dict[str, Any], raw: bytes,
 
 
 def stage_one(key: str, local: list[dict[str, Any]], product: dict[str, Any],
-              duplicate: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+              duplicate: dict[str, Any],
+              guard_stage_snapshot: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
     created = utc_now()
     spec = family_spec(key)
     approval_manifest = validate_approved_manifest()
     validate_duplicate_evidence(duplicate, key)
+    guard_stage_snapshot = require_empty_guard_snapshot(
+        guard_stage_snapshot, key, "atomic_snapshot", duplicate
+    )
     operation = operation_sha256(key, local, product, approval_manifest)
     core = {
         "schema_version": SCHEMA_VERSION,
@@ -1220,12 +1730,16 @@ def stage_one(key: str, local: list[dict[str, Any]], product: dict[str, Any],
         "files": local,
         "product_before": product,
         "duplicate_check": duplicate,
+        "guard_contract": guard_contract(key),
+        "guard_stage_snapshot": guard_stage_snapshot,
         "gallery_payload_template": [{"position": row["position"], "sha256": row["sha256"],
                                       "filename": row["filename"]} for row in local],
         "risk": RISK_DISCLOSURE,
         "writes_if_committed": [
+            "one fixed server-side guarded-commit acquisition",
             "four independent authenticated WordPress media uploads",
             f"one PUT /products/{spec['product_id']} containing only four image IDs",
+            "one fixed guard-completion state transition after complete verification",
         ],
         "forbidden": [
             "delete", "rollback", "retry", "media edit", "alt text", "product content",
@@ -1274,6 +1788,7 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
         "schema_version", "tool", "tool_version", "origin", "action", "family",
         "family_label", "product_id", "method", "endpoint", "created_utc", "expires_utc",
         "nonce", "operation_sha256", "approval_manifest", "files", "product_before", "duplicate_check",
+        "guard_contract", "guard_stage_snapshot",
         "gallery_payload_template", "risk", "writes_if_committed", "forbidden", "sha256",
     }
     if set(plan) != expected_keys:
@@ -1315,8 +1830,10 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
     expected_template = [{"position": row["position"], "sha256": row["sha256"],
                           "filename": row["filename"]} for row in expected_local]
     expected_writes = [
+        "one fixed server-side guarded-commit acquisition",
         "four independent authenticated WordPress media uploads",
         f"one PUT /products/{spec['product_id']} containing only four image IDs",
+        "one fixed guard-completion state transition after complete verification",
     ]
     expected_forbidden = [
         "delete", "rollback", "retry", "media edit", "alt text", "product content",
@@ -1353,6 +1870,11 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
         raise FamilyMediaError("REFUSED: staged current gallery evidence is invalid.")
     duplicate = plan.get("duplicate_check")
     validate_duplicate_evidence(duplicate, key)
+    if plan.get("guard_contract") != guard_contract(key):
+        raise FamilyMediaError("REFUSED: plan does not carry the exact fixed guard contract.")
+    require_empty_guard_snapshot(
+        plan.get("guard_stage_snapshot"), key, "atomic_snapshot", duplicate
+    )
     wanted_operation = operation_sha256(key, expected_local, product, plan["approval_manifest"])
     if (not isinstance(plan.get("operation_sha256"), str)
             or not secrets.compare_digest(plan["operation_sha256"], wanted_operation)):
@@ -1372,8 +1894,10 @@ def command_stage(args: argparse.Namespace) -> None:
         allowed = frozenset(Path(row["path"]).resolve() for row in local)
         with admin_session(allowed) as admin:
             duplicate = duplicate_scan(admin, {key: family_spec(key)})
-        require_no_duplicates(duplicate)
-    path, plan = stage_one(key, local, product, duplicate)
+            require_no_duplicates(duplicate)
+            guard_snapshot = admin.atomic_snapshot(key)
+            require_empty_guard_snapshot(guard_snapshot, key, "atomic_snapshot", duplicate)
+    path, plan = stage_one(key, local, product, duplicate, guard_snapshot)
     emit({"status": "STAGED_NOT_COMMITTED", "website_writes": 0,
           "plan": str(path), "plan_sha256": plan["sha256"],
           "operation_sha256": plan["operation_sha256"],
@@ -1391,10 +1915,15 @@ def command_stage_all(_: argparse.Namespace) -> None:
         products = {key: product_evidence(key, vault) for key in FAMILY_KEYS}
         with admin_session(ALL_FIXED_PATHS) as admin:
             duplicate = duplicate_scan(admin, FAMILY_SPECS)
-        require_no_duplicates(duplicate)
+            require_no_duplicates(duplicate)
+            guard_snapshots = {key: admin.atomic_snapshot(key) for key in FAMILY_KEYS}
+            for key, proof in guard_snapshots.items():
+                require_empty_guard_snapshot(proof, key, "atomic_snapshot", duplicate)
     staged = []
     for key in FAMILY_KEYS:
-        path, plan = stage_one(key, local_by_key[key], products[key], duplicate)
+        path, plan = stage_one(
+            key, local_by_key[key], products[key], duplicate, guard_snapshots[key]
+        )
         staged.append({"family": key, "product_id": plan["product_id"],
                        "product_name": products[key]["identity"]["name"], "plan": str(path),
                        "plan_sha256": plan["sha256"],
@@ -1436,6 +1965,11 @@ def _record_indeterminate(plan_path: Path, plan: dict[str, Any], stage: str,
                           gallery_payload: list[dict[str, Any]] | None,
                           product_may_have_changed: bool,
                           media_may_have_changed: bool,
+                          guard_may_be_active: bool,
+                          guard_acquisition: dict[str, Any] | None,
+                          guard_owner_snapshot: dict[str, Any] | None,
+                          guarded_snapshot: dict[str, Any] | None,
+                          guard_completion: dict[str, Any] | None,
                           current_upload: dict[str, Any] | None,
                           current_upload_may_have_landed: bool,
                           observed_attachment_id: int | None,
@@ -1449,6 +1983,12 @@ def _record_indeterminate(plan_path: Path, plan: dict[str, Any], stage: str,
         "current_upload_may_have_landed": current_upload_may_have_landed,
         "observed_attachment_id": observed_attachment_id,
         "media_may_have_changed": media_may_have_changed,
+        "guard_may_be_active": guard_may_be_active,
+        "guard_acquisition": copy.deepcopy(guard_acquisition),
+        "guard_owner_snapshot": copy.deepcopy(guard_owner_snapshot),
+        "guarded_snapshot": copy.deepcopy(guarded_snapshot),
+        "guard_completion": copy.deepcopy(guard_completion),
+        "guard_auto_expiry_seconds": GUARD_TTL_SECONDS,
         "gallery_payload": copy.deepcopy(gallery_payload),
         "product_may_have_changed": product_may_have_changed,
         "no_retry": True, "rollback_performed": False, "delete_performed": False,
@@ -1493,10 +2033,15 @@ def command_commit(args: argparse.Namespace) -> None:
     uploaded: list[dict[str, Any]] = []
     gallery_payload: list[dict[str, Any]] | None = None
     public_verification: dict[str, Any] | None = None
+    guard_acquisition: dict[str, Any] | None = None
+    guard_owner_snapshot: dict[str, Any] | None = None
+    guarded_snapshot: dict[str, Any] | None = None
+    guard_completion: dict[str, Any] | None = None
     stage = "pre_attempt"
     attempt_started = False
     product_may_have_changed = False
     media_may_have_changed = False
+    guard_may_be_active = False
     current_upload: dict[str, Any] | None = None
     current_upload_may_have_landed = False
     observed_attachment_id: int | None = None
@@ -1510,8 +2055,14 @@ def command_commit(args: argparse.Namespace) -> None:
                 walked = admin.enumerate_library()
                 duplicate = duplicate_scan(admin, {key: spec}, walked=walked)
                 require_no_duplicates(duplicate)
+                server_snapshot = admin.atomic_snapshot(key)
+                require_empty_guard_snapshot(
+                    server_snapshot, key, "atomic_snapshot", duplicate
+                )
+                prepared_guard = admin.prepare_guard_acquire(key)
                 known_ids = {int(row["id"]) for row in walked["rows"]}
                 require_unattempted(operation_id)
+                require_authorization_margin(plan)
                 stage = "attempt_marker"
                 attempt_started = True
                 write_json(lock_path(operation_id), {
@@ -1520,6 +2071,41 @@ def command_commit(args: argparse.Namespace) -> None:
                     "plan_path": str(plan_path), "started_utc": utc_now().isoformat(),
                     "result_path_reserved": str(result_path(operation_id)), "no_retry": True,
                 }, exclusive=True)
+
+                stage = "guard_acquisition"
+                def mark_guard_acquire_attempt() -> None:
+                    nonlocal guard_may_be_active
+                    guard_may_be_active = True
+
+                guard_acquisition = admin.acquire_prepared_guard(
+                    key, prepared_guard, mark_guard_acquire_attempt
+                )
+                guard_acquisition = require_empty_guard_snapshot(
+                    guard_acquisition, key, "guard_acquired", duplicate
+                )
+                require_guard_completion_margin(guard_acquisition)
+                record_event(operation_id, plan_sha256, "050_guard_acquired", {
+                    "stage": stage, "guard_acquisition": copy.deepcopy(guard_acquisition),
+                    "guard_may_be_active": True,
+                })
+
+                stage = "guard_owner_snapshot"
+                guard_owner_snapshot = require_empty_guard_snapshot(
+                    admin.guarded_snapshot(key), key, "guarded_snapshot", duplicate
+                )
+                if (guard_owner_snapshot["snapshot_sha256"]
+                        != guard_acquisition["snapshot_sha256"]
+                        or guard_owner_snapshot["guard_expires_utc"]
+                        != guard_acquisition["guard_expires_utc"]):
+                    raise FamilyMediaError(
+                        "Post-acquire guarded owner proof disagrees with the acquisition baseline."
+                    )
+                require_guard_completion_margin(guard_owner_snapshot)
+                record_event(operation_id, plan_sha256, "060_guard_owner_verified", {
+                    "stage": stage,
+                    "guard_owner_snapshot": copy.deepcopy(guard_owner_snapshot),
+                    "guard_may_be_active": True,
+                })
 
                 for expected in spec["images"]:
                     stage = f"upload_{expected['position']}"
@@ -1561,6 +2147,19 @@ def command_commit(args: argparse.Namespace) -> None:
                     current_upload_may_have_landed = False
                     observed_attachment_id = None
 
+                attachment_ids = [row["attachment_id"] for row in uploaded]
+                stage = "guarded_snapshot"
+                guarded_snapshot = require_guarded_upload_snapshot(
+                    admin.guarded_snapshot(key), key,
+                    int(guard_acquisition["attachment_total"]), attachment_ids,
+                )
+                if guarded_snapshot["guard_expires_utc"] != guard_acquisition["guard_expires_utc"]:
+                    raise FamilyMediaError("Final guarded snapshot belongs to a different guard expiry.")
+                record_event(operation_id, plan_sha256, "450_guarded_snapshot_verified", {
+                    "stage": stage, "guarded_snapshot": copy.deepcopy(guarded_snapshot),
+                    "uploaded_verified": copy.deepcopy(uploaded),
+                })
+
                 stage = "pre_gallery_revalidation"
                 for row, expected in zip(uploaded, spec["images"]):
                     detail = admin.read_attachment(
@@ -1582,9 +2181,10 @@ def command_commit(args: argparse.Namespace) -> None:
                     "product_fingerprint": plan["product_before"]["protected_fingerprint"],
                 })
 
-                attachment_ids = [row["attachment_id"] for row in uploaded]
                 gallery_payload = [{"id": value} for value in attachment_ids]
-                stage = "gallery_put_or_final_verification"
+                stage = "guard_completion_margin"
+                require_guard_completion_margin(guarded_snapshot)
+                stage = "gallery_put_or_readback"
                 def mark_put_attempt() -> None:
                     nonlocal product_may_have_changed
                     product_may_have_changed = True
@@ -1597,6 +2197,43 @@ def command_commit(args: argparse.Namespace) -> None:
                     raise FamilyMediaError("Fresh product read-back did not match gallery IDs/order.")
                 if protected_product_projection(readback) != plan["product_before"]["protected_projection"]:
                     raise FamilyMediaError("A protected product field changed during gallery assignment.")
+
+                # Completion immediately follows the verified Woo read-back. No local
+                # evidence write or nonessential public navigation is allowed between them.
+                stage = "guard_completion"
+                def mark_guard_complete_attempt() -> None:
+                    nonlocal guard_may_be_active
+                    guard_may_be_active = True
+
+                guard_completion = admin.complete_guard(
+                    key, attachment_ids, mark_guard_complete_attempt
+                )
+                if (guard_completion["proof"]["attachment_total"]
+                        != guarded_snapshot["attachment_total"]
+                        or guard_completion["proof"]["snapshot_sha256"]
+                        != guarded_snapshot["snapshot_sha256"]):
+                    raise FamilyMediaError(
+                        "Guard completion proof disagrees with the final guarded snapshot."
+                    )
+                guard_may_be_active = False
+                record_event(operation_id, plan_sha256, "850_guard_completed_verified", {
+                    "stage": stage, "guard_completion": copy.deepcopy(guard_completion),
+                    "guard_may_be_active": False,
+                })
+
+                stage = "post_completion_final_verification"
+                post_completion_product, _ = wc.api_get(
+                    f"/products/{spec['product_id']}", vault=vault
+                )
+                if gallery_ids(post_completion_product) != attachment_ids:
+                    raise FamilyMediaError(
+                        "Post-completion product read-back did not preserve gallery IDs/order."
+                    )
+                if (protected_product_projection(post_completion_product)
+                        != plan["product_before"]["protected_projection"]):
+                    raise FamilyMediaError(
+                        "A protected product field changed after guard completion."
+                    )
                 for row, expected in zip(uploaded, spec["images"]):
                     detail = admin.read_attachment(
                         row["attachment_id"], expected_basename=expected["filename"]
@@ -1619,6 +2256,12 @@ def command_commit(args: argparse.Namespace) -> None:
             "family": key, "product_id": spec["product_id"],
             "uploaded_verified": uploaded, "gallery": gallery_payload,
             "public_verification": public_verification,
+            "guard_acquisition": guard_acquisition,
+            "guard_owner_snapshot": guard_owner_snapshot,
+            "guarded_snapshot": guarded_snapshot,
+            "guard_completion": guard_completion,
+            "guard_active_after_verification": False,
+            "post_completion_product_verified": True,
             "protected_product_fields_unchanged": True, "updated_utc": utc_now().isoformat(),
             "replay_locked": True, "no_retry": True, "rollback_performed": False,
             "delete_performed": False, "emails": 0,
@@ -1633,6 +2276,8 @@ def command_commit(args: argparse.Namespace) -> None:
         detail = _record_indeterminate(
             plan_path, plan, stage, uploaded, gallery_payload,
             product_may_have_changed, media_may_have_changed,
+            guard_may_be_active, guard_acquisition, guard_owner_snapshot,
+            guarded_snapshot, guard_completion,
             current_upload, current_upload_may_have_landed,
             observed_attachment_id, exc,
         )
@@ -1641,6 +2286,7 @@ def command_commit(args: argparse.Namespace) -> None:
         raise FamilyMediaIndeterminate(
             f"{stage} failed after the permanent attempt lock. Media may have changed: "
             f"{media_may_have_changed}; product may have changed: {product_may_have_changed}. "
+            f"Guard may remain active until its 30-minute expiry: {guard_may_be_active}. "
             f"No retry, delete, cleanup, or rollback.{suffix}"
         ) from exc
 

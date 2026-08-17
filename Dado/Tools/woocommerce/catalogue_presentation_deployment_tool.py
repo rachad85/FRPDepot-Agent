@@ -38,8 +38,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Automatic Catalogue Presentation Deployment Tool"
-TOOL_VERSION = "1.0.6"
-SCHEMA_VERSION = 3
+TOOL_VERSION = "1.1.1"
+SCHEMA_VERSION = 5
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "catalogue_presentation_plugin_plans"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
@@ -56,8 +56,8 @@ PLUGIN_SLUG = "frpdepot-automatic-catalogue-presentation"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php"
 ARTIFACT_PATH = (ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
                  / "frpdepot-automatic-catalogue-presentation.zip")
-ARTIFACT_VERSION = "1.0.4"
-PREDECESSOR_VERSION = "1.0.3"
+ARTIFACT_VERSION = "1.1.1"
+PREDECESSOR_VERSION = "1.1.0"
 DEACTIVATABLE_VERSIONS = frozenset({PREDECESSOR_VERSION, ARTIFACT_VERSION})
 # Superseded artifact and plan identities are refused explicitly. This includes
 # every earlier artifact; none can be restaged under the public-warning fix.
@@ -65,6 +65,11 @@ SUPERSEDED_ARTIFACT_SHA256 = frozenset({
     "b1e9ed3959ff38a003a44bd876ec0a0c29386fa54d5cd3cc5a879de99c098542",
     "9047bbb55637b46a30e2a3109affa24304d1e21d3c46479159214fb25dfb3f6c",
     "472d8fa0bd647b255093301386c2ce94779b8005daa76eadcf18169f372f468c",
+    "efdfc817b3b37c93f8597e7dafb31f9da46e48163b0729a140076d132901e462",
+    # v1.1.0 rendered every product projection and PDF exactly, but the live
+    # Divi archive template omitted the Woo archive-description action. Its
+    # five category panels therefore stayed absent and activation failed closed.
+    "b19c54cad7439f25b00d92834f551169f1c111ee7da8a08ad4d64d2dcf5c5d4b",
 })
 SUPERSEDED_PLAN_SHA256 = frozenset({
     "1984a36095329ef5b20cd1a2f7c76fa3bf2120f21a1f124b564718bc406e6e8f",
@@ -79,20 +84,40 @@ SUPERSEDED_PLAN_SHA256 = frozenset({
     # The first v1.0.4 replacement attempt reached the overwrite path but fresh
     # readback still showed the predecessor. Its attempt is permanently closed.
     "3a1cc8096e6b13c1cf59d5319c64d7c5c21e57a4fa0cc9d784442da9ec8aa62f",
+    # v1.1.0 deactivation, replacement and failed-closed activation plans are
+    # preserved as history and can never be interpreted by the v1.1.1 tool.
+    "53006df1284dad627f78e0b2879ddf4358acd6bb8525b9de537d49c1dac4977a",
+    "7f08e94d923622e6d4064d9b62b7c7df84dc71cfb5e10dad435418281a78f003",
+    "dc784d2e184bb423350860378ca2a4f5c285b5b0d68df91ab66e1cac6ee70239",
 })
-ARTIFACT_SHA256 = "efdfc817b3b37c93f8597e7dafb31f9da46e48163b0729a140076d132901e462"
-ARTIFACT_BYTES = 7038
+ARTIFACT_SHA256 = "1acbb05474b4d173cbdae72bdc5416a1826c7d12393f4cde62460f0979195bf9"
+ARTIFACT_BYTES = 9676386
 POST_WRITE_READ_ROUNDS = 3
 POST_WRITE_READ_DELAY_MS = 1_000
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php",
     f"{PLUGIN_SLUG}/readme.txt",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Manways_and_Covers_2026.pdf",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_90_Degree_Elbows_2026.pdf",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Filament_Wound_Pipe_2026.pdf",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_FNPT_Couplings_2026.pdf",
 )
 ARTIFACT_MEMBER_SHA256 = {
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-        "857c20273f10df98246538d0bff5feb14f61cac93a011476014456e4c7606031",
+        "9d55a1d1e26a71233b83cac0d524bf4e3822c477a18024557a78917a9d523877",
     f"{PLUGIN_SLUG}/readme.txt":
-        "6d803cc878e14992722dbfc4372d0449e216571efe3ea791b51c4e12d2c5a243",
+        "150a6e38326c3263ec761fc03b41691c12c57d0e0985e1ac7cf3e0b2d2573188",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf":
+        "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Manways_and_Covers_2026.pdf":
+        "09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_90_Degree_Elbows_2026.pdf":
+        "ead009c50b7f8cc338b80928084c6ef24141477e5addea7806a4b7da6547fcb2",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Filament_Wound_Pipe_2026.pdf":
+        "f4fbaf8cb72e7b41f22ddb170185595e12d109394c136edde79f902dd2f65fc2",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_FNPT_Couplings_2026.pdf":
+        "19efa8d20a1be17a1451ad24f6b1d45c2f1e53b3fb58cece5aed496acc91db33",
 }
 
 ACTIONS = ("plugin_install_or_replace", "plugin_activate", "plugin_deactivate")
@@ -125,6 +150,42 @@ CATEGORY_URLS = {
     57: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/flanges/",
     44: f"{EXACT_ORIGIN}/product-category/piping-fluid-handling/pipes/",
 }
+FULL_CATALOGUE_URL = f"{EXACT_ORIGIN}/frp-depots-final-hq/"
+SECTION_PDFS = {
+    "stub_flanges": {
+        "filename": "FRP_Depots_Stub_Flanges_2026.pdf", "bytes": 1310780,
+        "sha256": "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6",
+    },
+    "manways_and_covers": {
+        "filename": "FRP_Depots_Manways_and_Covers_2026.pdf", "bytes": 1503479,
+        "sha256": "09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65",
+    },
+    "elbows_90": {
+        "filename": "FRP_Depots_90_Degree_Elbows_2026.pdf", "bytes": 4558184,
+        "sha256": "ead009c50b7f8cc338b80928084c6ef24141477e5addea7806a4b7da6547fcb2",
+    },
+    "filament_wound_pipe": {
+        "filename": "FRP_Depots_Filament_Wound_Pipe_2026.pdf", "bytes": 477528,
+        "sha256": "f4fbaf8cb72e7b41f22ddb170185595e12d109394c136edde79f902dd2f65fc2",
+    },
+    "fnpt_couplings": {
+        "filename": "FRP_Depots_FNPT_Couplings_2026.pdf", "bytes": 2001467,
+        "sha256": "19efa8d20a1be17a1451ad24f6b1d45c2f1e53b3fb58cece5aed496acc91db33",
+    },
+}
+SECTION_PDF_URLS = {
+    key: f"{EXACT_ORIGIN}/wp-content/plugins/{PLUGIN_SLUG}/catalogue-sections/{row['filename']}"
+    for key, row in SECTION_PDFS.items()
+}
+PRODUCT_SECTION_KEYS = {
+    1368: "stub_flanges", 1397: "manways_and_covers", 1411: "manways_and_covers",
+    1423: "elbows_90", 1455: "filament_wound_pipe", 2061: "fnpt_couplings",
+}
+CATEGORY_SECTION_KEYS = {
+    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges",),
+    58: ("filament_wound_pipe", "stub_flanges", "elbows_90", "fnpt_couplings"),
+    60: ("manways_and_covers",),
+}
 PRODUCT_URL = PRODUCT_URLS[1455]
 FNPT_URL = PRODUCT_URLS[2061]
 FNPT_STORE_API_URL = f"{EXACT_ORIGIN}/wp-json/wc/store/v1/products/2061"
@@ -138,6 +199,7 @@ HETRON_DIRECT_PDF_URL = (
 ALLOWED_PUBLIC_PATHS = frozenset({
     "/", SHOP_PATH, *(urlsplit(url).path for url in PRODUCT_URLS.values()),
     *(urlsplit(url).path for url in CATEGORY_URLS.values()),
+    *(urlsplit(url).path for url in SECTION_PDF_URLS.values()),
     "/wp-json/wc/store/v1/products/2061", "/derakane-resin-resistance-search/",
     "/wp-json/frpdepot-derakane/v1/search", "/hetron-cr-guide-2007_ineos/",
     "/wp-content/uploads/2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -184,6 +246,15 @@ VALIDATION_CONTRACT = {
     "derakane_old_url_count": 0,
     "derakane_new_card_url_count": 1,
     "inline_cta_count": 1,
+    "full_catalogue_product_url_count": 0,
+    "section_catalogue_product_url_count": 1,
+    "section_catalogue_card_count": 1,
+    "section_catalogue_category_link_counts": {
+        str(category_id): len(keys) for category_id, keys in CATEGORY_SECTION_KEYS.items()
+    },
+    "section_pdf_sha256": {
+        key: row["sha256"] for key, row in SECTION_PDFS.items()
+    },
     "menus": ["desktop", "mobile", "footer", "footer_mobile"],
     "required_category_ids": sorted(EXPECTED_CATEGORY_IDS),
     "required_product_ids": sorted(EXPECTED_PRODUCT_IDS),
@@ -202,6 +273,9 @@ VALIDATION_CONTRACT = {
 
 ACTIVATION_PREREQUISITE_CONTRACT = {
     "all_six_public_product_pages_have_exact_untransformed_shared_guide_source": True,
+    "all_six_public_product_pages_have_one_exact_full_catalogue_source_card": True,
+    "all_five_bundled_section_pdfs_match_exact_bytes_and_sha256": True,
+    "all_fixed_category_pages_have_no_section_panel_while_plugin_is_inactive": True,
     "fnpt_parent_only_category_58": True,
     "fnpt_parent_option_hetron_922_absent": True,
     "derakane_v2_page_and_rest_work": True,
@@ -610,6 +684,8 @@ class PublicPage:
 
     def _guide_findings(self, product_id: int, *, transformed: bool) -> dict[str, Any]:
         url = PRODUCT_URLS[product_id]
+        section_key = PRODUCT_SECTION_KEYS[product_id]
+        section_url = SECTION_PDF_URLS[section_key]
         self.require_healthy(url)
         html = str(self._page.content() or "")
         counts = {
@@ -623,15 +699,73 @@ class PublicPage:
                 ".et_pb_blurb_0_tb_body h4.et_pb_module_header")),
             "inline_cta_count": len(self._page.query_selector_all(
                 f'.et_pb_text_1_tb_body a[href="{INLINE_CTA_PATH}"]')),
+            "full_catalogue_url_count": html.count(FULL_CATALOGUE_URL),
+            "section_catalogue_url_count": html.count(section_url),
+            "section_catalogue_card_count": len(self._page.query_selector_all(
+                ".et_pb_blurb_2_tb_body h4.et_pb_module_header")),
         }
         expected = ({"hetron_text_count": 0, "hetron_url_count": 0, "hetron_card_count": 0,
                      "derakane_old_url_count": 0, "derakane_new_card_url_count": 1,
-                     "derakane_card_count": 1, "inline_cta_count": 1}
+                     "derakane_card_count": 1, "inline_cta_count": 1,
+                     "full_catalogue_url_count": 0, "section_catalogue_url_count": 1,
+                     "section_catalogue_card_count": 1}
                     if transformed else
                     {"hetron_text_count": 1, "hetron_url_count": 0, "hetron_card_count": 1,
                      "derakane_old_url_count": 1, "derakane_new_card_url_count": 0,
-                     "derakane_card_count": 1, "inline_cta_count": 1})
-        return {"product_id": product_id, "url": url, **counts, "passed": counts == expected}
+                     "derakane_card_count": 1, "inline_cta_count": 1,
+                     "full_catalogue_url_count": 1, "section_catalogue_url_count": 0,
+                     "section_catalogue_card_count": 1})
+        return {"product_id": product_id, "url": url, "section_key": section_key,
+                "section_url": section_url, **counts, "passed": counts == expected}
+
+    def _section_pdf_findings(self) -> dict[str, Any]:
+        findings: dict[str, Any] = {}
+        for key, expected in SECTION_PDFS.items():
+            url = SECTION_PDF_URLS[key]
+            result = self._request_get(url)
+            body = result["body"]
+            content_type = str(result["headers"].get("content-type") or "").casefold()
+            row = {
+                "url": url,
+                "status": result["status"],
+                "content_type": content_type,
+                "bytes": len(body),
+                "sha256": hashlib.sha256(body).hexdigest(),
+                "pdf_signature": body.startswith(b"%PDF-"),
+            }
+            row["passed"] = bool(
+                row["status"] == 200 and "application/pdf" in content_type
+                and row["bytes"] == expected["bytes"]
+                and row["sha256"] == expected["sha256"]
+                and row["pdf_signature"]
+            )
+            findings[key] = row
+        return {"passed": all(row["passed"] for row in findings.values()),
+                "files": findings}
+
+    def _category_catalogue_findings(self, category_id: int,
+                                     *, transformed: bool) -> dict[str, Any]:
+        url = CATEGORY_URLS[category_id]
+        health = self.require_healthy(url)
+        html = str(self._page.content() or "")
+        panels = self._page.query_selector_all(".frpdepot-acp-section-catalogues")
+        links = self._page.query_selector_all(".frpdepot-acp-section-catalogue-link")
+        hrefs = [str(link.get_attribute("href") or "") for link in links]
+        targets = [str(link.get_attribute("target") or "") for link in links]
+        rels = [str(link.get_attribute("rel") or "").split() for link in links]
+        expected_hrefs = [SECTION_PDF_URLS[key] for key in CATEGORY_SECTION_KEYS[category_id]]
+        if transformed:
+            passed = bool(len(panels) == 1 and hrefs == expected_hrefs
+                          and targets == ["_blank"] * len(expected_hrefs)
+                          and all("noopener" in rel for rel in rels)
+                          and html.count(FULL_CATALOGUE_URL) == 0)
+        else:
+            passed = bool(len(panels) == 0 and not hrefs)
+        return {"passed": passed, "category_id": category_id, "url": url,
+                "health": health, "transformed": transformed,
+                "panel_count": len(panels), "hrefs": hrefs,
+                "expected_hrefs": expected_hrefs if transformed else [],
+                "full_catalogue_url_count": html.count(FULL_CATALOGUE_URL)}
 
     def _fnpt_findings(self) -> dict[str, Any]:
         result = self._request_get(FNPT_STORE_API_URL)
@@ -685,11 +819,19 @@ class PublicPage:
     def activation_prerequisite_findings(self) -> dict[str, Any]:
         source_guides = {str(product_id): self._guide_findings(product_id, transformed=False)
                          for product_id in sorted(PRODUCT_URLS)}
+        source_categories = {
+            str(category_id): self._category_catalogue_findings(
+                category_id, transformed=False)
+            for category_id in sorted(CATEGORY_URLS)
+        }
+        section_pdfs = self._section_pdf_findings()
         self.require_healthy(HOME_URL)
         main = self._menu_projection(MAIN_MENU_SELECTOR)
         products_roots = [root for root in main["shop_roots"] if root["path"] == SHOP_PATH]
         findings = {
             "source_guides": source_guides,
+            "source_categories": source_categories,
+            "section_pdfs": section_pdfs,
             "fnpt": self._fnpt_findings(),
             "derakane_v2": self._derakane_v2_findings(),
             "hetron_unavailable": self._hetron_unavailable_findings(),
@@ -697,6 +839,8 @@ class PublicPage:
         }
         findings["passed"] = bool(
             all(item["passed"] for item in source_guides.values())
+            and all(item["passed"] for item in source_categories.values())
+            and section_pdfs["passed"]
             and findings["fnpt"]["passed"] and findings["derakane_v2"]["passed"]
             and findings["hetron_unavailable"]["passed"] and len(products_roots) == 1
         )
@@ -724,23 +868,23 @@ class PublicPage:
         guides = {str(product_id): self._guide_findings(product_id, transformed=True)
                   for product_id in sorted(PRODUCT_URLS)}
         category_pages = {
-            str(category_id): {
-                "url": CATEGORY_URLS[category_id],
-                **self.require_healthy(CATEGORY_URLS[category_id]),
-            }
+            str(category_id): self._category_catalogue_findings(
+                category_id, transformed=True)
             for category_id in sorted(CATEGORY_URLS)
         }
+        section_pdfs = self._section_pdf_findings()
         fnpt = self._fnpt_findings()
         derakane_v2 = self._derakane_v2_findings()
         hetron_unavailable = self._hetron_unavailable_findings()
         passed = bool(all(item["matches_expected"] for item in projections.values())
                       and root["passed"] and all(item["passed"] for item in guides.values())
-                      and all(not item["blank"] and not item["fatal"]
-                              for item in category_pages.values())
+                      and all(item["passed"] for item in category_pages.values())
+                      and section_pdfs["passed"]
                       and fnpt["passed"] and derakane_v2["passed"]
                       and hetron_unavailable["passed"])
         return {"passed": passed, "projections": projections, "shop_root": root,
                 "guides": guides, "category_pages": category_pages,
+                "section_pdfs": section_pdfs,
                 "fnpt": fnpt, "derakane_v2": derakane_v2,
                 "hetron_unavailable": hetron_unavailable}
 

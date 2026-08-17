@@ -24,6 +24,7 @@ class UrlContractTests(unittest.TestCase):
             tool.HETRON_ATTACHMENT_URL,
             tool.HETRON_ATTACHMENT_QUERY_URL,
             tool.HETRON_DIRECT_PDF_URL,
+            *tool.SECTION_PDF_URLS.values(),
         ):
             tool.assert_frp_url(url)
 
@@ -178,6 +179,91 @@ class ProjectionContractTests(unittest.TestCase):
             "nonempty_groups": True,
         }
         self.assertFalse(tool.projection_matches(projection, projection))
+
+
+class SectionCatalogueContractTests(unittest.TestCase):
+    class Response:
+        def __init__(self, body: bytes) -> None:
+            self.status = 200
+            self.headers = {"content-type": "application/pdf"}
+            self._body = body
+
+        def body(self) -> bytes:
+            return self._body
+
+        @staticmethod
+        def json():
+            raise ValueError("not JSON")
+
+    class Request:
+        def __init__(self, *, break_key: str | None = None) -> None:
+            self.break_key = break_key
+
+        def get(self, url: str, **_options):
+            key = next(key for key, value in tool.SECTION_PDF_URLS.items() if value == url)
+            if key == self.break_key:
+                return SectionCatalogueContractTests.Response(b"%PDF-broken")
+            path = (tool.ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
+                    / "frpdepot-automatic-catalogue-presentation" / "catalogue-sections"
+                    / tool.SECTION_PDFS[key]["filename"])
+            return SectionCatalogueContractTests.Response(path.read_bytes())
+
+    class Link:
+        def __init__(self, href: str) -> None:
+            self.href = href
+
+        def get_attribute(self, name: str):
+            return {"href": self.href, "target": "_blank", "rel": "noopener"}.get(name)
+
+    class Page:
+        def __init__(self, *, reverse: bool = False) -> None:
+            self.url = tool.EXACT_ORIGIN + "/"
+            self.reverse = reverse
+
+        def goto(self, url: str, **_kwargs):
+            self.url = url
+            return type("Response", (), {"status": 200})()
+
+        @staticmethod
+        def wait_for_timeout(_milliseconds: int) -> None:
+            return None
+
+        @staticmethod
+        def inner_text(_selector: str) -> str:
+            return "Healthy section catalogue page with enough visible text for release QA."
+
+        @staticmethod
+        def content() -> str:
+            return "Healthy section catalogue page."
+
+        def query_selector_all(self, selector: str):
+            if selector == ".frpdepot-acp-section-catalogues":
+                return [object()]
+            if selector == ".frpdepot-acp-section-catalogue-link":
+                hrefs = [tool.SECTION_PDF_URLS[key] for key in tool.CATEGORY_SECTION_KEYS[58]]
+                if self.reverse:
+                    hrefs.reverse()
+                return [SectionCatalogueContractTests.Link(href) for href in hrefs]
+            return []
+
+    def test_all_five_exact_pdf_bytes_and_hashes_pass(self) -> None:
+        findings = tool.section_pdf_findings(self.Request())
+        self.assertTrue(findings["passed"])
+        self.assertEqual(
+            {key: row["sha256"] for key, row in findings["files"].items()},
+            {key: row["sha256"] for key, row in tool.SECTION_PDFS.items()},
+        )
+
+    def test_one_changed_pdf_fails_the_complete_set(self) -> None:
+        findings = tool.section_pdf_findings(self.Request(break_key="elbows_90"))
+        self.assertFalse(findings["passed"])
+        self.assertFalse(findings["files"]["elbows_90"]["passed"])
+
+    def test_piping_parent_requires_exact_four_link_order(self) -> None:
+        self.assertTrue(tool.category_catalogue_findings(
+            self.Page(), 58, "exact")["passed"])
+        self.assertFalse(tool.category_catalogue_findings(
+            self.Page(reverse=True), 58, "reversed")["passed"])
 
 
 class ContactSheetTests(unittest.TestCase):

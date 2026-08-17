@@ -238,9 +238,9 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(deploy.CDP_ENDPOINT, "http://127.0.0.1:9229")
         self.assertEqual(deploy.PLUGIN_NAME, "FRP Depot Automatic Catalogue Presentation")
         self.assertEqual(deploy.PLUGIN_SLUG, "frpdepot-automatic-catalogue-presentation")
-        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.0.3")
+        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.1.0")
         self.assertEqual(deploy.DEACTIVATABLE_VERSIONS,
-                         frozenset({"1.0.3", deploy.ARTIFACT_VERSION}))
+                         frozenset({"1.1.0", deploy.ARTIFACT_VERSION}))
         self.assertEqual(
             deploy.PLUGIN_FILE,
             "frpdepot-automatic-catalogue-presentation/"
@@ -372,13 +372,14 @@ class TestFixedCapability(unittest.TestCase):
         class PageDouble:
             @staticmethod
             def content():
-                return "Hetron " + deploy.DERAKANE_OLD_URL
+                return "Hetron " + deploy.DERAKANE_OLD_URL + deploy.FULL_CATALOGUE_URL
 
             @staticmethod
             def query_selector_all(selector):
                 expected = {
                     ".et_pb_blurb_1_tb_body h4.et_pb_module_header": 1,
                     ".et_pb_blurb_0_tb_body h4.et_pb_module_header": 1,
+                    ".et_pb_blurb_2_tb_body h4.et_pb_module_header": 1,
                     f'.et_pb_text_1_tb_body a[href="{deploy.INLINE_CTA_PATH}"]': 1,
                 }
                 return [object()] * expected.get(selector, 0)
@@ -392,6 +393,8 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(finding["hetron_url_count"], 0)
         self.assertEqual(finding["hetron_card_count"], 1)
         self.assertEqual(finding["derakane_old_url_count"], 1)
+        self.assertEqual(finding["full_catalogue_url_count"], 1)
+        self.assertEqual(finding["section_catalogue_url_count"], 0)
 
     def test_only_the_six_fixed_commands_exist(self):
         self.assertEqual(deploy.COMMANDS, (
@@ -414,6 +417,7 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(deploy.ALLOWED_PUBLIC_PATHS, frozenset({
             "/", "/products/", *(deploy.urlsplit(url).path for url in deploy.PRODUCT_URLS.values()),
             *(deploy.urlsplit(url).path for url in deploy.CATEGORY_URLS.values()),
+            *(deploy.urlsplit(url).path for url in deploy.SECTION_PDF_URLS.values()),
             "/wp-json/wc/store/v1/products/2061", "/derakane-resin-resistance-search/",
             "/wp-json/frpdepot-derakane/v1/search", "/hetron-cr-guide-2007_ineos/",
             "/wp-content/uploads/2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -477,18 +481,18 @@ class TestArtifact(unittest.TestCase):
         record = deploy.verify_artifact()
         self.assertEqual(Path(record["path"]).resolve(), deploy.ARTIFACT_PATH.resolve())
         self.assertEqual(record["sha256"],
-                         "efdfc817b3b37c93f8597e7dafb31f9da46e48163b0729a140076d132901e462")
+                         "1acbb05474b4d173cbdae72bdc5416a1826c7d12393f4cde62460f0979195bf9")
         self.assertEqual(record["sha256"], deploy.ARTIFACT_SHA256)
-        self.assertEqual(record["bytes"], 7038)
+        self.assertEqual(record["bytes"], 9676386)
         self.assertEqual(record["bytes"], deploy.ARTIFACT_BYTES)
-        self.assertEqual(record["version"], "1.0.4")
+        self.assertEqual(record["version"], "1.1.1")
         self.assertEqual(record["members"], sorted(deploy.ARTIFACT_MEMBERS))
-        self.assertEqual(deploy.ARTIFACT_MEMBER_SHA256, {
-            f"{deploy.PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-                "857c20273f10df98246538d0bff5feb14f61cac93a011476014456e4c7606031",
-            f"{deploy.PLUGIN_SLUG}/readme.txt":
-                "6d803cc878e14992722dbfc4372d0449e216571efe3ea791b51c4e12d2c5a243",
-        })
+        self.assertEqual(len(deploy.ARTIFACT_MEMBER_SHA256), 7)
+        self.assertEqual(
+            {Path(name).name: digest for name, digest in deploy.ARTIFACT_MEMBER_SHA256.items()
+             if name.endswith(".pdf")},
+            {row["filename"]: row["sha256"] for row in deploy.SECTION_PDFS.values()},
+        )
 
     def test_other_path_hash_size_member_or_version_is_refused(self):
         with tempfile.TemporaryDirectory() as folder:
@@ -842,6 +846,14 @@ class MenuLink:
         return self.title
 
 
+class CatalogueLink:
+    def __init__(self, href):
+        self.href = href
+
+    def get_attribute(self, name):
+        return {"href": self.href, "target": "_blank", "rel": "noopener"}.get(name)
+
+
 class MenuRoot:
     def __init__(self, *, duplicate=False):
         categories = sorted(deploy.EXPECTED_CATEGORY_IDS)
@@ -892,9 +904,12 @@ class ContractPage:
 
     def content(self):
         if self.url in deploy.PRODUCT_URLS.values():
+            product_id = next(key for key, value in deploy.PRODUCT_URLS.items()
+                              if value == self.url)
+            section_url = deploy.SECTION_PDF_URLS[deploy.PRODUCT_SECTION_KEYS[product_id]]
             if self.bad_guide:
-                return deploy.HETRON_URL + deploy.DERAKANE_NEW_URL
-            return deploy.DERAKANE_NEW_URL
+                return deploy.HETRON_URL + deploy.DERAKANE_NEW_URL + section_url
+            return deploy.DERAKANE_NEW_URL + section_url
         return "Healthy anonymous FRP Depot storefront document."
 
     def query_selector_all(self, selector):
@@ -908,9 +923,19 @@ class ContractPage:
             counts = {
                 ".et_pb_blurb_1_tb_body h4.et_pb_module_header": 0,
                 ".et_pb_blurb_0_tb_body h4.et_pb_module_header": 1,
+                ".et_pb_blurb_2_tb_body h4.et_pb_module_header": 1,
                 f'.et_pb_text_1_tb_body a[href="{deploy.INLINE_CTA_PATH}"]': 1,
             }
             return [object() for _ in range(counts.get(selector, 0))]
+        if self.url in deploy.CATEGORY_URLS.values():
+            category_id = next(key for key, value in deploy.CATEGORY_URLS.items()
+                               if value == self.url)
+            if selector == ".frpdepot-acp-section-catalogues":
+                return [object()]
+            if selector == ".frpdepot-acp-section-catalogue-link":
+                return [CatalogueLink(deploy.SECTION_PDF_URLS[key])
+                        for key in deploy.CATEGORY_SECTION_KEYS[category_id]]
+            return []
         if self.url == deploy.DERAKANE_PAGE_URL:
             counts = {
                 "section[data-derakane-search]": 1,
@@ -921,12 +946,15 @@ class ContractPage:
 
 
 class ContractResponse:
-    def __init__(self, status, payload=None, headers=None):
+    def __init__(self, status, payload=None, headers=None, body_data=None):
         self.status = status
         self.headers = headers or {}
         self._payload = payload
+        self._body_data = body_data
 
     def body(self):
+        if self._body_data is not None:
+            return self._body_data
         if self._payload is None:
             return b""
         return json.dumps(self._payload).encode("utf-8")
@@ -950,6 +978,13 @@ class ContractRequest:
         if url in {deploy.HETRON_ATTACHMENT_URL, deploy.HETRON_ATTACHMENT_QUERY_URL,
                    deploy.HETRON_DIRECT_PDF_URL}:
             return ContractResponse(404)
+        if url in deploy.SECTION_PDF_URLS.values():
+            key = next(key for key, value in deploy.SECTION_PDF_URLS.items() if value == url)
+            path = (deploy.ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
+                    / deploy.PLUGIN_SLUG / "catalogue-sections"
+                    / deploy.SECTION_PDFS[key]["filename"])
+            return ContractResponse(
+                200, headers={"content-type": "application/pdf"}, body_data=path.read_bytes())
         raise AssertionError(f"unexpected public request {url!r}")
 
 
@@ -1001,8 +1036,13 @@ class TestAnonymousContract(unittest.TestCase):
         self.assertTrue(all(item["passed"] for item in findings["guides"].values()))
         self.assertEqual(set(findings["category_pages"]),
                          {str(category_id) for category_id in deploy.CATEGORY_URLS})
-        self.assertTrue(all(not item["blank"] and not item["fatal"]
+        self.assertTrue(all(item["passed"]
                             for item in findings["category_pages"].values()))
+        self.assertTrue(findings["section_pdfs"]["passed"])
+        self.assertEqual(
+            {key: row["sha256"] for key, row in findings["section_pdfs"]["files"].items()},
+            {key: row["sha256"] for key, row in deploy.SECTION_PDFS.items()},
+        )
         self.assertTrue(findings["fnpt"]["passed"])
         self.assertTrue(findings["derakane_v2"]["passed"])
         self.assertTrue(findings["hetron_unavailable"]["passed"])

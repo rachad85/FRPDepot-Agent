@@ -5,9 +5,10 @@ Closed scope:
 - install exactly the pinned plugin ZIP, inactive, only when absent;
 - activate exactly that installed version;
 - deactivate exactly that installed version as the fixed emergency path.
+- replace the exact active v1.0.0 guard once with the exact v1.0.1 repair;
 
 Every action uses an immutable authenticated 24-hour plan and a later exact
-APPROVED. There is no replace, delete, arbitrary plugin, generic browser,
+APPROVED. There is no arbitrary replace, delete, arbitrary plugin, generic browser,
 setting/content/user/media/product/order/customer/payment/email, retry, rollback,
 or cleanup route.
 """
@@ -37,8 +38,8 @@ if str(ROOT) not in sys.path:
 from Dado.Tools.common.ui_lane_lock import ui_browser_lock
 
 TOOL_NAME = "wordpress_media_guard_deployment_tool"
-TOOL_VERSION = "1.0.0"
-SCHEMA_VERSION = 1
+TOOL_VERSION = "1.1.4"
+SCHEMA_VERSION = 2
 APPROVAL_WORD = "APPROVED"
 ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
@@ -48,10 +49,11 @@ GUARD_URL = f"{ORIGIN}/wp-admin/tools.php?page=frpd-media-mutation-guard"
 PLUGIN_NAME = "FRP Depot Media Mutation Guard"
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"
-PLUGIN_VERSION = "1.0.0"
-ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}.zip"
-ARTIFACT_SHA256 = "539cb97fbb25c5e7517bfed77562497f790f4af8c1c6b6da82754e9d8d07c5ab"
-ARTIFACT_BYTES = 13508
+WITHDRAWN_PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.1"
+ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.1.zip"
+ARTIFACT_SHA256 = "656d9cc1f428c409459b38e096ea427763dc69fdb88f8b1d08ec30ec66c1dbbd"
+ARTIFACT_BYTES = 17184
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/approved-media.json",
     f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php",
@@ -59,10 +61,10 @@ ARTIFACT_MEMBERS = (
 )
 ARTIFACT_MEMBER_SHA256 = {
     f"{PLUGIN_SLUG}/approved-media.json": "2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b",
-    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "d8222383345c5590a84f35c9ee2564ac69bc899f7fabbdafa26791698bb159cc",
-    f"{PLUGIN_SLUG}/readme.txt": "b84066af53580caa8a98e1b3494cfed02bf2840b7e0fe6cf4729acc3899225ac",
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "65c3381601c6b61bd4a481e9cf082cfaf41d99df838f66c9667c68b037ba5451",
+    f"{PLUGIN_SLUG}/readme.txt": "ad9f2bb0aad1286a4c18ba08ff11316ab182467764e3bdfd96d9cc3a05228f3e",
 }
-ACTIONS = frozenset({"install_inactive", "activate", "deactivate"})
+ACTIONS = frozenset({"install_inactive", "replace_active", "activate", "deactivate"})
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_media_guard_deployment_plans"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
 LOCAL_STATE = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "FRPDepot-WordPress" / "media-guard-deployment"
@@ -78,8 +80,12 @@ ACTION_TIMEOUT_MS = 30_000
 POST_WRITE_READ_ROUNDS = 3
 POST_WRITE_READ_DELAY_MS = 1_000
 ROW_SELECTOR = f'tr[data-plugin="{PLUGIN_FILE}"]'
-ACTIVATE_SELECTOR = f"#activate-{PLUGIN_SLUG}"
-DEACTIVATE_SELECTOR = f"#deactivate-{PLUGIN_SLUG}"
+ACTION_ID_SLUG = "frp-depot-media-mutation-guard"
+ACTIVATE_SELECTOR = f"#activate-{ACTION_ID_SLUG}"
+DEACTIVATE_SELECTOR = f"#deactivate-{ACTION_ID_SLUG}"
+UPLOAD_FORM_SELECTOR = "form.wp-upload-form"
+OVERWRITE_SELECTOR = "a.update-from-upload-overwrite"
+OVERWRITE_SUCCESS_MARKER = "Plugin updated successfully."
 VERSION_PATTERN = re.compile(r"\bVersion\s+([0-9]+(?:\.[0-9]+){1,3})\b", re.I)
 PLAN_KEYS = frozenset({
     "schema_version", "tool", "tool_version", "origin", "action", "created_utc",
@@ -208,6 +214,8 @@ def assert_admin_url(url: str, *, mode: str) -> None:
         valid = parsed.path == "/wp-admin/update.php" and pairs == [("action", "upload-plugin")]
     elif mode == "state_result":
         valid = parsed.path == "/wp-admin/plugins.php" and pairs == []
+        if parsed.path == "/wp-admin/plugins.php" and len(pairs) == 3:
+            valid = pairs == [("plugin_status", "all"), ("paged", "1"), ("s", "")]
         if parsed.path == "/wp-admin/plugins.php" and len(pairs) == 4:
             values = dict(pairs)
             flags = [name for name in ("activate", "deactivate") if name in values]
@@ -266,6 +274,8 @@ def expected_after(action: str) -> dict[str, Any]:
         return project_row(True, True, PLUGIN_VERSION, False)
     if action == "deactivate":
         return project_row(True, False, PLUGIN_VERSION, False)
+    if action == "replace_active":
+        return project_row(True, True, PLUGIN_VERSION, False)
     raise DeploymentError("REFUSED: action is not fixed.")
 
 
@@ -321,7 +331,7 @@ class AdminPage:
 
     def prepare_install(self) -> tuple[Any, Any]:
         self.goto_upload()
-        forms = self.page.query_selector_all("form#plugin-upload-form")
+        forms = self.page.query_selector_all(UPLOAD_FORM_SELECTOR)
         if len(forms) != 1:
             raise DeploymentError("REFUSED: exact fixed plugin upload form is unavailable.")
         form = forms[0]
@@ -329,10 +339,56 @@ class AdminPage:
         choosers = form.query_selector_all('input[type="file"][name="pluginzip"]')
         submits = form.query_selector_all("#install-plugin-submit")
         nonces = form.query_selector_all('input[type="hidden"][name="_wpnonce"]')
-        nonce = str(nonces[0].get_attribute("value") or "") if len(nonces) == 1 else ""
-        if len(choosers) != 1 or len(submits) != 1 or not re.fullmatch(r"[A-Za-z0-9_-]{8,32}", nonce):
+        if len(choosers) != 1 or len(submits) != 1 or len(nonces) != 1:
             raise DeploymentError("REFUSED: exact fixed plugin upload controls are unavailable.")
         return choosers[0], submits[0]
+
+    @staticmethod
+    def comparison_pair(table: Any, label: str) -> tuple[str, str]:
+        wanted = re.compile(label, re.IGNORECASE)
+        matches: list[tuple[str, str]] = []
+        for row in table.query_selector_all("tr"):
+            cells = row.query_selector_all("td")
+            if len(cells) == 3 and wanted.fullmatch(str(cells[0].inner_text() or "").strip()):
+                matches.append((str(cells[1].inner_text() or "").strip(),
+                                str(cells[2].inner_text() or "").strip()))
+        if len(matches) != 1:
+            raise IndeterminateError("Exact plugin replacement comparison row is unavailable.")
+        return matches[0]
+
+    @staticmethod
+    def overwrite_control_is_exact(link: Any) -> bool:
+        return bool(link.evaluate("""el => {
+            try {
+                const u = new URL(el.href, window.location.href);
+                const keys = [...u.searchParams.keys()].sort();
+                const wanted = ['_wpnonce','action','overwrite','package'].sort();
+                if (u.origin !== window.location.origin || u.pathname !== '/wp-admin/update.php') return false;
+                if (keys.length !== wanted.length || keys.some((v,i) => v !== wanted[i])) return false;
+                if (u.searchParams.getAll('action').length !== 1 || u.searchParams.get('action') !== 'upload-plugin') return false;
+                if (u.searchParams.getAll('overwrite').length !== 1 || u.searchParams.get('overwrite') !== 'update-plugin') return false;
+                if (u.searchParams.getAll('package').length !== 1 || !u.searchParams.get('package')) return false;
+                if (u.searchParams.getAll('_wpnonce').length !== 1 || !/^[A-Za-z0-9_-]{8,64}$/.test(u.searchParams.get('_wpnonce'))) return false;
+                return !u.username && !u.password && !u.hash;
+            } catch (_) { return false; }
+        }"""))
+
+    def overwrite_result_is_exact(self) -> bool:
+        return bool(self.page.evaluate("""() => {
+            try {
+                const u = new URL(window.location.href);
+                const keys = [...u.searchParams.keys()].sort();
+                const wanted = ['_wpnonce','action','overwrite','package'].sort();
+                return u.origin === window.location.origin && u.pathname === '/wp-admin/update.php'
+                    && keys.length === wanted.length && keys.every((v,i) => v === wanted[i])
+                    && u.searchParams.getAll('action').length === 1 && u.searchParams.get('action') === 'upload-plugin'
+                    && u.searchParams.getAll('overwrite').length === 1 && u.searchParams.get('overwrite') === 'update-plugin'
+                    && u.searchParams.getAll('package').length === 1 && !!u.searchParams.get('package')
+                    && u.searchParams.getAll('_wpnonce').length === 1
+                    && /^[A-Za-z0-9_-]{8,64}$/.test(u.searchParams.get('_wpnonce'))
+                    && !u.username && !u.password && !u.hash;
+            } catch (_) { return false; }
+        }"""))
 
     def execute_install(self, chooser: Any, submit: Any, artifact_raw: bytes) -> dict[str, Any]:
         if len(artifact_raw) != ARTIFACT_BYTES or hashlib.sha256(artifact_raw).hexdigest() != ARTIFACT_SHA256:
@@ -346,6 +402,60 @@ class AdminPage:
         if self.page.query_selector_all("table.update-from-upload-comparison") or self.page.query_selector_all("a.update-from-upload-overwrite"):
             raise IndeterminateError("Fresh install unexpectedly reached a replace route; no overwrite clicked.")
         return self.read_bounded(expected_after("install_inactive"))
+
+    def execute_replace(self, chooser: Any, submit: Any, artifact_raw: bytes,
+                        expected_before: dict[str, Any]) -> dict[str, Any]:
+        if len(artifact_raw) != ARTIFACT_BYTES or hashlib.sha256(artifact_raw).hexdigest() != ARTIFACT_SHA256:
+            raise DeploymentError("REFUSED: validated in-memory plugin artifact changed.")
+        chooser.set_input_files({
+            "name": f"{PLUGIN_SLUG}-1.0.1.zip", "mimeType": "application/zip",
+            "buffer": artifact_raw,
+        }, timeout=ACTION_TIMEOUT_MS)
+        submit.click(timeout=ACTION_TIMEOUT_MS)
+        self.page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        assert_admin_url(str(self.page.url), mode="install_result")
+        tables = self.page.query_selector_all("table.update-from-upload-comparison")
+        links = self.page.query_selector_all(OVERWRITE_SELECTOR)
+        if len(tables) != 1 or len(links) != 1:
+            raise IndeterminateError("Exact replace-current comparison is unavailable after upload.")
+        current_name, uploaded_name = self.comparison_pair(tables[0], r"(plugin\s+)?name")
+        current_version, uploaded_version = self.comparison_pair(tables[0], r"version")
+        if ((current_name, uploaded_name) != (PLUGIN_NAME, PLUGIN_NAME)
+                or current_version != WITHDRAWN_PLUGIN_VERSION
+                or uploaded_version != PLUGIN_VERSION):
+            raise IndeterminateError("Replacement comparison identity or versions are not exact.")
+        if not self.overwrite_control_is_exact(links[0]):
+            raise IndeterminateError("Exact WordPress replace-current route is unavailable.")
+        context = getattr(self.page, "context", None)
+        if context is None or not callable(getattr(context, "new_page", None)):
+            raise IndeterminateError(
+                "REFUSED: a separate active-state audit page is unavailable before replacement."
+            )
+        audit_page = context.new_page()
+        try:
+            audit = AdminPage(audit_page)
+            audit.verify_guard_health(WITHDRAWN_PLUGIN_VERSION)
+            audit.goto_plugins()
+            audit.read_bounded(expected_before)
+            links[0].click(timeout=ACTION_TIMEOUT_MS)
+            self.page.wait_for_load_state("domcontentloaded", timeout=NAV_TIMEOUT_MS)
+        finally:
+            try:
+                audit_page.close()
+            except Exception:
+                pass
+        if not self.overwrite_result_is_exact():
+            raise IndeterminateError("WordPress replacement result route was not exact.")
+        notices = [" ".join(str(node.inner_text() or "").split())
+                   for node in self.page.query_selector_all(".wrap p")]
+        if notices.count(OVERWRITE_SUCCESS_MARKER) != 1:
+            raise IndeterminateError("WordPress did not show one exact plugin-update success marker.")
+        after = self.read_bounded(expected_after("replace_active"))
+        return {"comparison_name": uploaded_name, "comparison_current_version": current_version,
+                "comparison_uploaded_version": uploaded_version,
+                "wordpress_success_marker_exact": True,
+                "active_v1_0_0_reverified_immediately_before_overwrite": True,
+                "after": after}
 
     def prepare_state_click(self, action: str) -> Any:
         before = self.read_row()
@@ -375,7 +485,7 @@ class AdminPage:
                 self.page.wait_for_timeout(POST_WRITE_READ_DELAY_MS)
         raise IndeterminateError("Fixed plugin did not read back in the exact expected state.")
 
-    def verify_guard_health(self) -> dict[str, Any]:
+    def verify_guard_health(self, expected_version: str = PLUGIN_VERSION) -> dict[str, Any]:
         errors: list[str] = []
         def on_console(message: Any) -> None:
             if str(getattr(message, "type", "")) == "error":
@@ -388,10 +498,10 @@ class AdminPage:
         self.page.wait_for_timeout(500)
         version = str(self.page.locator("#frpd-mg-version").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
         status = str(self.page.locator("#frpd-mg-status").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
-        if errors or version != f"Version {PLUGIN_VERSION}" or status != "Guard inactive":
+        if errors or version != f"Version {expected_version}" or status != "Guard inactive":
             raise IndeterminateError("Active media guard plugin health page is not exact and clean.")
         return {"url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
-                "version": PLUGIN_VERSION, "guard_active": False, "javascript_errors": 0}
+                "version": expected_version, "guard_active": False, "javascript_errors": 0}
 
 
 @contextlib.contextmanager
@@ -438,12 +548,49 @@ def exclusive_json(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = (json.dumps(value, indent=2, ensure_ascii=True) + "\n").encode("ascii")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
+    pending = path.with_name(f".{path.name}.{secrets.token_hex(12)}.pending")
+    descriptor = None
     try:
-        descriptor = os.open(str(path), flags, 0o600)
+        descriptor = os.open(str(pending), flags, 0o600)
+        with os.fdopen(descriptor, "wb") as handle:
+            descriptor = None
+            written = handle.write(payload)
+            if written != len(payload):
+                raise OSError("immutable evidence write was short")
+            handle.flush()
+            os.fsync(handle.fileno())
+    except BaseException:
+        if descriptor is not None:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
+        try:
+            pending.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    try:
+        os.link(str(pending), str(path))
     except FileExistsError as exc:
+        try:
+            pending.unlink(missing_ok=True)
+        except OSError:
+            pass
         raise DeploymentError("REFUSED: immutable evidence already exists; no replay or overwrite.") from exc
-    with os.fdopen(descriptor, "wb") as handle:
-        handle.write(payload); handle.flush(); os.fsync(handle.fileno())
+    except BaseException:
+        try:
+            pending.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+    # The final hard-link now names the fully flushed bytes. Cleanup failure cannot
+    # invalidate or duplicate that immutable terminal evidence and must not cause a
+    # second result-write attempt.
+    try:
+        pending.unlink(missing_ok=True)
+    except OSError:
+        pass
 
 
 def append_receipt(action: str, evidence: str) -> None:
@@ -487,6 +634,11 @@ def validate_before(action: str, before: dict[str, Any]) -> None:
         raise DeploymentError("REFUSED: activation requires exact installed inactive version without update marker.")
     if action == "deactivate" and before != project_row(True, True, PLUGIN_VERSION, False):
         raise DeploymentError("REFUSED: deactivation requires exact installed active version without update marker.")
+    if action == "replace_active" and before != project_row(
+            True, True, WITHDRAWN_PLUGIN_VERSION, False):
+        raise DeploymentError(
+            "REFUSED: replacement requires exact active v1.0.0 without an update marker."
+        )
 
 
 def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
@@ -502,11 +654,12 @@ def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tupl
         "after_expected": expected_after(action),
         "writes_if_committed": [{
             "install_inactive": "one fixed plugin ZIP upload; plugin remains inactive",
+            "replace_active": "one fixed ZIP upload to WordPress comparison, then one exact replace-current click; plugin must remain active",
             "activate": "one fixed plugin activation click; its hook creates and verifies one fixed InnoDB guard-state table",
             "deactivate": "one fixed plugin deactivation click",
         }[action]],
-        "risk": "One attempt only. A write may land even if verification becomes indeterminate. No retry, replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it cannot stop direct database/filesystem mutation, malicious PHP, or privileged plugin disable/replace.",
-        "forbidden": ["replace", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
+        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.0 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it cannot stop direct database/filesystem mutation, malicious PHP, or privileged plugin disable/replace.",
+        "forbidden": ["replace outside exact v1.0.0-to-v1.0.1 repair", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
                       "generic browser", "setting", "content", "user", "media", "product", "order",
                       "customer", "payment", "email", "Zoho", "Drive"],
     }
@@ -595,6 +748,10 @@ def command_stage(args: argparse.Namespace) -> None:
         before = admin.read_row(allow_absent=True)
         if action == "deactivate":
             admin.verify_guard_health()
+        if action == "replace_active":
+            admin.verify_guard_health(WITHDRAWN_PLUGIN_VERSION)
+            admin.goto_plugins()
+            before = admin.read_row()
     path, plan = stage(action, before, artifact)
     print_json({
         "status": "STAGED_READ_ONLY", "plan": str(path), "plan_sha256": plan["sha256"],
@@ -612,7 +769,7 @@ def command_commit(args: argparse.Namespace) -> None:
     if attempt_path(operation).exists() or result_path(operation).exists():
         raise DeploymentError("REFUSED: stable operation is permanently replay-locked.")
     artifact_raw: bytes | None = None
-    if action == "install_inactive":
+    if action in {"install_inactive", "replace_active"}:
         current_artifact, artifact_raw = validate_artifact_payload()
         if current_artifact != plan["artifact"]:
             raise DeploymentError("REFUSED: fixed plugin artifact changed after plan loading.")
@@ -624,7 +781,14 @@ def command_commit(args: argparse.Namespace) -> None:
             live = admin.read_row(allow_absent=True)
             if live != plan["before"]:
                 raise DeploymentError("REFUSED: fixed plugin state changed after staging; stage a fresh plan.")
-            if action == "install_inactive":
+            if action in {"install_inactive", "replace_active"}:
+                if action == "replace_active":
+                    admin.verify_guard_health(WITHDRAWN_PLUGIN_VERSION)
+                    admin.goto_plugins()
+                    if admin.read_row() != plan["before"]:
+                        raise DeploymentError(
+                            "REFUSED: fixed plugin state changed during replacement preflight."
+                        )
                 chooser, control = admin.prepare_install()
             else:
                 if action == "deactivate":
@@ -644,14 +808,25 @@ def command_commit(args: argparse.Namespace) -> None:
                     raise DeploymentError("REFUSED: exact in-memory plugin artifact is unavailable.")
                 after = admin.execute_install(chooser, control, artifact_raw)
                 health = None
+                replacement = None
+            elif action == "replace_active":
+                if artifact_raw is None:
+                    raise DeploymentError("REFUSED: exact in-memory plugin artifact is unavailable.")
+                replacement = admin.execute_replace(
+                    chooser, control, artifact_raw, plan["before"]
+                )
+                after = replacement["after"]
+                health = admin.verify_guard_health()
             else:
                 after = admin.execute_state_click(action, control)
                 health = admin.verify_guard_health() if action == "activate" else None
+                replacement = None
             result = {
                 "schema": 1, "tool": TOOL_NAME, "action": action, "operation_sha256": operation,
                 "plan_sha256": plan["sha256"], "status": "verified", "completed_utc": utc_now().isoformat(),
                 "before": plan["before"], "after": after, "guard_health": health,
-                "writes": 1, "emails": 0,
+                "replacement": replacement,
+                "writes": 2 if action == "replace_active" else 1, "emails": 0,
             }
             exclusive_json(result_path(operation), result)
     except Exception as exc:

@@ -3,6 +3,118 @@
   {
    "base_url": null,
    "context_from": null,
+   "deliver": "telegram",
+   "enabled": false,
+   "enabled_toolsets": null,
+   "id": "f941835efd53",
+   "model": null,
+   "name": "catalogue-plugin-build-cross-lane-complete",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Return exactly this one sentence and do no work: The section-catalogue plugin v1.1.0 local build finished in the Discord lane; the exclusive marker is completed, so do not duplicate the finished build in Telegram. No website publication was made.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-16T15:03:04.862626-04:00",
+    "display": "once in 1m"
+   },
+   "schedule_display": "once in 1m",
+   "script": null,
+   "skill": null,
+   "skills": [],
+   "state": "completed",
+   "workdir": null
+  },
+  {
+   "base_url": null,
+   "context_from": null,
+   "deliver": "telegram",
+   "enabled": false,
+   "enabled_toolsets": null,
+   "id": "70a1894b8643",
+   "model": null,
+   "name": "catalogue-plugin-build-cross-lane-start",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Return exactly this one sentence and do no work: The section-catalogue plugin release package is being built locally in the Discord lane under an exclusive marker; do not start or modify that plugin build in Telegram until the completion notice.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-16T14:36:46.109643-04:00",
+    "display": "once in 1m"
+   },
+   "schedule_display": "once in 1m",
+   "script": null,
+   "skill": null,
+   "skills": [],
+   "state": "completed",
+   "workdir": null
+  },
+  {
+   "base_url": null,
+   "context_from": null,
+   "deliver": "telegram",
+   "enabled": false,
+   "enabled_toolsets": null,
+   "id": "86a308be1f00",
+   "model": null,
+   "name": "catalogue-section-cross-lane-complete",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Return exactly this one sentence and do no work: Catalogue section-PDF preparation finished in the Discord lane; five PDFs, QA manifest and local website release plan now exist, so do not duplicate that build in Telegram.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-16T14:29:07.373552-04:00",
+    "display": "once in 1m"
+   },
+   "schedule_display": "once in 1m",
+   "script": null,
+   "skill": null,
+   "skills": [],
+   "state": "completed",
+   "workdir": null
+  },
+  {
+   "base_url": null,
+   "context_from": null,
+   "deliver": "telegram",
+   "enabled": false,
+   "enabled_toolsets": null,
+   "id": "9dd92dab2586",
+   "model": null,
+   "name": "catalogue-section-cross-lane-notice",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Return exactly this one sentence and do no work: Catalogue section-PDF preparation is active in the Discord lane under a local exclusive task marker; do not start the same catalogue-section task in Telegram until the completion notice.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-16T14:20:07.852035-04:00",
+    "display": "once in 1m"
+   },
+   "schedule_display": "once in 1m",
+   "script": null,
+   "skill": null,
+   "skills": [],
+   "state": "completed",
+   "workdir": null
+  },
+  {
+   "base_url": null,
+   "context_from": null,
    "deliver": "telegram:891365639",
    "enabled": true,
    "enabled_toolsets": null,

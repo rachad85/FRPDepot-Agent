@@ -1,0 +1,191 @@
+model:
+  default: gpt-5.6-sol
+  provider: openai-codex
+  base_url: ''
+  api_mode: chat_completions
+fallback_providers:
+  # Tier 2 - Gemini 3.7. Rachad's call 2026-08-17: default stays GPT Codex on
+  # OAuth, tier 2 becomes Gemini 3.7, tier 3 stays the free model, and EVERY
+  # agent carries both - no exceptions. This RETIRES the 2026-08-12 "NO
+  # fallback_providers HERE, AND THAT IS DELIBERATE" decision for Dado. The old
+  # instruction "Do not fix this by copying live" no longer applies: Rachad
+  # reversed the policy himself, in front of the evidence, on 2026-08-17.
+  # NOTE: there is no Gemini 3.7 "pro" on the nous catalog - google/gemini-3.7-flash
+  # is the only 3.7 published. Verified invokable 2026-08-17.
+  # It is a reasoning model (~75 reasoning tokens for a one-word reply), so a small
+  # max_tokens returns EMPTY content rather than an error. Do not diagnose that as down.
+  - provider: nous
+    model: google/gemini-3.7-flash
+  # Tier 3 - free, so it survives the paid pool running dry. 1M context chosen
+  # deliberately: these agents run very long turns, and a last resort that dies
+  # on context length is not a last resort.
+  - provider: nous
+    model: "meituan/longcat-2.0:free"
+agent:
+  # How often the gateway reports a long-running turn. Live since the
+  # Discord lane landed; absent from this mirror until 2026-08-12.
+  gateway_notify_interval: 300
+  # PROMPTS THAT NEVER EXPIRE (Rachad, 2026-08-11). 0 = unlimited here;
+  # `clarify_timeout` uses the "<= 0 means unlimited" convention. Default is
+  # 3600s. Pairs with approvals.discord_prompt_timeout below - one question is
+  # governed by TWO independent clocks and both must be unlimited. Full
+  # reasoning: CLAUDE.md, "PROMPTS THAT NEVER EXPIRE (2026-08-11)".
+  # MIRRORED FROM LIVE 2026-08-11: this key existed only in the live profile,
+  # so a runtime import copying this file over live would have silently
+  # reverted the fix Rachad asked for.
+  clarify_timeout: 0
+  max_turns: 60
+  service_tier: normal
+  verbose: false
+  reasoning_effort: xhigh
+  verify_on_stop: false
+terminal:
+  backend: local
+  cwd: C:\FRPDepot
+  timeout: 600
+  home_mode: auto
+web:
+  backend: firecrawl
+tool_loop_guardrails:
+  warnings_enabled: true
+  hard_stop_enabled: true
+  warn_after:
+    exact_failure: 2
+    same_tool_failure: 3
+    idempotent_no_progress: 2
+  hard_stop_after:
+    exact_failure: 4
+    same_tool_failure: 6
+    idempotent_no_progress: 4
+compression:
+  enabled: true
+  threshold: 0.5
+  target_ratio: 0.2
+  protect_last_n: 20
+  protect_first_n: 3
+prompt_caching:
+  cache_ttl: 5m
+auxiliary:
+  vision:
+    provider: nous
+    model: deepseek/deepseek-v4-pro
+  title_generation:
+    provider: openai-codex
+    model: gpt-5.6-sol
+  compression:
+    provider: openai-codex
+    model: gpt-5.6-sol
+  summary:
+    provider: openai-codex
+    model: gpt-5.6-sol
+  web_extract:
+    provider: openai-codex
+    model: gpt-5.6-sol
+  approval:
+    provider: openai-codex
+    model: gpt-5.6-sol
+display:
+  compact: false
+  busy_input_mode: queue
+  bell_on_complete: false
+  show_reasoning: false
+  streaming: true
+  skin: default
+  interim_assistant_messages: true
+  platforms:
+    telegram:
+      # live carries the YAML boolean, not the string 'off'; both are falsy to
+      # hermes, but the mirror should say what actually runs.
+      tool_progress: false
+      busy_ack_detail: false
+      long_running_notifications: generic
+      interim_assistant_messages: false
+      cleanup_progress: true
+    discord:
+      tool_progress: false
+      interim_assistant_messages: false
+      busy_ack_detail: false
+      long_running_notifications: generic
+      cleanup_progress: true
+  tool_progress: all
+  cleanup_progress: false
+  long_running_notifications: true
+  busy_ack_detail: true
+  background_process_notifications: false
+# Voice notes -> text. Rachad, 2026-08-13: give Dado and Sary the same
+# transcription Aze has. Local faster-whisper (free, offline, no API key);
+# large-v3 is the accurate tier. WITHOUT this block STT still runs, but
+# auto-detect falls back to the `base` model: measured on a real 12s voice
+# note, base heard "backhand" where large-v3 heard "back end". The model and
+# its 2.9 GB download are already on this machine and shared by every profile
+# (one hermes install), so this is a config change only, no download.
+stt:
+  enabled: true
+  provider: local
+  local:
+    model: large-v3
+    language: en
+memory:
+  memory_enabled: true
+  user_profile_enabled: true
+  memory_char_limit: 2200
+  user_char_limit: 1375
+  nudge_interval: 0
+  flush_min_turns: 6
+delegation:
+  max_iterations: 50
+skills:
+  creation_nudge_interval: 0
+command_allowlist:
+  - recursive delete
+  - execute_code
+  - stop/restart hermes gateway (kills running agents)
+  - hermes update (restarts gateway, kills running agents)
+  - script execution via -e/-c flag
+code_execution:
+  timeout: 300
+  max_tool_calls: 50
+streaming:
+  enabled: false
+session_reset:
+  mode: daily
+  idle_minutes: 1440
+  at_hour: 4
+group_sessions_per_user: true
+platforms:
+  api_server:
+    enabled: true
+  # The Discord lane, live since 2026-08-10 and absent from this mirror until
+  # 2026-08-12. The mirror did not know Dado had a second chat surface at all,
+  # so a runtime import would have taken it away - and a TEXT diff could never
+  # have shown that, because this file and the live one differ in key order and
+  # hand-written comments. That is why the drift check parses instead.
+  discord:
+    enabled: true
+    home_channel:
+      platform: discord
+      chat_id: '1536573814560002089'
+      name: '1536573814560002089'
+      user_id: '804875531220418623'
+_config_version: 33
+approvals:
+  destructive_slash_confirm: false
+  # UNLIMITED Discord button view (-> discord.ui.View timeout=None, never
+  # expires). Telegram's inline keyboard already had no client-side expiry;
+  # Discord greyed the identical prompt out after 5 minutes. Requires the
+  # local patch to _read_discord_prompt_timeout in the shared hermes install
+  # (see CLAUDE.md and C:\AgentTeam\Sync\patches\).
+  # THE WORD, NOT 0, IS DELIBERATE: a gateway still running the pre-patch
+  # code reads `0` as 30 SECONDS but cannot parse `never`, so it keeps the
+  # unchanged 300s default until it is restarted. No regression window.
+  discord_prompt_timeout: never
+  # Agent-side wait for exec approvals. NOT 0 here: approval.py uses
+  # `max(timeout, 0)` as an absolute deadline, so 0 means an INSTANT
+  # fail-closed deny, not unlimited. 24h is the practical "never".
+  # Released early by /stop and by dado's 4am session_reset.
+  timeout: 86400
+telegram:
+  reactions: true
+onboarding:
+  seen:
+    busy_input_prompt: true

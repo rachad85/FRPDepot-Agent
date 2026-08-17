@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Media Mutation Guard
  * Description: Fixed atomic snapshot and five-family media mutation guard for FRP Depot.
- * Version: 1.0.0
+ * Version: 1.0.1
  * Author: FRP Depot
  */
 
@@ -10,7 +10,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('FRPD_MG_VERSION', '1.0.0');
+define('FRPD_MG_VERSION', '1.0.1');
 define('FRPD_MG_MANIFEST_SHA256', '2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b');
 define('FRPD_MG_OPTION', 'frpd_media_mutation_guard_v1');
 define('FRPD_MG_COOKIE', 'frpd_media_guard_owner');
@@ -18,6 +18,13 @@ define('FRPD_MG_LOCK_NAME', 'frpd_media_mutation_guard_v1');
 define('FRPD_MG_TTL', 1800);
 define('FRPD_MG_MAX_ATTACHMENTS', 1000);
 define('FRPD_MG_MAX_TOTAL_BYTES', 2147483648);
+define('FRPD_MG_PRIVATE_ATTACHMENT_ID', 1832);
+define('FRPD_MG_PRIVATE_ATTACHMENT_FILE', '2026/03/HETRON-CR-Guide-2007_Ineos.pdf');
+define('FRPD_MG_PRIVATE_ATTACHMENT_SLUG', 'hetron-cr-guide-2007_ineos');
+define('FRPD_MG_PRIVATE_ATTACHMENT_DATE_GMT', '2026-03-17 15:20:38');
+define('FRPD_MG_PRIVATE_ATTACHMENT_MIME', 'application/pdf');
+define('FRPD_MG_PRIVATE_PROTECTOR_FILE', 'frpdepot-hetron-private-history/frpdepot-hetron-private-history.php');
+define('FRPD_MG_PRIVATE_PROTECTOR_SHA256', '8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116');
 
 /** Return the exact closed runtime manifest or fail closed. */
 function frpd_mg_manifest() {
@@ -188,7 +195,7 @@ function frpd_mg_active_state() {
     $table = frpd_mg_table_name();
     $row = $wpdb->get_row(
         $wpdb->prepare(
-            "SELECT guard_state.*, (guard_state.state_status = 'active' AND guard_state.expires_utc > UTC_TIMESTAMP(6)) AS is_active, "
+            "SELECT guard_state.*, (guard_state.state_status IN ('active','gallery') AND guard_state.expires_utc > UTC_TIMESTAMP(6)) AS is_active, "
             . "UNIX_TIMESTAMP(guard_state.expires_utc) AS expires_epoch, lock_state.db_connection_id, lock_state.lock_owner_id "
             . "FROM (SELECT CONNECTION_ID() AS db_connection_id, IS_USED_LOCK(%s) AS lock_owner_id) AS lock_state "
             . "LEFT JOIN `{$table}` AS guard_state ON guard_state.guard_id = 1",
@@ -222,6 +229,7 @@ function frpd_mg_active_state() {
         'owner_session_sha256' => (string) ($row['owner_session_sha256'] ?? ''),
         'owner_hash' => (string) ($row['owner_token_sha256'] ?? ''),
         'expires' => (int) ($row['expires_epoch'] ?? 0),
+        'state_status' => (string) ($row['state_status'] ?? ''),
         'state_version' => (int) ($row['state_version'] ?? 0),
         'reserved' => $reserved,
         'attachments' => $attachments,
@@ -274,6 +282,54 @@ function frpd_mg_fixed_image_lookup() {
     return array('names' => $names, 'hashes' => $hashes);
 }
 
+/** Prove the one intentionally private attachment and its fixed protector plugin. */
+function frpd_mg_private_attachment_projection($attachment_id) {
+    if ((int) $attachment_id !== FRPD_MG_PRIVATE_ATTACHMENT_ID) {
+        return new WP_Error('frpd_mg_private_attachment', 'The private attachment exception ID is invalid.');
+    }
+    $post = get_post(FRPD_MG_PRIVATE_ATTACHMENT_ID);
+    if (!$post || 'attachment' !== ($post->post_type ?? null)
+        || 'private' !== get_post_status($post)
+        || FRPD_MG_PRIVATE_ATTACHMENT_MIME !== get_post_mime_type($post)
+        || FRPD_MG_PRIVATE_ATTACHMENT_SLUG !== ($post->post_name ?? null)
+        || FRPD_MG_PRIVATE_ATTACHMENT_DATE_GMT !== ($post->post_date_gmt ?? null)
+        || FRPD_MG_PRIVATE_ATTACHMENT_FILE
+            !== get_post_meta(FRPD_MG_PRIVATE_ATTACHMENT_ID, '_wp_attached_file', true)) {
+        return new WP_Error(
+            'frpd_mg_private_attachment',
+            'The fixed private attachment identity or status changed.'
+        );
+    }
+    if (!defined('WP_PLUGIN_DIR') || !function_exists('is_plugin_active')
+        || !is_plugin_active(FRPD_MG_PRIVATE_PROTECTOR_FILE)) {
+        return new WP_Error(
+            'frpd_mg_private_attachment',
+            'The fixed private-attachment protector is not active.'
+        );
+    }
+    $protector_path = WP_PLUGIN_DIR . DIRECTORY_SEPARATOR
+        . str_replace('/', DIRECTORY_SEPARATOR, FRPD_MG_PRIVATE_PROTECTOR_FILE);
+    $protector_digest = is_readable($protector_path)
+        ? hash_file('sha256', $protector_path) : false;
+    if (!is_string($protector_digest)
+        || !hash_equals(FRPD_MG_PRIVATE_PROTECTOR_SHA256, $protector_digest)) {
+        return new WP_Error(
+            'frpd_mg_private_attachment',
+            'The fixed private-attachment protector digest changed.'
+        );
+    }
+    return array(
+        'attachment_id' => FRPD_MG_PRIVATE_ATTACHMENT_ID,
+        'attached_file' => FRPD_MG_PRIVATE_ATTACHMENT_FILE,
+        'post_name' => FRPD_MG_PRIVATE_ATTACHMENT_SLUG,
+        'post_status' => 'private',
+        'mime_type' => FRPD_MG_PRIVATE_ATTACHMENT_MIME,
+        'post_date_gmt' => FRPD_MG_PRIVATE_ATTACHMENT_DATE_GMT,
+        'protector_plugin_file' => FRPD_MG_PRIVATE_PROTECTOR_FILE,
+        'protector_plugin_sha256' => FRPD_MG_PRIVATE_PROTECTOR_SHA256,
+    );
+}
+
 /** Build a complete, bounded original-file snapshot while the advisory lock is held. */
 function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     if (empty($GLOBALS['frpd_mg_lock_held'])) {
@@ -301,6 +357,7 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     $name_conflicts = array();
     $hash_conflicts = array();
     $fixed_matches = array();
+    $private_exceptions = array();
     $total_bytes = 0;
     foreach ($ids as $raw_id) {
         $owner = frpd_mg_assert_lock_owned();
@@ -308,6 +365,18 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
             return $owner;
         }
         $attachment_id = (int) $raw_id;
+        if (FRPD_MG_PRIVATE_ATTACHMENT_ID === $attachment_id) {
+            $private = frpd_mg_private_attachment_projection($attachment_id);
+            if (!is_wp_error($private)) {
+                $private_exceptions[] = $private;
+            } else {
+                $failures[] = array(
+                    'attachment_id' => $attachment_id,
+                    'reason' => 'private_attachment_proof_failed',
+                );
+            }
+            continue;
+        }
         $path = get_attached_file($attachment_id, true);
         if ($attachment_id <= 0 || !is_string($path) || '' === $path
             || !is_file($path) || !is_readable($path)) {
@@ -368,10 +437,14 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
             }
         }
     }
-    $complete = count($failures) === 0 && count($rows) === count($ids);
-    $canonical = wp_json_encode($rows, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    $complete = count($failures) === 0
+        && count($rows) + count($private_exceptions) === count($ids);
+    $canonical = wp_json_encode(
+        array('readable_attachments' => $rows, 'private_exceptions' => $private_exceptions),
+        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+    );
     return array(
-        'schema' => 1,
+        'schema' => 2,
         'plugin_version' => FRPD_MG_VERSION,
         'mode' => $mode,
         'family' => $family,
@@ -382,6 +455,7 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
         'snapshot_sha256' => hash('sha256', (string) $canonical),
         'complete' => $complete,
         'failures' => $failures,
+        'private_exceptions' => $private_exceptions,
         'name_conflicts' => $name_conflicts,
         'hash_conflicts' => $hash_conflicts,
         'fixed_matches' => $fixed_matches,
@@ -450,7 +524,8 @@ function frpd_mg_clear_expired_state_under_lock() {
     $table = frpd_mg_table_name();
     $retired = $wpdb->query($wpdb->prepare(
         "UPDATE `{$table}` SET state_status = 'expired', completed_utc = UTC_TIMESTAMP(6), "
-        . "state_version = state_version + 1 WHERE guard_id = 1 AND state_status = 'active' "
+        . "state_version = state_version + 1 WHERE guard_id = 1 "
+        . "AND state_status IN ('active','gallery') "
         . "AND expires_utc <= UTC_TIMESTAMP(6) AND CONNECTION_ID() = %d "
         . "AND IS_USED_LOCK(%s) = CONNECTION_ID()",
         (int) $GLOBALS['frpd_mg_lock_connection_id'],
@@ -547,6 +622,13 @@ function frpd_mg_handle_acquire() {
     if (is_array($existing)) {
         frpd_mg_fail('A media guard is already active.', 423);
     }
+    $thumbnail_identity = frpd_mg_gallery_meta_key_identity('_thumbnail_id');
+    $gallery_identity = frpd_mg_gallery_meta_key_identity('_product_image_gallery');
+    if (is_wp_error($thumbnail_identity) || is_wp_error($gallery_identity)
+        || '_thumbnail_id' !== $thumbnail_identity
+        || '_product_image_gallery' !== $gallery_identity) {
+        frpd_mg_fail('The live post metadata collation could not be proven safe.', 500);
+    }
     $proof = frpd_mg_snapshot($family, 'pre_guard_snapshot', false);
     if (is_wp_error($proof)) {
         frpd_mg_fail($proof->get_error_message());
@@ -604,6 +686,287 @@ function frpd_mg_handle_guarded_snapshot() {
 }
 add_action('admin_post_frpd_media_guard_guarded_snapshot', 'frpd_mg_handle_guarded_snapshot');
 
+/** Return one strict primary-plus-gallery ID list, or WP_Error on malformed live metadata. */
+function frpd_mg_product_gallery_ids($product_id) {
+    $product_id = (int) $product_id;
+    if ($product_id <= 0 || 'product' !== get_post_type($product_id)) {
+        return new WP_Error('frpd_mg_gallery_product', 'The fixed gallery product identity is unavailable.');
+    }
+    $primary = (int) get_post_thumbnail_id($product_id);
+    $raw = (string) get_post_meta($product_id, '_product_image_gallery', true);
+    $ids = array();
+    if ($primary > 0) {
+        $ids[] = $primary;
+    }
+    if ('' !== $raw) {
+        foreach (explode(',', $raw) as $part) {
+            if (!preg_match('/^[1-9][0-9]*$/D', $part)) {
+                return new WP_Error('frpd_mg_gallery_metadata', 'The live gallery metadata is malformed.');
+            }
+            $ids[] = (int) $part;
+        }
+    }
+    if (count(array_unique($ids)) !== count($ids)) {
+        return new WP_Error('frpd_mg_gallery_duplicate', 'The live gallery contains a duplicate attachment ID.');
+    }
+    return $ids;
+}
+
+function frpd_mg_gallery_etag($ids) {
+    return is_array($ids)
+        ? '"' . hash('sha256', wp_json_encode(array_values($ids), JSON_UNESCAPED_SLASHES)) . '"'
+        : '';
+}
+
+/**
+ * Atomically claim the one exact images-only WooCommerce product update.
+ *
+ * The If-Match value is a non-secret SHA-256 of the complete pre-write gallery ID
+ * list. The advisory lock and active->gallery state transition serialize every
+ * guarded product-gallery metadata route against this claim.
+ */
+function frpd_mg_rest_pre_insert_product_object($object, $request, $creating) {
+    $locked = frpd_mg_hold_request_lock();
+    $state = is_wp_error($locked) ? $locked : frpd_mg_active_state();
+    if (is_wp_error($state)) {
+        return new WP_Error('frpd_mg_gallery_lock', 'FRP Depot media guard could not prove the product-gallery lock.', array('status' => 423));
+    }
+    if (!is_array($state)) {
+        return $object;
+    }
+    $object_id = is_object($object) && method_exists($object, 'get_id') ? (int) $object->get_id() : 0;
+    if ($object_id !== (int) $state['product_id']) {
+        return $object;
+    }
+    $method = is_object($request) && method_exists($request, 'get_method')
+        ? strtoupper((string) $request->get_method()) : '';
+    $json = is_object($request) && method_exists($request, 'get_json_params')
+        ? $request->get_json_params() : null;
+    $query = is_object($request) && method_exists($request, 'get_query_params')
+        ? $request->get_query_params() : null;
+    $body = is_object($request) && method_exists($request, 'get_body_params')
+        ? $request->get_body_params() : null;
+    $files = is_object($request) && method_exists($request, 'get_file_params')
+        ? $request->get_file_params() : null;
+    $if_match = is_object($request) && method_exists($request, 'get_header')
+        ? (string) $request->get_header('if-match') : '';
+    $expected = frpd_mg_expected_images($state['family']);
+    if ($creating || 'PUT' !== $method || 'active' !== ($state['state_status'] ?? '')
+        || !is_array($json) || array_keys($json) !== array('images')
+        || !is_array($query) || array() !== $query
+        || !is_array($body) || array() !== $body
+        || !is_array($files) || array() !== $files
+        || is_wp_error($expected) || 4 !== count($expected)) {
+        return new WP_Error('frpd_mg_gallery_request', 'FRP Depot media guard refused a non-fixed product mutation.', array('status' => 423));
+    }
+    $filenames = array_column($expected, 'filename');
+    if ($state['reserved'] !== $filenames || array_keys($state['attachments']) !== $filenames
+        || count(array_unique(array_values($state['attachments']))) !== 4
+        || !is_array($json['images']) || 4 !== count($json['images'])) {
+        return new WP_Error('frpd_mg_gallery_set', 'The four fixed upload identities are not exact.', array('status' => 423));
+    }
+    $ids = array();
+    foreach ($json['images'] as $index => $image) {
+        $filename = $filenames[$index];
+        $id = (int) ($state['attachments'][$filename] ?? 0);
+        if (!is_array($image) || array_keys($image) !== array('id')
+            || !is_int($image['id']) || $image['id'] !== $id || $id <= 0) {
+            return new WP_Error('frpd_mg_gallery_payload', 'The product gallery payload is not the exact fixed ID sequence.', array('status' => 423));
+        }
+        $ids[] = $id;
+    }
+    $current = frpd_mg_product_gallery_ids($object_id);
+    if (is_wp_error($current) || !hash_equals(frpd_mg_gallery_etag($current), $if_match)) {
+        return new WP_Error('frpd_mg_gallery_precondition', 'The product gallery changed before the conditional update.', array('status' => 412));
+    }
+    global $wpdb;
+    $next = (int) $state['state_version'] + 1;
+    $updated = $wpdb->query($wpdb->prepare(
+        "UPDATE `" . frpd_mg_table_name() . "` SET state_status = 'gallery', state_version = %d "
+        . "WHERE guard_id = 1 AND state_status = 'active' AND state_version = %d "
+        . "AND expires_utc > UTC_TIMESTAMP(6) AND CONNECTION_ID() = %d "
+        . "AND IS_USED_LOCK(%s) = CONNECTION_ID()",
+        $next,
+        (int) $state['state_version'],
+        (int) $GLOBALS['frpd_mg_lock_connection_id'],
+        FRPD_MG_LOCK_NAME
+    ));
+    $fresh = 1 === (int) $updated ? frpd_mg_active_state()
+        : new WP_Error('frpd_mg_gallery_claim', 'The conditional gallery claim did not land atomically.');
+    if (!is_array($fresh) || 'gallery' !== ($fresh['state_status'] ?? '')
+        || $next !== (int) ($fresh['state_version'] ?? 0)) {
+        return new WP_Error('frpd_mg_gallery_claim', 'The conditional gallery claim could not be verified.', array('status' => 423));
+    }
+    $GLOBALS['frpd_mg_allowed_gallery_request'] = true;
+    $GLOBALS['frpd_mg_allowed_gallery_product_id'] = $object_id;
+    $GLOBALS['frpd_mg_allowed_gallery_ids'] = $ids;
+    return $object;
+}
+add_filter('woocommerce_rest_pre_insert_product_object', 'frpd_mg_rest_pre_insert_product_object', PHP_INT_MIN, 3);
+
+/** Resolve protected postmeta keys with the live meta_key column's exact MySQL collation. */
+function frpd_mg_gallery_meta_key_identity($meta_key) {
+    global $wpdb;
+    $wpdb->last_error = '';
+    $schema = $wpdb->get_row($wpdb->prepare(
+        "SELECT CHARACTER_SET_NAME AS charset_name, COLLATION_NAME AS collation_name "
+        . "FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = DATABASE() "
+        . "AND TABLE_NAME = %s AND COLUMN_NAME = 'meta_key'",
+        (string) $wpdb->postmeta
+    ), ARRAY_A);
+    $charset = is_array($schema) ? strtolower((string) ($schema['charset_name'] ?? '')) : '';
+    $collation = is_array($schema) ? strtolower((string) ($schema['collation_name'] ?? '')) : '';
+    if ('' !== trim((string) $wpdb->last_error)
+        || 1 !== preg_match('/\A[a-z0-9_]+\z/', $charset)
+        || 1 !== preg_match('/\A[a-z0-9_]+\z/', $collation)) {
+        return new WP_Error('frpd_mg_meta_collation', 'The post metadata collation is unavailable.');
+    }
+    $sql = "SELECT CASE "
+        . "WHEN CONVERT(%s USING {$charset}) COLLATE {$collation} "
+        . "= CONVERT('_thumbnail_id' USING {$charset}) COLLATE {$collation} THEN '_thumbnail_id' "
+        . "WHEN CONVERT(%s USING {$charset}) COLLATE {$collation} "
+        . "= CONVERT('_product_image_gallery' USING {$charset}) COLLATE {$collation} "
+        . "THEN '_product_image_gallery' ELSE '' END";
+    $wpdb->last_error = '';
+    $identity = $wpdb->get_var($wpdb->prepare($sql, (string) $meta_key, (string) $meta_key));
+    if ('' !== trim((string) $wpdb->last_error)
+        || !in_array((string) $identity, array('', '_thumbnail_id', '_product_image_gallery'), true)) {
+        return new WP_Error('frpd_mg_meta_collation', 'The post metadata key could not be classified safely.');
+    }
+    return '' === (string) $identity ? null : (string) $identity;
+}
+
+function frpd_mg_product_gallery_metadata_filter($check, $object_id, $meta_key, $meta_value = null, $prev_value = null) {
+    if ('product' !== get_post_type((int) $object_id)) {
+        return $check;
+    }
+    $locked = frpd_mg_hold_request_lock();
+    $state = is_wp_error($locked) ? $locked : frpd_mg_active_state();
+    if (is_wp_error($state)) {
+        return false;
+    }
+    if (!is_array($state) || (int) $object_id !== (int) $state['product_id']) {
+        return $check;
+    }
+    $identity = frpd_mg_gallery_meta_key_identity($meta_key);
+    if (is_wp_error($identity)) {
+        return false;
+    }
+    if (!is_string($identity)) {
+        return $check;
+    }
+    $ids = $GLOBALS['frpd_mg_allowed_gallery_ids'] ?? array();
+    $allowed = 'gallery' === ($state['state_status'] ?? '')
+        && !empty($GLOBALS['frpd_mg_allowed_gallery_request']) && is_array($ids)
+        && 4 === count($ids)
+        && (int) $object_id === (int) ($GLOBALS['frpd_mg_allowed_gallery_product_id'] ?? 0)
+        && (('_thumbnail_id' === $identity && (string) $meta_value === (string) $ids[0])
+            || ('_product_image_gallery' === $identity
+                && (string) $meta_value === implode(',', array_slice($ids, 1))));
+    return $allowed ? $check : false;
+}
+add_filter('add_post_metadata', 'frpd_mg_product_gallery_metadata_filter', PHP_INT_MIN, 5);
+add_filter('update_post_metadata', 'frpd_mg_product_gallery_metadata_filter', PHP_INT_MIN, 5);
+
+function frpd_mg_delete_product_gallery_metadata($delete, $object_id, $meta_key, $meta_value = null, $delete_all = false) {
+    if ('product' !== get_post_type((int) $object_id)) {
+        return $delete;
+    }
+    $locked = frpd_mg_hold_request_lock();
+    $state = is_wp_error($locked) ? $locked : frpd_mg_active_state();
+    if (is_wp_error($state)) {
+        return false;
+    }
+    if (!is_array($state) || (int) $object_id !== (int) $state['product_id']) {
+        return $delete;
+    }
+    $identity = frpd_mg_gallery_meta_key_identity($meta_key);
+    return is_wp_error($identity) || is_string($identity) ? false : $delete;
+}
+add_filter('delete_post_metadata', 'frpd_mg_delete_product_gallery_metadata', PHP_INT_MIN, 5);
+
+function frpd_mg_post_metadata_by_mid_record($meta_id) {
+    $meta_id = (int) $meta_id;
+    if ($meta_id <= 0) {
+        return new WP_Error('frpd_mg_meta_mid', 'A post metadata ID is invalid.');
+    }
+    $record = get_metadata_by_mid('post', $meta_id);
+    if (!is_object($record) || !isset($record->post_id, $record->meta_key)) {
+        return new WP_Error('frpd_mg_meta_mid', 'The post metadata identity is unavailable.');
+    }
+    return array(
+        'object_id' => (int) $record->post_id,
+        'meta_key' => (string) $record->meta_key,
+    );
+}
+
+/** Close WordPress's separate update_metadata_by_mid() filter path. */
+function frpd_mg_update_post_metadata_by_mid($check, $meta_id, $meta_value, $meta_key = false) {
+    $locked = frpd_mg_hold_request_lock();
+    $state = is_wp_error($locked) ? $locked : frpd_mg_active_state();
+    if (is_wp_error($state)) {
+        return false;
+    }
+    if (!is_array($state)) {
+        return $check;
+    }
+    $record = frpd_mg_post_metadata_by_mid_record($meta_id);
+    if (is_wp_error($record)) {
+        return false;
+    }
+    $object_id = (int) $record['object_id'];
+    $existing_key = (string) $record['meta_key'];
+    $proposed_key = is_string($meta_key) && '' !== $meta_key ? $meta_key : $existing_key;
+    if ('attachment' === get_post_type($object_id)) {
+        return false;
+    }
+    if ((int) $state['product_id'] === $object_id) {
+        $existing_identity = frpd_mg_gallery_meta_key_identity($existing_key);
+        $proposed_identity = frpd_mg_gallery_meta_key_identity($proposed_key);
+        if (is_wp_error($existing_identity) || is_wp_error($proposed_identity)) {
+            return false;
+        }
+        if (is_string($existing_identity) || is_string($proposed_identity)) {
+            if ($existing_key !== $proposed_key || !is_string($existing_identity)) {
+                return false;
+            }
+            return frpd_mg_product_gallery_metadata_filter(
+                $check, $object_id, $existing_identity, $meta_value, null
+            );
+        }
+    }
+    return $check;
+}
+add_filter('update_post_metadata_by_mid', 'frpd_mg_update_post_metadata_by_mid', PHP_INT_MIN, 4);
+
+/** Close WordPress's separate delete_metadata_by_mid() filter path. */
+function frpd_mg_delete_post_metadata_by_mid($delete, $meta_id) {
+    $locked = frpd_mg_hold_request_lock();
+    $state = is_wp_error($locked) ? $locked : frpd_mg_active_state();
+    if (is_wp_error($state)) {
+        return false;
+    }
+    if (!is_array($state)) {
+        return $delete;
+    }
+    $record = frpd_mg_post_metadata_by_mid_record($meta_id);
+    if (is_wp_error($record)) {
+        return false;
+    }
+    $object_id = (int) $record['object_id'];
+    if ('attachment' === get_post_type($object_id)) {
+        return false;
+    }
+    if ((int) $state['product_id'] === $object_id) {
+        $identity = frpd_mg_gallery_meta_key_identity((string) $record['meta_key']);
+        if (is_wp_error($identity) || is_string($identity)) {
+            return false;
+        }
+    }
+    return $delete;
+}
+add_filter('delete_post_metadata_by_mid', 'frpd_mg_delete_post_metadata_by_mid', PHP_INT_MIN, 2);
+
 function frpd_mg_completion_proof($state) {
     $owned = frpd_mg_assert_lock_owned();
     $expected = is_array($state) ? frpd_mg_expected_images($state['family'])
@@ -611,7 +974,7 @@ function frpd_mg_completion_proof($state) {
     if (is_wp_error($owned) || is_wp_error($expected)) {
         return is_wp_error($owned) ? $owned : $expected;
     }
-    if (!frpd_mg_owner_matches($state)) {
+    if (!frpd_mg_owner_matches($state) || 'gallery' !== ($state['state_status'] ?? '')) {
         return new WP_Error('frpd_mg_owner', 'The completion browser does not own the active guard.');
     }
     $filenames = array_column($expected, 'filename');
@@ -653,7 +1016,7 @@ function frpd_mg_completion_proof($state) {
         return new WP_Error('frpd_mg_completion_gallery', 'The fixed product gallery does not match the four verified attachments.');
     }
     return array(
-        'schema' => 1,
+        'schema' => 2,
         'plugin_version' => FRPD_MG_VERSION,
         'mode' => 'guard_completed',
         'family' => $state['family'],
@@ -687,7 +1050,7 @@ function frpd_mg_complete_state($state) {
     $gallery = implode(',', array_slice($ids, 1));
     $updated = $wpdb->query($wpdb->prepare(
         "UPDATE `{$table}` SET state_status = 'completed', completed_utc = UTC_TIMESTAMP(6), "
-        . "state_version = %d WHERE guard_id = 1 AND state_status = 'active' "
+        . "state_version = %d WHERE guard_id = 1 AND state_status = 'gallery' "
         . "AND state_version = %d AND expires_utc > UTC_TIMESTAMP(6) "
         . "AND CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID() "
         . "AND EXISTS (SELECT 1 FROM `{$posts}` WHERE ID = %d AND post_type = 'product') "

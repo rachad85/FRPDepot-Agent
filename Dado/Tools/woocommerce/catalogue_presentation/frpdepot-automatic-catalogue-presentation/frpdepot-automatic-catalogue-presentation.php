@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Automatic Catalogue Presentation
  * Description: Keeps the public FRP Depot catalogue navigation and exact shared Divi product-guide presentation synchronized with the live, public WooCommerce catalogue.
- * Version:     1.0.4
+ * Version:     1.1.1
  * Author:      FRP Depot
  * License:     GPL-2.0-or-later
  * Requires PHP: 7.4
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-const FRPDEPOT_ACP_VERSION = '1.0.4';
+const FRPDEPOT_ACP_VERSION = '1.1.1';
 const FRPDEPOT_ACP_MAIN_MENU_SLUG = 'main';
 const FRPDEPOT_ACP_FOOTER_MENU_SLUG = 'product-categories';
 const FRPDEPOT_ACP_SHOP_TITLE = 'Shop All';
@@ -29,6 +29,52 @@ const FRPDEPOT_ACP_HETRON_URL = 'https://frpdepots.com/hetron-cr-guide-2007_ineo
 const FRPDEPOT_ACP_DERAKANE_OLD_URL = 'https://frpdepots.com/derakane-resin-selection-guide/';
 const FRPDEPOT_ACP_DERAKANE_NEW_URL = 'https://frpdepots.com/derakane-resin-resistance-search/';
 const FRPDEPOT_ACP_INLINE_CTA = '<h3>Not sure what Derakane Resin to select? <a href="/derakane-resin-resistance-search/" target="_blank" rel="noopener">Click here to find out</a>.</h3>';
+const FRPDEPOT_ACP_CATALOGUE_MODULE_CLASS = 'et_pb_blurb_2_tb_body';
+const FRPDEPOT_ACP_FULL_CATALOGUE_URL = 'https://frpdepots.com/frp-depots-final-hq/';
+const FRPDEPOT_ACP_ARCHIVE_SHOP_MODULE_CLASS = 'et_pb_shop_0_tb_body';
+
+/** Fixed reviewed section PDFs bundled inside this plugin artifact. */
+const FRPDEPOT_ACP_SECTION_CATALOGUES = array(
+	'stub_flanges' => array(
+		'filename' => 'FRP_Depots_Stub_Flanges_2026.pdf',
+		'label'    => 'Download Stub Flange Catalogue (PDF)',
+	),
+	'manways_and_covers' => array(
+		'filename' => 'FRP_Depots_Manways_and_Covers_2026.pdf',
+		'label'    => 'Download Manways & Covers Catalogue (PDF)',
+	),
+	'elbows_90' => array(
+		'filename' => 'FRP_Depots_90_Degree_Elbows_2026.pdf',
+		'label'    => 'Download 90 Degree Elbow Catalogue (PDF)',
+	),
+	'filament_wound_pipe' => array(
+		'filename' => 'FRP_Depots_Filament_Wound_Pipe_2026.pdf',
+		'label'    => 'Download Pipe Catalogue (PDF)',
+	),
+	'fnpt_couplings' => array(
+		'filename' => 'FRP_Depots_FNPT_Couplings_2026.pdf',
+		'label'    => 'Download FNPT Coupling Catalogue (PDF)',
+	),
+);
+
+/** Exact live WooCommerce records that receive one matching section PDF. */
+const FRPDEPOT_ACP_PRODUCT_SECTION_KEYS = array(
+	1368 => 'stub_flanges',
+	1397 => 'manways_and_covers',
+	1411 => 'manways_and_covers',
+	1423 => 'elbows_90',
+	1455 => 'filament_wound_pipe',
+	2061 => 'fnpt_couplings',
+);
+
+/** Exact live category pages; the Piping parent receives four distinct links. */
+const FRPDEPOT_ACP_CATEGORY_SECTION_KEYS = array(
+	44 => array( 'filament_wound_pipe' ),
+	45 => array( 'elbows_90' ),
+	57 => array( 'stub_flanges' ),
+	58 => array( 'filament_wound_pipe', 'stub_flanges', 'elbows_90', 'fnpt_couplings' ),
+	60 => array( 'manways_and_covers' ),
+);
 
 /**
  * Existing category roots approved for public catalogue presentation.
@@ -395,6 +441,79 @@ function frpdepot_acp_sync_menu_items( $items, $menu, $args ) {
 	);
 }
 
+/** Return one fixed section-catalogue record only when its bundled PDF exists. */
+function frpdepot_acp_section_catalogue_record( $key ) {
+	if ( ! is_string( $key ) || ! isset( FRPDEPOT_ACP_SECTION_CATALOGUES[ $key ] ) ) {
+		return null;
+	}
+	$record = FRPDEPOT_ACP_SECTION_CATALOGUES[ $key ];
+	if ( ! is_array( $record ) || ! isset( $record['filename'], $record['label'] )
+		|| 1 !== preg_match( '/\A[A-Za-z0-9_.-]+\.pdf\z/', (string) $record['filename'] )
+		|| '' === trim( (string) $record['label'] ) ) {
+		return null;
+	}
+	$path = __DIR__ . '/catalogue-sections/' . $record['filename'];
+	if ( ! is_file( $path ) ) {
+		return null;
+	}
+	return array(
+		'key'      => $key,
+		'filename' => (string) $record['filename'],
+		'label'    => (string) $record['label'],
+		'path'     => $path,
+		'url'      => plugins_url( 'catalogue-sections/' . $record['filename'], __FILE__ ),
+	);
+}
+
+/** Return one section PDF for an exact live product, or null for every other ID. */
+function frpdepot_acp_product_section_catalogue( $product_id ) {
+	$product_id = (int) $product_id;
+	if ( ! isset( FRPDEPOT_ACP_PRODUCT_SECTION_KEYS[ $product_id ] ) ) {
+		return null;
+	}
+	return frpdepot_acp_section_catalogue_record(
+		FRPDEPOT_ACP_PRODUCT_SECTION_KEYS[ $product_id ]
+	);
+}
+
+/** Return the fixed ordered PDF set for an exact live category page. */
+function frpdepot_acp_category_section_catalogues( $category_id ) {
+	$category_id = (int) $category_id;
+	if ( ! isset( FRPDEPOT_ACP_CATEGORY_SECTION_KEYS[ $category_id ] ) ) {
+		return array();
+	}
+	$records = array();
+	foreach ( FRPDEPOT_ACP_CATEGORY_SECTION_KEYS[ $category_id ] as $key ) {
+		$record = frpdepot_acp_section_catalogue_record( $key );
+		if ( null === $record ) {
+			return array();
+		}
+		$records[] = $record;
+	}
+	return $records;
+}
+
+/** Pure fixed archive panel used by the live hook and offline contract tests. */
+function frpdepot_acp_archive_catalogue_html( $category_id ) {
+	$records = frpdepot_acp_category_section_catalogues( $category_id );
+	if ( empty( $records ) ) {
+		return '';
+	}
+	$links = '';
+	foreach ( $records as $record ) {
+		$links .= '<a class="et_pb_button frpdepot-acp-section-catalogue-link" data-frpdepot-acp-section="'
+			. esc_attr( $record['key'] ) . '" href="' . esc_url( $record['url'] )
+			. '" target="_blank" rel="noopener">' . esc_html( $record['label'] ) . '</a>';
+	}
+	return '<section class="frpdepot-acp-section-catalogues" aria-label="Technical catalogue downloads" '
+		. 'style="max-width:1080px;margin:1.5rem auto 2rem;padding:1.25rem;border:1px solid #d9e2ec;'
+		. 'border-radius:6px;background:#f9fafb">'
+		. '<h2 style="margin:0 0 .35rem">Technical Catalogues</h2>'
+		. '<p style="margin:0 0 1rem">Open only the product section you need.</p>'
+		. '<div class="frpdepot-acp-section-catalogue-links" style="display:flex;flex-wrap:wrap;gap:.75rem">'
+		. $links . '</div></section>';
+}
+
 /** Find exactly one balanced outer DIV carrying an exact class token. */
 function frpdepot_acp_find_single_div( $html, $class_token ) {
 	$pattern = '/<div\b(?=[^>]*\bclass=(?:"[^"]*\b' . preg_quote( $class_token, '/' ) . '\b[^"]*"|\'[^\']*\b' . preg_quote( $class_token, '/' ) . '\b[^\']*\'))[^>]*>/i';
@@ -420,6 +539,107 @@ function frpdepot_acp_find_single_div( $html, $class_token ) {
 		}
 	}
 	return null;
+}
+
+/**
+ * Insert one fixed catalogue panel immediately before the exact Divi shop module.
+ *
+ * FRP Depot's Divi category template does not fire WooCommerce's standard archive
+ * description action. The final-output insertion therefore pins the exact live
+ * module class, rejects missing/duplicate/drifted anchors, and verifies every
+ * expected PDF href before returning changed output.
+ */
+function frpdepot_acp_transform_archive_html( $html ) {
+	if ( ! is_string( $html ) || '' === $html ) {
+		return $html;
+	}
+	$records = frpdepot_acp_category_section_catalogues( get_queried_object_id() );
+	$panel   = frpdepot_acp_archive_catalogue_html( get_queried_object_id() );
+	$shop    = frpdepot_acp_find_single_div( $html, FRPDEPOT_ACP_ARCHIVE_SHOP_MODULE_CLASS );
+	if ( empty( $records ) || '' === $panel || null === $shop
+		|| 0 !== substr_count( $html, 'frpdepot-acp-section-catalogues' )
+		|| 0 !== substr_count( $html, FRPDEPOT_ACP_FULL_CATALOGUE_URL ) ) {
+		return $html;
+	}
+	foreach ( $records as $record ) {
+		if ( 0 !== substr_count( $html, $record['url'] ) ) {
+			return $html;
+		}
+	}
+	$transformed = substr_replace( $html, $panel, $shop['start'], 0 );
+	if ( 1 !== substr_count( $transformed, '<section class="frpdepot-acp-section-catalogues"' )
+		|| count( $records ) !== substr_count(
+			$transformed,
+			'<a class="et_pb_button frpdepot-acp-section-catalogue-link"'
+		)
+		|| 0 !== substr_count( $transformed, FRPDEPOT_ACP_FULL_CATALOGUE_URL )
+		|| null === frpdepot_acp_find_single_div( $transformed, FRPDEPOT_ACP_ARCHIVE_SHOP_MODULE_CLASS ) ) {
+		return $html;
+	}
+	foreach ( $records as $record ) {
+		if ( 1 !== substr_count( $transformed, $record['url'] ) ) {
+			return $html;
+		}
+	}
+	return $transformed;
+}
+
+/** The existing shared Divi catalogue card must keep its exact visible meaning. */
+function frpdepot_acp_exact_catalogue_module( $module ) {
+	if ( ! is_array( $module ) || ! isset( $module['html'] ) ) {
+		return false;
+	}
+	$source = $module['html'];
+	$title  = '/<h4\s+class="et_pb_module_header">\s*FRP Depots\s*<\/h4>/';
+	$body   = '/<div\s+class="et_pb_blurb_description">\s*<p>\s*Product Catalog\s*<\/p>\s*<\/div>/';
+	return 1 === preg_match_all( $title, $source ) && 1 === preg_match_all( $body, $source );
+}
+
+/**
+ * Repoint the exact full-catalogue product card to one bundled section PDF.
+ *
+ * A missing product mapping, file, exact semantic card or exact Divi link marker
+ * can never preserve a route to the full catalogue: that URL is neutralized at
+ * read time. Known exact states receive one section URL and preserve the card.
+ */
+function frpdepot_acp_transform_product_catalogue_html( $html, $product_id ) {
+	if ( ! is_string( $html ) || '' === $html ) {
+		return $html;
+	}
+	$record = frpdepot_acp_product_section_catalogue( $product_id );
+	$module = frpdepot_acp_find_single_div( $html, FRPDEPOT_ACP_CATALOGUE_MODULE_CLASS );
+	$old_link = '{"class":"et-db #et-boc .et-l .et_pb_blurb_2_tb_body","url":"'
+		. FRPDEPOT_ACP_FULL_CATALOGUE_URL . '","target":"_blank"}';
+	if ( null !== $record ) {
+		$new_link = '{"class":"et-db #et-boc .et-l .et_pb_blurb_2_tb_body","url":"'
+			. $record['url'] . '","target":"_blank"}';
+		$markers_exact = frpdepot_acp_exact_catalogue_module( $module )
+			&& 1 === substr_count( $html, $old_link )
+			&& 1 === substr_count( $html, FRPDEPOT_ACP_FULL_CATALOGUE_URL )
+			&& 0 === substr_count( $html, $record['url'] );
+		if ( $markers_exact ) {
+			$transformed = str_replace( $old_link, $new_link, $html );
+			if ( 0 === substr_count( $transformed, FRPDEPOT_ACP_FULL_CATALOGUE_URL )
+				&& 1 === substr_count( $transformed, $record['url'] )
+				&& frpdepot_acp_exact_catalogue_module(
+					frpdepot_acp_find_single_div( $transformed, FRPDEPOT_ACP_CATALOGUE_MODULE_CLASS )
+				) ) {
+				return $transformed;
+			}
+		}
+	}
+
+	// Fail closed: a known drift or unmapped product must not open the full PDF.
+	$neutralized = $html;
+	if ( null === $record && frpdepot_acp_exact_catalogue_module( $module ) ) {
+		$neutralized = substr_replace(
+			$neutralized,
+			'',
+			$module['start'],
+			$module['length']
+		);
+	}
+	return str_replace( FRPDEPOT_ACP_FULL_CATALOGUE_URL, '', $neutralized );
 }
 
 /** Exact card semantics: one fixed title and one fixed guide description. */
@@ -471,7 +691,7 @@ function frpdepot_acp_transform_product_html( $html ) {
 		&& 0 === substr_count( $html, FRPDEPOT_ACP_DERAKANE_NEW_URL )
 		&& 1 === substr_count( $html, FRPDEPOT_ACP_INLINE_CTA );
 	if ( ! $markers_exact ) {
-		return $html;
+		return frpdepot_acp_transform_product_catalogue_html( $html, get_queried_object_id() );
 	}
 
 	$transformed = substr_replace(
@@ -492,19 +712,35 @@ function frpdepot_acp_transform_product_html( $html ) {
 			frpdepot_acp_find_single_div( $transformed, FRPDEPOT_ACP_DERAKANE_MODULE_CLASS ),
 			'Derakane'
 		);
-	return $postconditions ? $transformed : $html;
+	return frpdepot_acp_transform_product_catalogue_html(
+		$postconditions ? $transformed : $html,
+		get_queried_object_id()
+	);
 }
 
-/** Start the final-output filter only for anonymous/public Woo product pages. */
-function frpdepot_acp_start_product_output_filter() {
-	if ( ! frpdepot_acp_is_public_request() || ! function_exists( 'is_product' ) || ! is_product() ) {
+/** Apply exactly one request-specific final-output transformation. */
+function frpdepot_acp_transform_public_html( $html ) {
+	if ( function_exists( 'is_product_category' ) && is_product_category() ) {
+		return frpdepot_acp_transform_archive_html( $html );
+	}
+	return frpdepot_acp_transform_product_html( $html );
+}
+
+/** Start the final-output filter only for anonymous/public Woo product/category pages. */
+function frpdepot_acp_start_public_output_filter() {
+	if ( ! frpdepot_acp_is_public_request() ) {
 		return;
 	}
-	ob_start( 'frpdepot_acp_transform_product_html' );
+	$is_product = function_exists( 'is_product' ) && is_product();
+	$is_category = function_exists( 'is_product_category' ) && is_product_category();
+	if ( ! $is_product && ! $is_category ) {
+		return;
+	}
+	ob_start( 'frpdepot_acp_transform_public_html' );
 }
 
 add_filter( 'wp_get_nav_menu_items', 'frpdepot_acp_sync_menu_items', 90, 3 );
-add_action( 'template_redirect', 'frpdepot_acp_start_product_output_filter', 0 );
+add_action( 'template_redirect', 'frpdepot_acp_start_public_output_filter', 0 );
 
 // Request-local refresh hooks. They clear only an in-memory PHP array.
 add_action( 'transition_post_status', 'frpdepot_acp_invalidate_request_cache', 10, 3 );
