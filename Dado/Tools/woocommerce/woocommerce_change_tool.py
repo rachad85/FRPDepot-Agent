@@ -417,21 +417,21 @@ def selected_state(record: dict[str, Any], template: dict[str, Any]) -> dict[str
             for field, desired in sorted(template.items())}
 
 
-TABLE_TAG_WHITESPACE_RE = re.compile(
-    r"(?i)(</?(?:table|thead|tbody|tr|th|td)\b[^>]*>)[ \t\r\n]+"
-    r"(?=</?(?:table|thead|tbody|tr|th|td)\b[^>]*>)"
+BLOCK_TAG_WHITESPACE_RE = re.compile(
+    r"(?i)(</?(?:table|thead|tbody|tr|th|td|p|ul|ol|li|div|h[1-6])\b[^>]*>)[ \t\r\n]+"
+    r"(?=</?(?:table|thead|tbody|tr|th|td|p|ul|ol|li|div|h[1-6])\b[^>]*>)"
 )
 
 
-def normalize_table_tag_whitespace(value: str) -> str:
-    """Ignore only WordPress-added whitespace between table structure tags."""
-    return TABLE_TAG_WHITESPACE_RE.sub(r"\1", value)
+def normalize_block_tag_whitespace(value: str) -> str:
+    """Ignore only WordPress-added whitespace/newlines between structural block HTML tags."""
+    return BLOCK_TAG_WHITESPACE_RE.sub(r"\1", value).strip()
 
 
 def description_readback_matches(live: str, approved: str) -> bool:
     """Accept only proven, content-preserving WordPress serialization changes."""
-    normalized_live = normalize_table_tag_whitespace(live)
-    normalized_approved = normalize_table_tag_whitespace(approved)
+    normalized_live = normalize_block_tag_whitespace(live)
+    normalized_approved = normalize_block_tag_whitespace(approved)
     if normalized_live == normalized_approved:
         return True
     # WooCommerce wraps a plain-text variation description in one paragraph.

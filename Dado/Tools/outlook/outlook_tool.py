@@ -592,6 +592,15 @@ def message_address(field: dict[str, Any] | None) -> str:
     return str(((field or {}).get("emailAddress") or {}).get("address") or "").strip().casefold()
 
 
+def message_reply_to_address(message: dict[str, Any] | None) -> str:
+    """The Reply-To header address, if present (e.g. on website contact-form submissions)."""
+    for item in (message or {}).get("replyTo") or []:
+        addr = message_address(item)
+        if addr:
+            return addr
+    return ""
+
+
 def recipient_addresses(values: list[dict[str, Any]] | None) -> list[str]:
     return [address for address in (message_address(value) for value in values or []) if address]
 
@@ -685,13 +694,21 @@ def latest_live_external_non_draft(messages: list[dict[str, Any]]) -> dict[str, 
 
     Automated senders are skipped as well, so a bounce or a no-reply notice
     landing after our mail cannot become the message a chase replies to.
+    Website form notifications (e.g. sales@frpdepots.com) carrying an external
+    Reply-To are treated as external customer inquiries.
     """
     candidates = []
     for message in messages:
         if message.get("isDraft") is True:
             continue
         sender = message_address(message.get("from")) or message_address(message.get("sender"))
-        if not sender or is_internal_address(sender) or is_automated_address(sender):
+        reply_to = message_reply_to_address(message)
+        if not sender:
+            continue
+        if is_internal_address(sender):
+            if not reply_to or is_internal_address(reply_to) or is_automated_address(reply_to):
+                continue
+        elif is_automated_address(sender):
             continue
         candidates.append(message)
     return max(candidates, key=message_datetime) if candidates else None
@@ -705,9 +722,9 @@ def resolve_source_message(
     what corrupts it and produces the 'malformed id' HTTP 400 - the encoding and
     the general /me/messages/{id} endpoint are both fine with a clean id.
 
-    Returns the newest non-draft message whose sender address or subject contains
-    *match* (case-insensitive) - EXTERNAL senders normally, OUR OWN sent messages
-    when *own_sent* is set (the chase-own path for threads nobody answered).
+    Returns the newest non-draft message whose sender address, replyTo address, or subject contains
+    *match* (case-insensitive) - EXTERNAL senders normally (including website submissions with
+    an external Reply-To), OUR OWN sent messages when *own_sent* is set (the chase-own path for threads nobody answered).
     Raises with a candidate list when the term is empty, matches nothing, or
     spans more than one conversation."""
     needle = str(match or "").strip().casefold()
@@ -717,7 +734,7 @@ def resolve_source_message(
         "/me/messages?$top=50&$orderby="
         + quote("receivedDateTime desc", safe="")
         + "&$select="
-        + quote("id,conversationId,subject,from,sender,receivedDateTime,isDraft", safe="")
+        + quote("id,conversationId,subject,from,sender,replyTo,receivedDateTime,isDraft", safe="")
     )
     messages = graph_request(access_token, "GET", query).get("value") or []
     hits: list[dict[str, Any]] = []
@@ -725,14 +742,20 @@ def resolve_source_message(
         if message.get("isDraft") is True:
             continue
         sender = message_address(message.get("from")) or message_address(message.get("sender"))
+        reply_to = message_reply_to_address(message)
         if own_sent:
             if not sender or not is_internal_address(sender):
                 continue  # chase-own: our own sent messages only
         else:
-            if not sender or sender.endswith("@frpdepots.com"):
-                continue  # external senders only
+            if not sender:
+                continue
+            if is_internal_address(sender):
+                if not reply_to or is_internal_address(reply_to) or is_automated_address(reply_to):
+                    continue  # internal messages without external Reply-To skipped
+            elif is_automated_address(sender):
+                continue
         subject = str(message.get("subject") or "").casefold()
-        if needle in sender or needle in subject:
+        if needle in sender or (reply_to and needle in reply_to) or needle in subject:
             hits.append(message)
     if not hits:
         kind = "own sent" if own_sent else "external"
@@ -999,15 +1022,19 @@ def command_reply_all(args: argparse.Namespace) -> None:
     if not conversation_id:
         raise OutlookError("Reply All blocked: the source message has no Outlook conversation ID.")
     source_sender = message_address(source.get("from")) or message_address(source.get("sender"))
+    source_reply_to = message_reply_to_address(source)
     if chase_own:
         if not source_sender or not is_internal_address(source_sender):
             raise OutlookError(
                 "Chase-own blocked: the source must be Rachad's own sent message."
             )
     else:
-        if not source_sender or is_internal_address(source_sender):
+        if not source_sender:
             raise OutlookError("Reply All blocked: select the latest external message in the thread.")
-        if is_automated_address(source_sender):
+        if is_internal_address(source_sender):
+            if not source_reply_to or is_internal_address(source_reply_to) or is_automated_address(source_reply_to):
+                raise OutlookError("Reply All blocked: select the latest external message in the thread.")
+        elif is_automated_address(source_sender):
             raise OutlookError(
                 "Reply All blocked: that message is from an automated sender "
                 "(bounce/no-reply); it is not something to reply to."

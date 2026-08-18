@@ -33,8 +33,8 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 import google_investments_auth as auth
 
 TOOL_NAME = "FRP Depot Fixed Catalogue Drive Publisher"
-TOOL_VERSION = "1.2.0"
-SCHEMA_VERSION = 3
+TOOL_VERSION = "1.3.0"
+SCHEMA_VERSION = 4
 ACTION = "replace_exact_catalogue_pdf"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
@@ -63,12 +63,12 @@ EXPECTED_PARENT_PATH = (
     "FRPDEPOT INC.",
     "Specs & Catalog",
 )
-ARTIFACT_PATH = ROOT / "Dado" / "20_Working" / "catalogue_image_revision_20260815" / "FRP_Depots_Catalogue_2026_image_revised.pdf"
+ARTIFACT_PATH = ROOT / "Dado" / "20_Working" / "catalogue_backing_ring_clean_draft_20260817" / "FRP_Depots_Catalogue_2026_backing_rings_clean_DRAFT.pdf"
 EXPECTED_ARTIFACT_RESOLVED = str(ARTIFACT_PATH)
-EXPECTED_ARTIFACT_SHA256 = "60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3"
-EXPECTED_ARTIFACT_MD5 = "b48cff0b570cf68e4249802eebce57a0"
-EXPECTED_ARTIFACT_BYTES = 15429789
-EXPECTED_PAGES = 9
+EXPECTED_ARTIFACT_SHA256 = "00cbed31d9a15fb466950ed785be881cd994c83346404c9a65858954450f837b"
+EXPECTED_ARTIFACT_MD5 = "444896358d1955896c6e3bd9a1cc138e"
+EXPECTED_ARTIFACT_BYTES = 23443803
+EXPECTED_PAGES = 11
 EXPECTED_PAGE_HEADINGS = (
     "FRP Pipe & Fittings",
     "Stocked in Canada. Shipped in Days.",
@@ -78,11 +78,14 @@ EXPECTED_PAGE_HEADINGS = (
     "FRP 90° Elbows",
     "FRP Filament-Wound Pipe",
     "FRP FNPT Couplings",
+    "FRP Backing Rings",
+    "Backing Ring Dimensions",
     "How to order",
 )
-SOURCE = "Rachad Homsi Discord instruction on 2026-08-15 to publish the visually approved catalogue"
+SOURCE = "Rachad Homsi Discord instruction on 2026-08-17 to publish the 11-page clean backing-ring catalogue"
 SUPERSEDED_PLAN_SHA256 = {
     "aaf4c8c2549a65a17576f1609da77780057a392b0e0f1bd1eb21ac2326d467b6",
+    "b19810a60a68f90f670ee2a3247ab7ce78b98d35e0dc6725fc68d259a2bdd994",
 }
 WRITE_CONTRACT = {
     "remote_requests": 1,
@@ -135,7 +138,7 @@ def append_receipt(action: str, evidence: str) -> None:
         handle.write(json.dumps(row, ensure_ascii=True) + "\n")
 
 
-def pdf_projection(data: bytes) -> dict[str, Any]:
+def pdf_projection(data: bytes, *, expected_pages: int | None = EXPECTED_PAGES, expected_headings: tuple[str, ...] | None = EXPECTED_PAGE_HEADINGS) -> dict[str, Any]:
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:
@@ -143,15 +146,19 @@ def pdf_projection(data: bytes) -> dict[str, Any]:
     try:
         if document.needs_pass:
             raise CataloguePublishError("The catalogue PDF is encrypted.")
-        if len(document) != EXPECTED_PAGES:
-            raise CataloguePublishError(f"The catalogue PDF must contain exactly {EXPECTED_PAGES} pages.")
-        for index, heading in enumerate(EXPECTED_PAGE_HEADINGS):
-            normalized = " ".join(document[index].get_text("text").split())
-            if heading not in normalized:
-                raise CataloguePublishError(
-                    f"Catalogue page {index + 1} is missing the fixed heading {heading!r}."
-                )
-        return {"pages": len(document), "page_headings": list(EXPECTED_PAGE_HEADINGS)}
+        if expected_pages is not None and len(document) != expected_pages:
+            raise CataloguePublishError(f"The catalogue PDF must contain exactly {expected_pages} pages, found {len(document)}.")
+        if expected_headings is not None:
+            for index, heading in enumerate(expected_headings):
+                normalized = " ".join(document[index].get_text("text").split())
+                if heading not in normalized:
+                    raise CataloguePublishError(
+                        f"Catalogue page {index + 1} is missing the fixed heading {heading!r}."
+                    )
+            return {"pages": len(document), "page_headings": list(expected_headings)}
+        return {"pages": len(document), "page_headings": [
+            " ".join(page.get_text("text").split())[:80] for page in document
+        ]}
     finally:
         document.close()
 
@@ -258,7 +265,7 @@ def live_projection(service) -> tuple[dict[str, Any], bytes]:
         raise CataloguePublishError("The live catalogue byte count differs from Drive metadata.")
     if md5_bytes(data) != str(item.get("md5Checksum") or ""):
         raise CataloguePublishError("The live catalogue bytes differ from Drive's MD5 metadata.")
-    pdf = pdf_projection(data)
+    pdf = pdf_projection(data, expected_pages=None, expected_headings=None)
     projection = {
         "id": EXPECTED_FILE_ID,
         "name": EXPECTED_FILE_NAME,
@@ -295,8 +302,6 @@ def eligibility(live: dict[str, Any], artifact: dict[str, Any],
         "parent_path": list(EXPECTED_PARENT_PATH),
         "editable": True,
         "trashed": False,
-        "pages": EXPECTED_PAGES,
-        "page_headings": list(EXPECTED_PAGE_HEADINGS),
     }
     for key, expected in fixed.items():
         if live.get(key) != expected:
@@ -454,7 +459,7 @@ def verify_after(before: dict[str, Any], after: dict[str, Any], artifact: dict[s
                 "alternate_link", "web_content_link"):
         if after.get(key) != before.get(key):
             raise CataloguePublishError(f"Protected catalogue field {key} changed during publication.")
-    for key in ("sha256", "md5", "bytes", "pages", "page_headings"):
+    for key in ("sha256", "md5", "bytes", "pages"):
         artifact_key = "md5" if key == "md5" else key
         if after.get(key) != artifact.get(artifact_key):
             raise CataloguePublishError(f"Live catalogue readback failed the {key} verification.")

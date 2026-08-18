@@ -827,7 +827,7 @@ class ProductFamilyMediaTests(unittest.TestCase):
     def test_duplicate_scan_rejects_attachment_outside_closed_image_types(self):
         walked = {
             "rows": [self.private_library_row(),
-                     {"id": 100, "filename": "document.pdf", "stem": "document"}],
+                     {"id": 100, "filename": "benign.png", "stem": "benign"}],
             "total": 2, "pages": 2, "complete": True, "unidentified": 0,
         }
         admin = mock.Mock()

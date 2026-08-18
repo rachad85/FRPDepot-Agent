@@ -75,20 +75,19 @@ sheet — ask instead.
   every protected item field unchanged. The plan remains permanently no-retry.
   Replace the tentative valuation when actual supplier/freight costs are known
   only through a separately approved accounting correction.
-- FRP backing-ring catalog facts (Rachad, 2026-08-11): treat every ring on his
-  handwritten stock sheet as 150 PSI and use the default D411 resin. Prepare the
+- FRP backing-ring catalog facts (Rachad, 2026-08-11, amended 2026-08-17): treat every ring on his
+  handwritten stock sheet as 150 PSI drilling pattern and use generic Polyester (PE) resin designation. Prepare the
   Zoho Inventory catalog first; do not publish the website products until Rachad
   supplies product pictures. Catalogue exactly ONE item per nominal size: black
   and white colour differences do not matter and colour must not appear in the
   Zoho item name, SKU, description, quotes, or later website label. Do not show
   outside diameter either. The 4-inch and 10-inch sheet rows are the same
-  products as existing generic Zoho items `BRDN100150PSI411` and
-  `BRDN250150PSI411`; merge their counts into those existing item IDs and keep
+  products as existing generic Zoho items `BRDN100150PSIPE` and
+  `BRDN250150PSIPE` (renamed from 411 on 2026-08-17); merge their counts into those existing item IDs and keep
   current orders linked. The 1-1/2-inch total is 85 pcs. The eight colour-neutral
   1, 1-1/2, 2, 3, 6, 8, 12 and 14-inch Zoho items were created and live-verified
-  on 2026-08-12 at the approved Fei-cost × 3.6 rates. Their 713 physical units
-  are not loaded yet; live starting stock is zero pending a separate approved
-  inventory-adjustment plan. The existing 4-inch/10-inch items already hold 113.
+  on 2026-08-12 at the approved Fei-cost × 3.6 rates (renamed from 411 to PE on 2026-08-17). Their 713 physical units
+  are loaded and valued; live stock holds 713 pcs across the 8 items and 113 pcs across 4-in/10-in.
 - FRP backing-ring dimensional authority (Rachad, 2026-08-16): the correct
   specification for FRP Depot's existing ten-size backing-ring range is Plasticon
   drawing `300-P001E-Rev3.0`, `Back Ring`, sheet 16 of 23, May 2014. For FRP use
@@ -102,6 +101,12 @@ sheet — ask instead.
   stock: Litek is comparison/alternate-supplier evidence only, and Permatech or
   any future supplier must prove exact geometry, tolerances, resin/laminate and
   rating against a controlled FRP Depot requirement before equivalency is claimed.
+- Plasticon branding policy (Rachad, 2026-08-17 01:39): "We don't want Plasticon
+  catalogue in there at all just make our own." No Plasticon catalogue page,
+  branding or spec facsimile appears in FRP Depot catalogue or spec material; the
+  drawing above stays an INTERNAL dimensional source only. The same day he also
+  relayed a second-hand claim that Plasticon uses orthophthalic resin — his
+  message is truncated in the log, so confirm it with him before repeating it.
 - FNPT WEBSITE GO-LIVE RULE (Rachad, 2026-08-11; supersedes the earlier hold-for-
   every-supplier-price rollout rule): publish product 2061 using the lower of
   (a) revised supplier USD cost × 3.6 CAD and (b) the exactly equivalent

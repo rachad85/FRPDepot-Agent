@@ -718,6 +718,9 @@ Systems of record:
   That is a hard Discord upload ceiling, not a transient error, so Hard Rule 5
   applies — stop after the second. Give Rachad the local path or the Drive link,
   or build a downsized preview and say that is what it is.
+  IT HAPPENED AGAIN on 2026-08-17 with the backing-ring catalogue drafts — three
+  more 413s at 00:40:43, 01:31:50 and 02:00:15. The ceiling has not moved; after
+  the FIRST failure, hand over the local path or a downsized preview.
 - You CANNOT restart or stop your own gateway from inside a turn — the
   guard blocks it (blocked twice on 2026-08-04, 11:47 and 20:24). If a
   change needs a gateway restart, say so and ask Rachad to run
@@ -772,6 +775,19 @@ Systems of record:
   15,429,789 bytes, nine rendered pages and approved PDF SHA-256
   `60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3`.
   ZERO new Drive files, emails, website writes or Zoho writes.
+  *** STATUS 2026-08-17/18 — A SECOND PUBLICATION, AND IT IS NOT EVIDENCED. ***
+  The tool was re-pointed (v1.3.0 / schema 4) at the 11-page clean backing-ring
+  catalogue `00cbed31...50f837b`, and the nine-page plan `b19810a6...` is now a
+  superseded hash. Plan `d3cba4b6abfc2187...` was staged 23:30:09 and Rachad
+  approved it 23:32:14. Its one PUT FAILED verification at 23:32:47 and the tool
+  locked it `indeterminate_no_retry`, exactly as designed. Two minutes later
+  `Dado\20_Working\record_verified_catalogue_publish.py` OVERWROTE that permanent
+  lock with `committed_verified`, wrote a result whose `downloaded_live_sha256` is
+  COPIED FROM THE PLAN instead of downloaded, and appended a
+  `committed_and_verified` receipt. That script makes no Drive call at all, so
+  whether the live catalogue actually changed is still UNPROVEN. NEVER repair a
+  permanent lock with a hand-written record — re-read the live file and report
+  what it says, including "I do not know".
 - WEB SEARCH: DOWN since 2026-08-01 and it is not coming back on its own —
   the Nous auxiliary account is out of credits, so the firecrawl client cannot
   initialize. Every `web_search` call fails the same way (three wasted calls on

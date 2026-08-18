@@ -133,7 +133,7 @@ def _conversation(token: str, conversation_id: str) -> list[dict]:
     safe = conversation_id.replace("'", "''")
     flt = urllib.parse.quote(f"conversationId eq '{safe}'")
     data = get(token, "/me/messages?$filter=" + flt +
-                      "&$select=id,subject,from,toRecipients,ccRecipients,"
+                      "&$select=id,subject,from,toRecipients,ccRecipients,replyTo,"
                       "sentDateTime,receivedDateTime,isDraft&$top=50")
     msgs = data.get("value", [])
     msgs.sort(key=_when)
@@ -158,11 +158,16 @@ def thread_state(token: str, conversation_id: str, my_addr: str) -> dict:
             ref = human[-1] if human else msgs[-1]
             lf = _addr(ref, "from")
             lw = _when(ref)[:16].replace("T", " ")
+            reply_to = ((ref.get("replyTo") or [{}])[0].get("emailAddress") or {}).get("address", "").lower()
             if my_addr and lf == my_addr:
                 ext = [r for r in _recipients(ref) if r and not _is_internal(r)]
                 tag = "[YOU replied last]" if ext else "[fwd internally-waiting]"
             elif _is_internal(lf):
-                tag = "[handled internally]"
+                if reply_to and not _is_internal(reply_to) and not _is_automated(reply_to):
+                    tag = "[awaits YOU]"
+                    lf = reply_to
+                else:
+                    tag = "[handled internally]"
             elif lf:
                 tag = "[awaits YOU]"
             else:
@@ -318,7 +323,11 @@ def _waiting_since(msgs: list[dict], my_addr: str) -> str:
                 not _is_internal(r) for r in _recipients(m)):
             last_owner_external = i
     for m in human[last_owner_external + 1:]:
-        if _addr(m, "from") and not _is_internal(_addr(m, "from")):
+        frm = _addr(m, "from")
+        reply_to = ((m.get("replyTo") or [{}])[0].get("emailAddress") or {}).get("address", "").lower()
+        if frm and not _is_internal(frm):
+            return _when(m)
+        elif _is_internal(frm) and reply_to and not _is_internal(reply_to) and not _is_automated(reply_to):
             return _when(m)
     return ""
 

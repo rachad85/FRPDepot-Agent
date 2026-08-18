@@ -199,8 +199,8 @@ class ConstantAndArtifactTests(CatalogueToolTestCase):
         self.assertEqual(tool.EXPECTED_MIME_TYPE, "application/pdf")
         self.assertEqual(len(tool.EXPECTED_PARENT_IDS), 6)
         self.assertEqual(tool.EXPECTED_PARENT_PATH[-2:], ("FRPDEPOT INC.", "Specs & Catalog"))
-        self.assertEqual(tool.EXPECTED_ARTIFACT_SHA256, "60bf4a5fcc19246f2d782608df145b06c83275fd30cec2ba7b3506b2c7382fb3")
-        self.assertEqual(tool.EXPECTED_ARTIFACT_BYTES, 15429789)
+        self.assertEqual(tool.EXPECTED_ARTIFACT_SHA256, "00cbed31d9a15fb466950ed785be881cd994c83346404c9a65858954450f837b")
+        self.assertEqual(tool.EXPECTED_ARTIFACT_BYTES, 23443803)
         self.assertEqual(tool.APPROVAL_WORD, "APPROVED")
         self.assertEqual(tool.PLAN_LIFETIME_HOURS, 24)
 
@@ -208,7 +208,7 @@ class ConstantAndArtifactTests(CatalogueToolTestCase):
         projection, data = tool.artifact_projection()
         self.assertEqual(projection, tool.expected_artifact_projection())
         self.assertEqual(tool.sha256_bytes(data), tool.EXPECTED_ARTIFACT_SHA256)
-        self.assertEqual(projection["pages"], 9)
+        self.assertEqual(projection["pages"], 11)
 
     def test_same_bytes_at_any_other_resolved_path_are_refused(self):
         other = Path(self.tmp.name) / "alias.pdf"
@@ -248,13 +248,13 @@ class PdfProjectionTests(unittest.TestCase):
         document.close()
         return data
 
-    def test_valid_nine_page_heading_projection(self):
+    def test_valid_eleven_page_heading_projection(self):
         result = tool.pdf_projection(self.make_pdf())
-        self.assertEqual(result["pages"], 9)
+        self.assertEqual(result["pages"], 11)
         self.assertEqual(result["page_headings"], list(tool.EXPECTED_PAGE_HEADINGS))
 
     def test_wrong_page_count_is_refused(self):
-        with self.assertRaisesRegex(tool.CataloguePublishError, "exactly 9 pages"):
+        with self.assertRaisesRegex(tool.CataloguePublishError, "exactly 11 pages"):
             tool.pdf_projection(self.make_pdf(tool.EXPECTED_PAGE_HEADINGS[:-1]))
 
     def test_missing_heading_is_refused(self):
@@ -288,8 +288,6 @@ class EligibilityTests(CatalogueToolTestCase):
             "parent_path": ["Elsewhere"],
             "editable": False,
             "trashed": True,
-            "pages": 8,
-            "page_headings": ["wrong"],
         }
         for key, value in mutations.items():
             with self.subTest(key=key):

@@ -253,6 +253,7 @@ class OutlookToolTests(unittest.TestCase):
                 "from": {"emailAddress": {"address": "brian@example.com"}},
                 "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
                 "ccRecipients": [{"emailAddress": {"address": "buyer@example.com"}}],
+                "replyTo": [],
                 "receivedDateTime": "2026-07-23T10:00:00Z",
                 "isDraft": False,
             }
@@ -342,7 +343,7 @@ class OutlookToolTests(unittest.TestCase):
                 "id": "source-id", "conversationId": "conv-1", "subject": "RE: Pricing",
                 "from": {"emailAddress": {"address": "brian@example.com"}},
                 "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
-                "ccRecipients": [], "receivedDateTime": "2026-07-23T11:00:00Z", "isDraft": False,
+                "ccRecipients": [], "replyTo": [], "receivedDateTime": "2026-07-23T11:00:00Z", "isDraft": False,
             }
             standalone = {
                 "id": "old-standalone", "conversationId": "conv-OTHER", "subject": "Pricing",
@@ -694,6 +695,21 @@ class OutlookToolTests(unittest.TestCase):
             # a term that only hits own-domain mail is not a valid external target
             with self.assertRaises(tool.OutlookError):
                 tool.resolve_source_message("t", "internal note")
+
+    def test_resolve_source_message_accepts_website_submission_with_external_reply_to(self) -> None:
+        recent = {
+            "value": [
+                {
+                    "id": "web-submit", "conversationId": "c_web", "subject": "New submission from Contact",
+                    "from": {"emailAddress": {"address": "sales@frpdepots.com"}},
+                    "replyTo": [{"emailAddress": {"address": "customer@example.com"}}],
+                    "receivedDateTime": "2026-08-17T18:00:00Z", "isDraft": False,
+                }
+            ]
+        }
+        with patch.object(tool, "graph_request", return_value=recent):
+            self.assertEqual(tool.resolve_source_message("t", "customer@example.com")["id"], "web-submit")
+            self.assertEqual(tool.resolve_source_message("t", "submission")["id"], "web-submit")
         ambiguous = {
             "value": [
                 {"id": "a", "conversationId": "c1", "subject": "Pricing",

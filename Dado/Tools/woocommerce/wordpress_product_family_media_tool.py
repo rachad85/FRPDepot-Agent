@@ -736,6 +736,21 @@ def protected_product_projection(record: dict[str, Any]) -> dict[str, Any]:
                 or len(set(related)) != len(related)):
             raise FamilyMediaError("REFUSED: product related_ids are not a unique positive-ID list.")
         projection["related_ids"] = sorted(related)
+    if "meta_data" in projection:
+        raw_meta = projection["meta_data"]
+        if not isinstance(raw_meta, list):
+            raise FamilyMediaError("REFUSED: product meta_data is not a list.")
+        normalized_meta: list[dict[str, Any]] = []
+        for entry in raw_meta:
+            if isinstance(entry, dict):
+                normalized_meta.append({
+                    "key": entry.get("key"),
+                    "value": entry.get("value"),
+                })
+            else:
+                normalized_meta.append({"raw": entry})
+        normalized_meta.sort(key=lambda x: canonical(x))
+        projection["meta_data"] = normalized_meta
     return projection
 
 
@@ -1270,7 +1285,8 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
                      for key, spec in target_specs.items() for record in spec["images"]}
     name_conflicts: list[dict[str, Any]] = []
     image_rows = ([row for row in rows
-                   if row.get("id") != private_library_record["attachment_id"]]
+                   if row.get("id") != private_library_record["attachment_id"]
+                   and media_base._extension_of(str(row.get("filename") or "")) in media_base.IMAGE_EXTENSIONS]
                   if walked.get("complete") is True and private_exception_proven else [])
     completed = 0
     failures = 0
@@ -1335,6 +1351,7 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
             recheck_image_rows = [
                 row for row in rechecked["rows"]
                 if row.get("id") != private_library_record["attachment_id"]
+                and media_base._extension_of(str(row.get("filename") or "")) in media_base.IMAGE_EXTENSIONS
             ]
             for row in recheck_image_rows:
                 try:

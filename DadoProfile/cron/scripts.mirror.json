@@ -22,16 +22,16 @@
  },
  "dado_followup_digest.py": {
   "kind": "copy",
-  "deployed_sha256": "da7bae587beacf3b73542bf62c05a18094d4bf2d0eabb83a04311a0129f893eb",
+  "deployed_sha256": "808cd0159acd5d20b7e843bf20f31f50fcd15c999f069261eebc7034775f2068",
   "repo_path": "Dado\\Tools\\watch\\dado_followup_digest.py",
-  "repo_sha256": "da7bae587beacf3b73542bf62c05a18094d4bf2d0eabb83a04311a0129f893eb",
+  "repo_sha256": "808cd0159acd5d20b7e843bf20f31f50fcd15c999f069261eebc7034775f2068",
   "in_sync": true
  },
  "dado_inbox_reasoner.py": {
   "kind": "copy",
-  "deployed_sha256": "bd02683e4fba3e99cf4d009dfe6c8ae2f21636cf5ff0b75bbdcde011e317430b",
+  "deployed_sha256": "8c44c7d50cc867a8d1e601cffe6a058eb0a3eb8d2f3fb88c869738dd0d368512",
   "repo_path": "Dado\\Tools\\watch\\dado_inbox_reasoner.py",
-  "repo_sha256": "bd02683e4fba3e99cf4d009dfe6c8ae2f21636cf5ff0b75bbdcde011e317430b",
+  "repo_sha256": "8c44c7d50cc867a8d1e601cffe6a058eb0a3eb8d2f3fb88c869738dd0d368512",
   "in_sync": true
  },
  "job_runner.py": {

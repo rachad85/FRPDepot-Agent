@@ -358,89 +358,41 @@ def prefetch_triage():
     log("triage data collected")
 
 
-# Substrings that mark a PROVIDER-level failure - credentials or quota, raised
-# before the model does any work. Matched case-insensitively against stderr.
-_PROVIDER_DOWN = (
-    "quota exhausted",
-    "usage limit",
-    "rate limit",
-    "rate-limited",
-    "429",
-    "provider authentication failed",
-    "auth failed",
-    "invalid_grant",
-    "no api key was found",
-)
-
-
-def _provider_unavailable(stderr):
-    low = (stderr or "").lower()
-    return any(token in low for token in _PROVIDER_DOWN)
-
-
 def run_dado():
     """Returns the model's text, or None if the run never produced one.
 
     None and "" mean different things and must not be conflated. run_dado used
     to return "" on failure, is_silent("") is True, so a quota exhaustion on the
-    shared openai-codex plan, a gateway outage or a dead provider logged "silent" and sent nothing - identical to a clean
+    shared openai-codex plan, a gateway outage or a dead provider (there is no
+    fallback, by design) logged "silent" and sent nothing - identical to a clean
     sweep. Rachad reads that quiet as "nothing needs me" when in fact no mail was
     reasoned over at all. Collection failures alerted; brain failures did not,
     which is what made the gap invisible.
     """
-    # 2026-08-17: THE fallback_providers CHAIN IN config.yaml DOES NOT REACH THIS
-    # CODE. `hermes -z` is the CLI one-shot path and the 429-to-fallback wrapper
-    # lives only in gateway/run.py (~2420) and cron/scheduler.py (~3412); the
-    # one-shot lets the AuthError propagate. So when the shared Codex plan hit its
-    # cap on 2026-08-16 ~21:46 this job alerted "Inbox sweep could not be
-    # reviewed" every two hours (07:02, 09:02, 11:02, 13:02 on 08-17) while
-    # Dado's configured fallbacks were healthy and answering the whole time.
-    # The chain is therefore walked HERE, explicitly, in the same order as
-    # fallback_providers in dado's config.yaml.
     env = os.environ.copy()
     env["HERMES_ACCEPT_HOOKS"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-
-    # (label, extra argv) - keep in step with fallback_providers in config.yaml.
-    attempts = [
-        ("profile default", []),
-        ("gemini-3.7-flash", ["--provider", "nous", "-m", "google/gemini-3.7-flash"]),
-        ("longcat-2.0:free", ["--provider", "nous", "-m", "meituan/longcat-2.0:free"]),
-    ]
-    for label, extra in attempts:
-        try:
-            proc = subprocess.run(
-                [hermes_exe(), "-p", PROFILE] + extra + ["-z", PROMPT],
-                cwd=WORKDIR,
-                env=env,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                capture_output=True,
-                timeout=2700,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception as exc:
-            # timeout=2700 raises TimeoutExpired, which used to escape run_once and
-            # kill the process with a traceback - again with no message to Rachad.
-            # A timeout is NOT retried elsewhere: the run may already have taken
-            # tool actions, and repeating the sweep could duplicate them.
-            log(f"dado run raised on {label}: {type(exc).__name__}: {exc}")
-            return None
-        if proc.returncode == 0:
-            if extra:
-                log(f"dado ran on fallback {label}")
-            return (proc.stdout or "").strip()
-        stderr = proc.stderr or ""
-        log(f"dado failed on {label} rc={proc.returncode} stderr={stderr[:500]!r}")
-        # Only a PROVIDER-level refusal is retried on another provider. Those are
-        # raised while resolving credentials, BEFORE the model runs, so no tool
-        # action can have happened yet and a retry cannot duplicate work. Any
-        # other non-zero exit may have died mid-turn with drafts already made -
-        # stop rather than risk doing it twice.
-        if not _provider_unavailable(stderr):
-            return None
-    return None
+    try:
+        proc = subprocess.run(
+            [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
+            cwd=WORKDIR,
+            env=env,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            capture_output=True,
+            timeout=2700,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        # timeout=2700 raises TimeoutExpired, which used to escape run_once and
+        # kill the process with a traceback - again with no message to Rachad.
+        log(f"dado run raised: {type(exc).__name__}: {exc}")
+        return None
+    if proc.returncode != 0:
+        log(f"dado failed rc={proc.returncode} stderr={(proc.stderr or '')[:500]!r}")
+        return None
+    return (proc.stdout or "").strip()
 
 
 # *** THE SEND FUSE - NEVER SEND FROM A TEST RUN. ***

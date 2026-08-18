@@ -109,6 +109,7 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-14 Important: Account Closure Notification — Re-alerted within 24 hours: FRP Depot loses Airwallex access on August 15; verify statements are downloaded and any remaining balance is withdrawn.
 - 2026-08-14 British Columbia PST Registration Case: 18476601 — BC Finance requires confirmation that 01-Jan-2026 is when FRP Depot began taxable BC sales; choosing that date may create overdue PST-return obligations, so Rachad must verify the date before replying.
 - 2026-08-15 INV-000053 / SHM Marine Constructors JV — Zoho failed to send the payment reminder because no contact person is linked; live Books shows CAD 14,712.60 overdue and unpaid, so payment or manual reminder requires verification.
+- 2026-08-17 PO5236 for SO00054 — New Troy Dualam PO received from Jasminder Singh for Sales Order SO-00054; approval requested to acknowledge and process.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

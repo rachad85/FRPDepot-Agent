@@ -231,32 +231,6 @@ def prefetch() -> int:
     return int(data.get("overdue_count", 0))
 
 
-# 2026-08-17: PROVIDER-level failure markers. `hermes -z` is the CLI one-shot
-# path and the 429-to-fallback wrapper lives ONLY in gateway/run.py and
-# cron/scheduler.py, so the fallback_providers chain in config.yaml never
-# applies here. These mark a failure raised while resolving credentials, BEFORE
-# the model runs, so no tool action can have happened and a retry on another
-# provider cannot duplicate work. Anything else stops.
-_PROVIDER_DOWN = (
-    "quota exhausted", "usage limit", "rate limit", "rate-limited", "429",
-    "provider authentication failed", "auth failed", "invalid_grant",
-    "no api key was found",
-)
-
-
-def _provider_unavailable(stderr):
-    low = (stderr or "").lower()
-    return any(token in low for token in _PROVIDER_DOWN)
-
-
-# Same order as fallback_providers in dado's config.yaml.
-_FALLBACK_ATTEMPTS = (
-    ("profile default", []),
-    ("gemini-3.7-flash", ["--provider", "nous", "-m", "google/gemini-3.7-flash"]),
-    ("longcat-2.0:free", ["--provider", "nous", "-m", "meituan/longcat-2.0:free"]),
-)
-
-
 def run_dado() -> str | None:
     """Returns the model's text, or None if the run never produced one.
 
@@ -269,28 +243,20 @@ def run_dado() -> str | None:
     env = os.environ.copy()
     env["HERMES_ACCEPT_HOOKS"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
-    for label, extra in _FALLBACK_ATTEMPTS:
-        try:
-            proc = subprocess.run(
-                [hermes_exe(), "-p", PROFILE] + list(extra) + ["-z", PROMPT],
-                cwd=WORKDIR, env=env, text=True, encoding="utf-8", errors="replace",
-                capture_output=True, timeout=2700,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except Exception as exc:
-            # A timeout is NOT retried elsewhere: the run may already have taken
-            # tool actions and repeating it could duplicate them.
-            log(f"dado run raised on {label}: {type(exc).__name__}: {exc}")
-            return None
-        if proc.returncode == 0:
-            if extra:
-                log(f"dado ran on fallback {label}")
-            return (proc.stdout or "").strip()
-        stderr = proc.stderr or ""
-        log(f"dado failed on {label} rc={proc.returncode} stderr={stderr[:400]!r}")
-        if not _provider_unavailable(stderr):
-            return None
-    return None
+    try:
+        proc = subprocess.run(
+            [hermes_exe(), "-p", PROFILE, "-z", PROMPT],
+            cwd=WORKDIR, env=env, text=True, encoding="utf-8", errors="replace",
+            capture_output=True, timeout=2700,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        log(f"dado run raised: {type(exc).__name__}: {exc}")
+        return None
+    if proc.returncode != 0:
+        log(f"dado failed rc={proc.returncode} stderr={(proc.stderr or '')[:400]!r}")
+        return None
+    return (proc.stdout or "").strip()
 
 
 def run_once() -> int:

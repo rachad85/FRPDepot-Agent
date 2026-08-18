@@ -326,6 +326,25 @@ class TrackerResilienceTests(unittest.TestCase):
         result = self._bank_notice_run(thread, "Re: deposit notice")
         self.assertEqual(result["overdue_count"], 0)
 
+    def test_website_contact_submission_with_reply_to_is_awaits_you(self):
+        """Web contact form from sales@frpdepots.com with customer Reply-To must be [awaits YOU]."""
+        msgs = [
+            {
+                "id": "m1",
+                "from": {"emailAddress": {"address": "sales@frpdepots.com"}},
+                "toRecipients": [{"emailAddress": {"address": "info@frpdepots.com"}}],
+                "replyTo": [{"emailAddress": {"address": "customer@example.com"}}],
+                "receivedDateTime": "2026-08-17T18:36:58Z",
+                "isDraft": False,
+            }
+        ]
+        with patch.object(check, "_conversation", return_value=msgs):
+            st = check.thread_state("t", "c1", "info@frpdepots.com")
+            self.assertEqual(st["tag"], "[awaits YOU]")
+            self.assertEqual(st["last_from"], "customer@example.com")
+            ws = check._waiting_since(msgs, "info@frpdepots.com")
+            self.assertEqual(ws, "2026-08-17T18:36:58Z")
+
     @unittest.expectedFailure
     def test_a_FORWARDED_bank_notice_is_still_wrongly_urgent(self):
         """B-16, the part that is NOT fixed. Documented, not pretended away.
