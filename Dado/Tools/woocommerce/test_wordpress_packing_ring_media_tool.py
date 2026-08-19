@@ -1113,6 +1113,7 @@ class TestNavigationGuards(unittest.TestCase):
 
     def test_accepted_admin_urls(self):
         for url in (f"{ORIGIN}/wp-admin/media-new.php?browser-uploader",
+                    f"{ORIGIN}/wp-admin/media-new.php",
                     f"{ORIGIN}/wp-admin/upload.php",
                     f"{ORIGIN}/wp-admin/upload.php?posted=4321",
                     f"{ORIGIN}/wp-admin/upload.php?mode=list&paged=7",
@@ -1142,8 +1143,8 @@ class TestNavigationGuards(unittest.TestCase):
             f"{ORIGIN}/wp-admin/upload.php?mode=list&paged=1&s=secret",
             f"{ORIGIN}/wp-admin/upload.php?posted=abc",
             f"{ORIGIN}/wp-admin/upload.php?deleted=3",
-            f"{ORIGIN}/wp-admin/media-new.php",
             f"{ORIGIN}/wp-admin/media-new.php?browser-uploader&post_id=7",
+            f"{ORIGIN}/wp-admin/media-new.php?foo=bar",
         ):
             with self.subTest(url=url), self.assertRaises(media.MediaUploadError):
                 media.assert_admin_url(url)

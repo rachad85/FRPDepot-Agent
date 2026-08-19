@@ -55,8 +55,8 @@ import wordpress_packing_ring_media_tool as media_base  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Fixed Product Family Media Tool"
-TOOL_VERSION = "1.4.8"
-SCHEMA_VERSION = 5
+TOOL_VERSION = "1.7.0"
+SCHEMA_VERSION = 8
 ACTION = "upload_and_assign_fixed_product_family_gallery"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
@@ -1113,13 +1113,15 @@ class ProductFamilyAdmin(media_base.AdminPage):
         submits = self._page.query_selector_all(media_base.SUBMIT_SELECTOR)
         if len(inputs) != 1 or len(submits) != 1:
             raise FamilyMediaError("REFUSED: WordPress does not expose exactly one file input and submit control.")
-        inputs[0].set_input_files(payload, timeout=media_base.ACTION_TIMEOUT_MS)
+        inputs[0].set_input_files(str(resolved), timeout=media_base.ACTION_TIMEOUT_MS)
         self._assert_landed()
         if on_submit_attempt is not None:
             on_submit_attempt()
-        submits[0].click(timeout=media_base.ACTION_TIMEOUT_MS)
-        self._page.wait_for_load_state("domcontentloaded", timeout=media_base.UPLOAD_TIMEOUT_MS)
+        with self._page.expect_navigation(wait_until="domcontentloaded", timeout=media_base.UPLOAD_TIMEOUT_MS):
+            submits[0].click(timeout=media_base.UPLOAD_TIMEOUT_MS)
         self._assert_landed()
+        if (urlsplit(self.url).path or "") == media_base.MEDIA_NEW_PATH:
+            self._goto(media_base.UPLOAD_LIST_URL + "?mode=list")
         return self._identify_upload(known_ids)
 
     def verify_public_product(self, key: str, verified_source_urls: list[str]) -> dict[str, Any]:
@@ -1995,7 +1997,7 @@ def _record_indeterminate(plan_path: Path, plan: dict[str, Any], stage: str,
         "status": "INDETERMINATE_NO_RETRY", "plan_sha256": plan["sha256"],
         "operation_sha256": plan["operation_sha256"],
         "updated_utc": utc_now().isoformat(), "stage": stage,
-        "reason": type(exc).__name__, "uploaded_verified": copy.deepcopy(uploaded),
+        "reason": type(exc).__name__, "message": str(exc), "uploaded_verified": copy.deepcopy(uploaded),
         "current_upload": copy.deepcopy(current_upload),
         "current_upload_may_have_landed": current_upload_may_have_landed,
         "observed_attachment_id": observed_attachment_id,

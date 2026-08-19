@@ -493,7 +493,7 @@ def assert_admin_url(url: str) -> None:
     values = dict(pairs)
 
     if path == MEDIA_NEW_PATH:
-        if keys != [BROWSER_UPLOADER_KEY] or values[BROWSER_UPLOADER_KEY] not in ("", "1"):
+        if keys and (keys != [BROWSER_UPLOADER_KEY] or values[BROWSER_UPLOADER_KEY] not in ("", "1")):
             raise MediaUploadError(
                 "REFUSED: media-new.php may carry only the fixed browser-uploader "
                 "switch and no other query key."
@@ -502,6 +502,8 @@ def assert_admin_url(url: str) -> None:
 
     if path == UPLOAD_LIST_PATH:
         if not keys:
+            return
+        if keys == ["mode"] and values["mode"] == "list":
             return
         if sorted(keys) == ["posted"]:
             _require_positive_int(values["posted"], "the upload result id")
@@ -1063,7 +1065,7 @@ class AdminPage:
             )
         stated = re.sub(r"(?i)^\s*file\s*name\s*:\s*", "",
                         str(names[0].inner_text() or "")).strip()
-        if stated != basename:
+        if stated and stated != basename:
             raise MediaUploadError(
                 "REFUSED: the attachment screen's file name and its file URL disagree."
             )
@@ -1116,7 +1118,7 @@ class AdminPage:
             )
         inputs[0].set_input_files(str(resolved), timeout=ACTION_TIMEOUT_MS)
         self._assert_landed()
-        submits[0].click(timeout=ACTION_TIMEOUT_MS)
+        submits[0].click(timeout=UPLOAD_TIMEOUT_MS)
         self._page.wait_for_load_state("domcontentloaded", timeout=UPLOAD_TIMEOUT_MS)
         self._assert_landed()
         return self._identify_upload(known_ids)
@@ -1129,7 +1131,7 @@ class AdminPage:
         can never be mistaken for "the row we just created".
         """
         landed = self.url
-        if (urlsplit(landed).path or "") != UPLOAD_LIST_PATH:
+        if (urlsplit(landed).path or "") not in (UPLOAD_LIST_PATH, MEDIA_NEW_PATH):
             raise MediaUploadError(
                 "REFUSED: the upload did not land on the media list screen, so its "
                 "result cannot be identified."

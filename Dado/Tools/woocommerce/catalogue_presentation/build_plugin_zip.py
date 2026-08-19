@@ -21,6 +21,7 @@ MEMBERS = (
     "frpdepot-automatic-catalogue-presentation.php",
     "readme.txt",
     "catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf",
+    "catalogue-sections/FRP_Depots_Backing_Rings_2026.pdf",
     "catalogue-sections/FRP_Depots_Manways_and_Covers_2026.pdf",
     "catalogue-sections/FRP_Depots_90_Degree_Elbows_2026.pdf",
     "catalogue-sections/FRP_Depots_Filament_Wound_Pipe_2026.pdf",

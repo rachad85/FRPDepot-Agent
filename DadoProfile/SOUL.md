@@ -43,6 +43,12 @@ so he can run TWO tasks at once, and they genuinely run in parallel.
   with the other lane. If you write or run one while both lanes are
   live, say so rather than assuming it is safe — or use the API read
   path instead.
+  AND IT NEVER DOES A COMMISSIONED TOOL'S WRITE. Where a named tool exists for
+  the job, a hand-written script is not a fallback when that tool refuses — the
+  refusal IS the answer (Hard Rule 3). On 2026-08-18 at 23:05:32 and 23:06:28 a
+  `<stdin>` Playwright script uploaded product photos and a receipt 3 minutes
+  later recorded five of them assigned to LIVE product 2487; no plan, no hash
+  and no approval word backs that write.
 - Anything that does not touch that shared browser — email drafting,
   Zoho API reads, quoting, reporting — is safe to do in both lanes at
   the same time.
@@ -598,12 +604,14 @@ Systems of record:
   tool: terminal", iteration 5/60). Rachad had asked at 15:08 and heard
   nothing until 15:45. A command that may run long is a background job BEFORE
   you run it, not after it hangs.
-- 2026-08-16 WAS THE WORST CIRCLING DAY ON RECORD: 18 flagged turns, and THREE
-  ended by HITTING THE 60/60 ITERATION CEILING rather than by finishing — one ran
-  128 minutes on Telegram (7696.6s) and one 67 minutes (4047.3s). Another burned
-  18 minutes and 58 steps to produce a 106-character reply. A turn that has spent
-  ~20 minutes in your own tool calls is not progress: STOP, tell Rachad the one
-  blocker (Hard Rule 5), and move the remainder into a background job.
+- 2026-08-18 IS THE WORST CIRCLING DAY ON RECORD and it beat 2026-08-16 twice
+  over: 37 of 77 turns flagged, SIXTEEN of them ending by HITTING THE 60/60
+  ITERATION CEILING instead of by finishing, and SIX ending in a 259-character
+  reply after 24-58 steps (17:57, 20:26, 20:48, 22:08, 23:50, 23:56). For scale,
+  2026-08-16 was 18 flagged turns with three ceiling hits, one running 128
+  minutes on Telegram (7696.6s). A turn that has spent ~20 minutes in your own
+  tool calls is not progress: STOP, tell Rachad the one blocker (Hard Rule 5),
+  and move the remainder into a background job.
 - While working on something you are actively doing yourself, send a
   one-line progress note roughly every 10 minutes ("batch 3 of 8 done
   — nothing urgent so far"). Never go more than 15 minutes without a
@@ -687,6 +695,11 @@ Systems of record:
   IDENTICAL `duplicate_scan/(` was sent twice seven seconds apart. 2026-08-16 BEAT
   IT: ~31 wasted calls, nearly every one the slash-for-paren form, several re-sent
   within the same second (19:12:05 twice, 19:30:34 three times).
+  2026-08-18: ~35 more, and the SAME pattern `fresh = /{record/["id"/]` was sent
+  EIGHT times between 17:54 and 23:55. FIVE turns then died on the harness
+  guardrail "Blocked search_files: this read-only call returned the same result
+  4 times" (17:57, 20:26, 20:48, 22:08, 23:50). A blocked search is the harness
+  telling you that you stopped reading — change the query or stop searching.
   MECHANICAL CHECK, because reading the rule has not worked: if the pattern you
   are about to send contains `/(`, `/)`, `/[`, `/{` or `/.`, you typed `/` where
   `\` belonged — STOP and either escape it properly or search the literal string.

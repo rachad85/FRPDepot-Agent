@@ -211,16 +211,17 @@ check( false === strpos( $source, 'set_transient(' ), 'no persistent transient c
 check( false === strpos( $source, 'register_activation_hook' ), 'no activation-time writes' );
 
 /* Fixed section PDFs, exact live mappings and read-only archive panels. */
-check( '1.1.1' === FRPDEPOT_ACP_VERSION, 'section-catalogue plugin version is exact 1.1.1' );
+check( '1.2.0' === FRPDEPOT_ACP_VERSION, 'section-catalogue plugin version is exact 1.2.0' );
 $expected_sections = array(
 	'stub_flanges' => array( 'FRP_Depots_Stub_Flanges_2026.pdf', 1310780, 'f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6' ),
+	'backing_rings' => array( 'FRP_Depots_Backing_Rings_2026.pdf', 670673, '8375c59b46cdd963a6ffa92da1d45d7983d31ebb5637122452a42a4a3b7a5658' ),
 	'manways_and_covers' => array( 'FRP_Depots_Manways_and_Covers_2026.pdf', 1503479, '09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65' ),
 	'elbows_90' => array( 'FRP_Depots_90_Degree_Elbows_2026.pdf', 4558184, 'ead009c50b7f8cc338b80928084c6ef24141477e5addea7806a4b7da6547fcb2' ),
 	'filament_wound_pipe' => array( 'FRP_Depots_Filament_Wound_Pipe_2026.pdf', 477528, 'f4fbaf8cb72e7b41f22ddb170185595e12d109394c136edde79f902dd2f65fc2' ),
 	'fnpt_couplings' => array( 'FRP_Depots_FNPT_Couplings_2026.pdf', 2001467, '19efa8d20a1be17a1451ad24f6b1d45c2f1e53b3fb58cece5aed496acc91db33' ),
 );
 check( array_keys( $expected_sections ) === array_keys( FRPDEPOT_ACP_SECTION_CATALOGUES ),
-	'exact five reviewed section keys are reachable' );
+	'exact six reviewed section keys are reachable' );
 foreach ( $expected_sections as $key => $expected ) {
 	$record = frpdepot_acp_section_catalogue_record( $key );
 	check( is_array( $record ) && $expected[0] === $record['filename'], "{$key}: exact fixed filename" );
@@ -235,17 +236,18 @@ check( null === frpdepot_acp_section_catalogue_record( 'not_reviewed' ),
 check( array(
 	1368 => 'stub_flanges', 1397 => 'manways_and_covers', 1411 => 'manways_and_covers',
 	1423 => 'elbows_90', 1455 => 'filament_wound_pipe', 2061 => 'fnpt_couplings',
-) === FRPDEPOT_ACP_PRODUCT_SECTION_KEYS, 'exact six live product mappings are pinned' );
+	2487 => 'backing_rings',
+) === FRPDEPOT_ACP_PRODUCT_SECTION_KEYS, 'exact seven live product mappings are pinned' );
 check( array(
 	44 => array( 'filament_wound_pipe' ), 45 => array( 'elbows_90' ),
-	57 => array( 'stub_flanges' ),
-	58 => array( 'filament_wound_pipe', 'stub_flanges', 'elbows_90', 'fnpt_couplings' ),
+	57 => array( 'stub_flanges', 'backing_rings' ),
+	58 => array( 'filament_wound_pipe', 'stub_flanges', 'backing_rings', 'elbows_90', 'fnpt_couplings' ),
 	60 => array( 'manways_and_covers' ),
 ) === FRPDEPOT_ACP_CATEGORY_SECTION_KEYS, 'exact five live category mappings are pinned' );
 
 $piping_panel = frpdepot_acp_archive_catalogue_html( 58 );
-check( 4 === substr_count( $piping_panel, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
-'Piping parent renders exactly four distinct section links' );
+check( 5 === substr_count( $piping_panel, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
+'Piping parent renders exactly five distinct section links' );
 foreach ( FRPDEPOT_ACP_CATEGORY_SECTION_KEYS[58] as $key ) {
 	$record = frpdepot_acp_section_catalogue_record( $key );
 	check( 1 === substr_count( $piping_panel, $record['url'] ),
@@ -253,13 +255,18 @@ foreach ( FRPDEPOT_ACP_CATEGORY_SECTION_KEYS[58] as $key ) {
 }
 check( 0 === substr_count( $piping_panel, FRPDEPOT_ACP_FULL_CATALOGUE_URL ),
 	'Piping parent has no full-catalogue route' );
-foreach ( array( 44, 45, 57, 60 ) as $category_id ) {
+foreach ( array( 44, 45, 60 ) as $category_id ) {
 	$panel = frpdepot_acp_archive_catalogue_html( $category_id );
 	check( 1 === substr_count( $panel, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
 		"category {$category_id} renders exactly one matching section link" );
 	check( 0 === substr_count( $panel, FRPDEPOT_ACP_FULL_CATALOGUE_URL ),
 		"category {$category_id} has no full-catalogue route" );
 }
+$flanges_panel = frpdepot_acp_archive_catalogue_html( 57 );
+check( 2 === substr_count( $flanges_panel, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
+	"category 57 renders exactly two matching section links" );
+check( 0 === substr_count( $flanges_panel, FRPDEPOT_ACP_FULL_CATALOGUE_URL ),
+	"category 57 has no full-catalogue route" );
 check( '' === frpdepot_acp_archive_catalogue_html( 99 ),
 	'unapproved category renders no section panel' );
 $archive_shop = '<div class="et_pb_shop_0_tb_body et_pb_shop et_pb_module" data-shortcode_index="0">'

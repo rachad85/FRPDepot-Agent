@@ -56,8 +56,8 @@ PLUGIN_SLUG = "frpdepot-automatic-catalogue-presentation"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php"
 ARTIFACT_PATH = (ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
                  / "frpdepot-automatic-catalogue-presentation.zip")
-ARTIFACT_VERSION = "1.1.1"
-PREDECESSOR_VERSION = "1.1.0"
+ARTIFACT_VERSION = "1.2.0"
+PREDECESSOR_VERSION = "1.1.1"
 DEACTIVATABLE_VERSIONS = frozenset({PREDECESSOR_VERSION, ARTIFACT_VERSION})
 # Superseded artifact and plan identities are refused explicitly. This includes
 # every earlier artifact; none can be restaged under the public-warning fix.
@@ -70,6 +70,7 @@ SUPERSEDED_ARTIFACT_SHA256 = frozenset({
     # Divi archive template omitted the Woo archive-description action. Its
     # five category panels therefore stayed absent and activation failed closed.
     "b19c54cad7439f25b00d92834f551169f1c111ee7da8a08ad4d64d2dcf5c5d4b",
+    "1acbb05474b4d173cbdae72bdc5416a1826c7d12393f4cde62460f0979195bf9",
 })
 SUPERSEDED_PLAN_SHA256 = frozenset({
     "1984a36095329ef5b20cd1a2f7c76fa3bf2120f21a1f124b564718bc406e6e8f",
@@ -89,15 +90,18 @@ SUPERSEDED_PLAN_SHA256 = frozenset({
     "53006df1284dad627f78e0b2879ddf4358acd6bb8525b9de537d49c1dac4977a",
     "7f08e94d923622e6d4064d9b62b7c7df84dc71cfb5e10dad435418281a78f003",
     "dc784d2e184bb423350860378ca2a4f5c285b5b0d68df91ab66e1cac6ee70239",
+    "f14054f4190f1c96b6b772c57a82688ec0c5d63f9dafe0e736a43f8e02d688ff",
+    "dc9439c81b032f709dfa984b7a3dba43df57d12b182817ef9a6940df435284b9",
 })
-ARTIFACT_SHA256 = "1acbb05474b4d173cbdae72bdc5416a1826c7d12393f4cde62460f0979195bf9"
-ARTIFACT_BYTES = 9676386
+ARTIFACT_SHA256 = "740b350d2df8b7513da956161fdd1346ae99fae65a9a38cb0d4db3aae7c04346"
+ARTIFACT_BYTES = 10324407
 POST_WRITE_READ_ROUNDS = 3
 POST_WRITE_READ_DELAY_MS = 1_000
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php",
     f"{PLUGIN_SLUG}/readme.txt",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Backing_Rings_2026.pdf",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Manways_and_Covers_2026.pdf",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_90_Degree_Elbows_2026.pdf",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Filament_Wound_Pipe_2026.pdf",
@@ -105,11 +109,13 @@ ARTIFACT_MEMBERS = (
 )
 ARTIFACT_MEMBER_SHA256 = {
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-        "9d55a1d1e26a71233b83cac0d524bf4e3822c477a18024557a78917a9d523877",
+        "ae8538e08bf6bae163020683a6becdfde9027fb577761f68c2cee9c360c7d37c",
     f"{PLUGIN_SLUG}/readme.txt":
         "150a6e38326c3263ec761fc03b41691c12c57d0e0985e1ac7cf3e0b2d2573188",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf":
         "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6",
+    f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Backing_Rings_2026.pdf":
+        "8375c59b46cdd963a6ffa92da1d45d7983d31ebb5637122452a42a4a3b7a5658",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Manways_and_Covers_2026.pdf":
         "09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_90_Degree_Elbows_2026.pdf":
@@ -142,6 +148,7 @@ PRODUCT_URLS = {
     1397: f"{EXACT_ORIGIN}/product/frp-manway/",
     1411: f"{EXACT_ORIGIN}/product/frp-manway-cover/",
     2061: f"{EXACT_ORIGIN}/product/fnpt-coupling-threaded-on-both-ends/",
+    2487: f"{EXACT_ORIGIN}/product/frp-backing-ring-ansi-class-150-drilling-pattern/",
 }
 CATEGORY_URLS = {
     60: f"{EXACT_ORIGIN}/product-category/manways/",
@@ -155,6 +162,10 @@ SECTION_PDFS = {
     "stub_flanges": {
         "filename": "FRP_Depots_Stub_Flanges_2026.pdf", "bytes": 1310780,
         "sha256": "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6",
+    },
+    "backing_rings": {
+        "filename": "FRP_Depots_Backing_Rings_2026.pdf", "bytes": 670673,
+        "sha256": "8375c59b46cdd963a6ffa92da1d45d7983d31ebb5637122452a42a4a3b7a5658",
     },
     "manways_and_covers": {
         "filename": "FRP_Depots_Manways_and_Covers_2026.pdf", "bytes": 1503479,
@@ -180,10 +191,11 @@ SECTION_PDF_URLS = {
 PRODUCT_SECTION_KEYS = {
     1368: "stub_flanges", 1397: "manways_and_covers", 1411: "manways_and_covers",
     1423: "elbows_90", 1455: "filament_wound_pipe", 2061: "fnpt_couplings",
+    2487: "backing_rings",
 }
 CATEGORY_SECTION_KEYS = {
-    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges",),
-    58: ("filament_wound_pipe", "stub_flanges", "elbows_90", "fnpt_couplings"),
+    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges", "backing_rings"),
+    58: ("filament_wound_pipe", "stub_flanges", "backing_rings", "elbows_90", "fnpt_couplings"),
     60: ("manways_and_covers",),
 }
 PRODUCT_URL = PRODUCT_URLS[1455]
@@ -205,9 +217,10 @@ ALLOWED_PUBLIC_PATHS = frozenset({
     "/wp-content/uploads/2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
 })
 
-NAV_TIMEOUT_MS = 45_000
-LOAD_STATE_TIMEOUT_MS = 45_000
+NAV_TIMEOUT_MS = 60_000
+LOAD_STATE_TIMEOUT_MS = 180_000
 ACTION_TIMEOUT_MS = 15_000
+UPLOAD_TIMEOUT_MS = 180_000
 MIN_RENDERED_TEXT = 40
 FATAL_MARKERS = (
     "there has been a critical error on this website", "fatal error", "parse error:",
@@ -218,7 +231,7 @@ DERAKANE_OLD_URL = "https://frpdepots.com/derakane-resin-selection-guide/"
 DERAKANE_NEW_URL = "https://frpdepots.com/derakane-resin-resistance-search/"
 INLINE_CTA_PATH = "/derakane-resin-resistance-search/"
 EXPECTED_CATEGORY_IDS = frozenset({44, 45, 57, 58, 60})
-EXPECTED_PRODUCT_IDS = frozenset({1368, 1397, 1411, 1423, 1455, 2061})
+EXPECTED_PRODUCT_IDS = frozenset({1368, 1397, 1411, 1423, 1455, 2061, 2487})
 FNPT_PRODUCT_ID = 2061
 FNPT_TARGET_CATEGORY_ID = 58
 REMOVED_RESIN_OPTION = "Hetron 922"
@@ -547,8 +560,20 @@ class AdminPage:
             raise DeploymentError("REFUSED: fixed upload controls are unavailable.")
         chooser.set_input_files(str(artifact), timeout=ACTION_TIMEOUT_MS)
         assert_admin_url(self.url)
-        submit.click(timeout=ACTION_TIMEOUT_MS)
-        self._page.wait_for_load_state("domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS)
+        try:
+            with self._page.expect_navigation(
+                wait_until="domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS
+            ) as pending_nav:
+                submit.click(timeout=UPLOAD_TIMEOUT_MS)
+            response = pending_nav.value
+        except Exception as exc:
+            raise IndeterminateError(
+                "The upload submission did not produce one proven bounded comparison navigation."
+            ) from exc
+        if response is None or int(response.status) != 200:
+            raise IndeterminateError(
+                "The upload comparison navigation did not return one proven HTTP 200 response."
+            )
         assert_admin_url(self.url)
 
         tables = self._page.query_selector_all("table.update-from-upload-comparison")
@@ -559,10 +584,24 @@ class AdminPage:
                 raise DeploymentError("REFUSED: exact replace-current confirmation is unavailable.")
             name = self._comparison_cell(tables[0], r"(plugin\s+)?name")
             version = self._comparison_cell(tables[0], r"version")
-            if name != PLUGIN_NAME or version != ARTIFACT_VERSION:
-                raise DeploymentError("REFUSED: replace comparison identity/version mismatch.")
-            overwrite[0].click(timeout=ACTION_TIMEOUT_MS)
-            self._page.wait_for_load_state("domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS)
+            if name != PLUGIN_NAME:
+                raise DeploymentError(f"REFUSED: comparison name mismatch: {name!r} != {PLUGIN_NAME!r}.")
+            if version != ARTIFACT_VERSION:
+                raise DeploymentError(f"REFUSED: comparison version mismatch: {version!r} != {ARTIFACT_VERSION!r}.")
+            try:
+                with self._page.expect_navigation(
+                    wait_until="domcontentloaded", timeout=LOAD_STATE_TIMEOUT_MS
+                ) as overwrite_nav:
+                    overwrite[0].click(timeout=UPLOAD_TIMEOUT_MS)
+                ow_response = overwrite_nav.value
+            except Exception as exc:
+                raise IndeterminateError(
+                    "The replace-current click did not produce one proven bounded navigation."
+                ) from exc
+            if ow_response is None or int(ow_response.status) != 200:
+                raise IndeterminateError(
+                    "The replace-current navigation did not return one proven HTTP 200 response."
+                )
             assert_admin_url(self.url)
             route = "replace"
         elif tables or overwrite:

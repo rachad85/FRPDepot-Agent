@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Automatic Catalogue Presentation
  * Description: Keeps the public FRP Depot catalogue navigation and exact shared Divi product-guide presentation synchronized with the live, public WooCommerce catalogue.
- * Version:     1.1.1
+ * Version:     1.2.0
  * Author:      FRP Depot
  * License:     GPL-2.0-or-later
  * Requires PHP: 7.4
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-const FRPDEPOT_ACP_VERSION = '1.1.1';
+const FRPDEPOT_ACP_VERSION = '1.2.0';
 const FRPDEPOT_ACP_MAIN_MENU_SLUG = 'main';
 const FRPDEPOT_ACP_FOOTER_MENU_SLUG = 'product-categories';
 const FRPDEPOT_ACP_SHOP_TITLE = 'Shop All';
@@ -38,6 +38,10 @@ const FRPDEPOT_ACP_SECTION_CATALOGUES = array(
 	'stub_flanges' => array(
 		'filename' => 'FRP_Depots_Stub_Flanges_2026.pdf',
 		'label'    => 'Download Stub Flange Catalogue (PDF)',
+	),
+	'backing_rings' => array(
+		'filename' => 'FRP_Depots_Backing_Rings_2026.pdf',
+		'label'    => 'Download Backing Ring Catalogue (PDF)',
 	),
 	'manways_and_covers' => array(
 		'filename' => 'FRP_Depots_Manways_and_Covers_2026.pdf',
@@ -65,14 +69,15 @@ const FRPDEPOT_ACP_PRODUCT_SECTION_KEYS = array(
 	1423 => 'elbows_90',
 	1455 => 'filament_wound_pipe',
 	2061 => 'fnpt_couplings',
+	2487 => 'backing_rings',
 );
 
-/** Exact live category pages; the Piping parent receives four distinct links. */
+/** Exact live category pages; the Piping parent receives distinct links. */
 const FRPDEPOT_ACP_CATEGORY_SECTION_KEYS = array(
 	44 => array( 'filament_wound_pipe' ),
 	45 => array( 'elbows_90' ),
-	57 => array( 'stub_flanges' ),
-	58 => array( 'filament_wound_pipe', 'stub_flanges', 'elbows_90', 'fnpt_couplings' ),
+	57 => array( 'stub_flanges', 'backing_rings' ),
+	58 => array( 'filament_wound_pipe', 'stub_flanges', 'backing_rings', 'elbows_90', 'fnpt_couplings' ),
 	60 => array( 'manways_and_covers' ),
 );
 

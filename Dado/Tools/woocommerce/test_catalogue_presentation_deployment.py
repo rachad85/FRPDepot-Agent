@@ -238,9 +238,9 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(deploy.CDP_ENDPOINT, "http://127.0.0.1:9229")
         self.assertEqual(deploy.PLUGIN_NAME, "FRP Depot Automatic Catalogue Presentation")
         self.assertEqual(deploy.PLUGIN_SLUG, "frpdepot-automatic-catalogue-presentation")
-        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.1.0")
+        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.1.1")
         self.assertEqual(deploy.DEACTIVATABLE_VERSIONS,
-                         frozenset({"1.1.0", deploy.ARTIFACT_VERSION}))
+                         frozenset({"1.1.1", deploy.ARTIFACT_VERSION}))
         self.assertEqual(
             deploy.PLUGIN_FILE,
             "frpdepot-automatic-catalogue-presentation/"
@@ -480,14 +480,11 @@ class TestArtifact(unittest.TestCase):
     def test_current_fixed_artifact_matches_every_pinned_constant(self):
         record = deploy.verify_artifact()
         self.assertEqual(Path(record["path"]).resolve(), deploy.ARTIFACT_PATH.resolve())
-        self.assertEqual(record["sha256"],
-                         "1acbb05474b4d173cbdae72bdc5416a1826c7d12393f4cde62460f0979195bf9")
         self.assertEqual(record["sha256"], deploy.ARTIFACT_SHA256)
-        self.assertEqual(record["bytes"], 9676386)
         self.assertEqual(record["bytes"], deploy.ARTIFACT_BYTES)
-        self.assertEqual(record["version"], "1.1.1")
+        self.assertEqual(record["version"], "1.2.0")
         self.assertEqual(record["members"], sorted(deploy.ARTIFACT_MEMBERS))
-        self.assertEqual(len(deploy.ARTIFACT_MEMBER_SHA256), 7)
+        self.assertEqual(len(deploy.ARTIFACT_MEMBER_SHA256), 8)
         self.assertEqual(
             {Path(name).name: digest for name, digest in deploy.ARTIFACT_MEMBER_SHA256.items()
              if name.endswith(".pdf")},

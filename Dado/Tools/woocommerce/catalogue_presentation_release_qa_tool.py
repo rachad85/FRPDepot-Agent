@@ -59,6 +59,7 @@ PRODUCT_URLS = {
     1397: f"{EXACT_ORIGIN}/product/frp-manway/",
     1411: f"{EXACT_ORIGIN}/product/frp-manway-cover/",
     2061: f"{EXACT_ORIGIN}/product/fnpt-coupling-threaded-on-both-ends/",
+    2487: f"{EXACT_ORIGIN}/product/frp-backing-ring-ansi-class-150-drilling-pattern/",
 }
 CATEGORY_URLS = {
     60: f"{EXACT_ORIGIN}/product-category/manways/",
@@ -71,6 +72,8 @@ FULL_CATALOGUE_URL = f"{EXACT_ORIGIN}/frp-depots-final-hq/"
 SECTION_PDFS = {
     "stub_flanges": {"filename": "FRP_Depots_Stub_Flanges_2026.pdf", "bytes": 1310780,
                      "sha256": "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6"},
+    "backing_rings": {"filename": "FRP_Depots_Backing_Rings_2026.pdf", "bytes": 670673,
+                      "sha256": "8375c59b46cdd963a6ffa92da1d45d7983d31ebb5637122452a42a4a3b7a5658"},
     "manways_and_covers": {"filename": "FRP_Depots_Manways_and_Covers_2026.pdf", "bytes": 1503479,
                             "sha256": "09b8bc59a2d81fdff4c3d4ad7110f3fac27752c0f03d162ee24165b5e4ed3e65"},
     "elbows_90": {"filename": "FRP_Depots_90_Degree_Elbows_2026.pdf", "bytes": 4558184,
@@ -88,10 +91,11 @@ SECTION_PDF_URLS = {
 PRODUCT_SECTION_KEYS = {
     1368: "stub_flanges", 1397: "manways_and_covers", 1411: "manways_and_covers",
     1423: "elbows_90", 1455: "filament_wound_pipe", 2061: "fnpt_couplings",
+    2487: "backing_rings",
 }
 CATEGORY_SECTION_KEYS = {
-    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges",),
-    58: ("filament_wound_pipe", "stub_flanges", "elbows_90", "fnpt_couplings"),
+    44: ("filament_wound_pipe",), 45: ("elbows_90",), 57: ("stub_flanges", "backing_rings"),
+    58: ("filament_wound_pipe", "stub_flanges", "backing_rings", "elbows_90", "fnpt_couplings"),
     60: ("manways_and_covers",),
 }
 DERAKANE_PAGE_URL = f"{EXACT_ORIGIN}/derakane-resin-resistance-search/"
@@ -107,7 +111,7 @@ DERAKANE_OLD_URL = f"{EXACT_ORIGIN}/derakane-resin-selection-guide/"
 DERAKANE_NEW_URL = DERAKANE_PAGE_URL
 INLINE_CTA_PATH = "/derakane-resin-resistance-search/"
 EXPECTED_CATEGORY_IDS = frozenset({44, 45, 57, 58, 60})
-EXPECTED_PRODUCT_IDS = frozenset({1368, 1397, 1411, 1423, 1455, 2061})
+EXPECTED_PRODUCT_IDS = frozenset({1368, 1397, 1411, 1423, 1455, 2061, 2487})
 FNPT_PRODUCT_ID = 2061
 FNPT_TARGET_CATEGORY_ID = 58
 REMOVED_RESIN_OPTION = "Hetron 922"

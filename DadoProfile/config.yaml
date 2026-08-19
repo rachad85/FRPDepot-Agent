@@ -58,6 +58,21 @@ tool_loop_guardrails:
     same_tool_failure: 6
     idempotent_no_progress: 4
 compression:
+  # 2026-08-18: ABSOLUTE CAP so compression no longer depends on which model is
+  # serving. `threshold` is a FRACTION OF THE CONTEXT WINDOW, and the windows
+  # differ enormously: gpt-5.6-sol on Codex is 272,000 (0.5 -> ~136k, or ~231k
+  # with codex_gpt55_autoraise) but the fallback google/gemini-3.7-flash is
+  # 1,048,576 (0.5 -> ~524k). So the moment Codex hit its quota cap and every
+  # turn fell through to Gemini, compression effectively STOPPED firing.
+  # Measured on 2026-08-18: session 20260818_113113_6baa802f ran 11:31 -> 18:45
+  # across 403 API calls and grew 26,579 -> 198,142 tokens, shipping ~198k of
+  # input on EVERY message. It compressed once at 17:26 and never again.
+  # threshold_tokens is a CAP - hermes triggers at the LOWER of the ratio and
+  # this number, and a cap above the window is a no-op - so it is safe on both:
+  # Codex keeps its ~136k ratio trigger, Gemini drops 524k -> 180k.
+  # 180,000 sits below the ~198k where she measurably degraded and above the
+  # plain-Codex 136k, so Codex behaviour is unchanged. One line to retune.
+  threshold_tokens: 180000
   enabled: true
   threshold: 0.5
   target_ratio: 0.2
@@ -194,6 +209,13 @@ session_reset:
   at_hour: 4
 group_sessions_per_user: true
 platforms:
+  # 2026-08-18, Rachad: "We don't need to connect dado to whatsapp let's leave
+  # that with Aze only for now." WhatsApp was never listed here, so it was being
+  # enabled by default and failing on every gateway start since 2026-08-04 with
+  # state=fatal, error_code=whatsapp_not_paired. Disabled EXPLICITLY so the
+  # default cannot turn it back on. Kept in step with live.
+  whatsapp:
+    enabled: false
   api_server:
     enabled: true
   # The Discord lane, live since 2026-08-10 and absent from this mirror until

@@ -30,7 +30,7 @@ class CataloguePresentationDeploymentTests(unittest.TestCase):
 
     def test_hardcoded_artifact_and_member_hashes_verify(self):
         record = DEPLOY.verify_artifact()
-        self.assertEqual(record["version"], "1.1.1")
+        self.assertEqual(record["version"], "1.2.0")
         self.assertEqual(record["sha256"], DEPLOY.ARTIFACT_SHA256)
         self.assertEqual(record["bytes"], DEPLOY.ARTIFACT_BYTES)
         self.assertEqual(record["members"], sorted(DEPLOY.ARTIFACT_MEMBER_SHA256))

@@ -110,6 +110,9 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-14 British Columbia PST Registration Case: 18476601 — BC Finance requires confirmation that 01-Jan-2026 is when FRP Depot began taxable BC sales; choosing that date may create overdue PST-return obligations, so Rachad must verify the date before replying.
 - 2026-08-15 INV-000053 / SHM Marine Constructors JV — Zoho failed to send the payment reminder because no contact person is linked; live Books shows CAD 14,712.60 overdue and unpaid, so payment or manual reminder requires verification.
 - 2026-08-17 PO5236 for SO00054 — New Troy Dualam PO received from Jasminder Singh for Sales Order SO-00054; approval requested to acknowledge and process.
+- 2026-08-18 Pricing Request – D411/D470 Couplings — Permatech has not replied after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-18 Les Plastiques PV / Inbound RFQ — Roland Vaudrin requested pricing for 1x 24" manway with cover, 2x 4" Derakane 150 psi elbows, and 4x 2" Derakane 411 150 psi elbows; green light requested to prepare the quote.
+- 2026-08-18 PO5240 for Q 00034 — New Troy Dualam PO 5240 received from Jasminder Singh for quote QT-000034; approval requested to acknowledge and process.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
