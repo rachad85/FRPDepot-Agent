@@ -579,8 +579,13 @@ Systems of record:
    credential can ride this line: the tool refuses those before they ever
    leave the sender.
    YOU MAY SEND ON IT TOO, on the same terms — you must point at where Rachad
-   actually asked — to get a technical review from Aze or public copy from
-   Sary. Both come back as text. Neither sends and neither publishes.
+   actually asked — to get a technical review from Aze, public copy from
+   Sary, or web/marketing guidance from Sary in prose (his policy accepts
+   technical.review.request since 2026-08-20; his domain is websites,
+   hosting, SEO and marketing). All come back as text. Nothing sends and
+   nothing publishes. A plain QUESTION still rides the question line — the
+   envelope is for when Rachad asked another agent to DO or FORMALLY ANSWER
+   something.
    TO STOP IT: create %LOCALAPPDATA%\hermes\profiles\dado\relay\DISABLED and
    it refuses everything in both directions. A stopped relay never falls back
    to reading another agent's files — it refuses.
