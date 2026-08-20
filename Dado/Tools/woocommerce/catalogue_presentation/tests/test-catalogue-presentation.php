@@ -192,7 +192,7 @@ $GLOBALS['acp_term_assignments'] = array(
 
 /* Hook and source-scope invariants. */
 $hook_names = array_column( $GLOBALS['acp_hooks'], 'hook' );
-foreach ( array( 'wp_get_nav_menu_items', 'template_redirect', 'transition_post_status',
+foreach ( array( 'wp_get_nav_menu_items', 'wp_head', 'wp_footer', 'template_redirect', 'transition_post_status',
 	'save_post_product', 'set_object_terms', 'clean_object_term_cache',
 	'woocommerce_product_set_visibility' ) as $hook ) {
 	check( in_array( $hook, $hook_names, true ), "refresh/presentation hook registered: {$hook}" );
@@ -211,7 +211,54 @@ check( false === strpos( $source, 'set_transient(' ), 'no persistent transient c
 check( false === strpos( $source, 'register_activation_hook' ), 'no activation-time writes' );
 
 /* Fixed section PDFs, exact live mappings and read-only archive panels. */
-check( '1.2.0' === FRPDEPOT_ACP_VERSION, 'section-catalogue plugin version is exact 1.2.0' );
+check( '1.2.1' === FRPDEPOT_ACP_VERSION, 'section-catalogue plugin version is exact 1.2.1' );
+check( array( 1368, 1397, 1411, 2487 ) === FRPDEPOT_ACP_RESPONSIVE_TABLE_PRODUCT_IDS,
+	'exact four reviewed wide-table product ids are pinned' );
+check( ! in_array( 'the_content', $hook_names, true ),
+	'responsive-table feature never filters or rewrites stored product content' );
+$table_outputs = array();
+foreach ( FRPDEPOT_ACP_RESPONSIVE_TABLE_PRODUCT_IDS as $responsive_product_id ) {
+	$GLOBALS['acp_queried_object_id'] = $responsive_product_id;
+	ob_start();
+	frpdepot_acp_print_responsive_table_styles();
+	$table_outputs[ $responsive_product_id ]['styles'] = ob_get_clean();
+	ob_start();
+	frpdepot_acp_print_responsive_table_script();
+	$table_outputs[ $responsive_product_id ]['script'] = ob_get_clean();
+}
+check( 4 === count( $table_outputs )
+	&& 4 === count( array_filter( $table_outputs, function ( $row ) {
+		return 1 === substr_count( $row['styles'], 'id="frpdepot-acp-responsive-table-styles"' )
+			&& 1 === substr_count( $row['script'], 'id="frpdepot-acp-responsive-table-script"' );
+	} ) ), 'all four target products emit exactly one fixed style and script block' );
+$target_styles = $table_outputs[1368]['styles'];
+$target_script = $table_outputs[1368]['script'];
+check( false !== strpos( $target_styles, '@media(max-width:767px)' )
+	&& false !== strpos( $target_styles, 'min-inline-size:0' )
+	&& false !== strpos( $target_styles, 'overflow-x:auto' )
+	&& false !== strpos( $target_styles, '-webkit-overflow-scrolling:touch' )
+	&& false !== strpos( $target_styles, 'inline-size:max-content!important' )
+	&& false !== strpos( $target_styles, ':focus-visible' ),
+	'target stylesheet contains mobile containment, horizontal scrolling and visible focus' );
+check( false !== strpos( $target_script,
+	'body.single-product .et_pb_wc_description .spec-table-wrapper > table.spec-table' )
+	&& false !== strpos( $target_script, 'tables.length!==1' )
+	&& false !== strpos( $target_script, 'wrapper.scrollWidth<=wrapper.clientWidth+1' )
+	&& false !== strpos( $target_script, 'Scroll horizontally to view all specifications.' )
+	&& false !== strpos( $target_script, 'aria-describedby' )
+	&& false !== strpos( $target_script, 'role' )
+	&& false !== strpos( $target_script, 'tabindex' ),
+	'target script scopes the existing table, fails closed and enables measured accessible overflow' );
+$GLOBALS['acp_queried_object_id'] = 1455;
+ob_start();
+frpdepot_acp_print_responsive_table_styles();
+$non_target_styles = ob_get_clean();
+ob_start();
+frpdepot_acp_print_responsive_table_script();
+$non_target_script = ob_get_clean();
+check( '' === $non_target_styles && '' === $non_target_script,
+	'non-target product emits no responsive-table CSS or script' );
+$GLOBALS['acp_queried_object_id'] = 1455;
 $expected_sections = array(
 	'stub_flanges' => array( 'FRP_Depots_Stub_Flanges_2026.pdf', 1310780, 'f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6' ),
 	'backing_rings' => array( 'FRP_Depots_Backing_Rings_2026.pdf', 670673, '8375c59b46cdd963a6ffa92da1d45d7983d31ebb5637122452a42a4a3b7a5658' ),
@@ -278,8 +325,8 @@ $GLOBALS['acp_queried_object_id'] = 58;
 $archive_changed = frpdepot_acp_transform_public_html( $archive_fixture );
 check( $archive_changed !== $archive_fixture, 'exact live Divi category anchor receives the Piping panel' );
 check( 1 === substr_count( $archive_changed, '<section class="frpdepot-acp-section-catalogues"' )
-	&& 4 === substr_count( $archive_changed, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
-	'Piping output receives one panel with four links' );
+	&& 5 === substr_count( $archive_changed, '<a class="et_pb_button frpdepot-acp-section-catalogue-link"' ),
+	'Piping output receives one panel with five links' );
 check( strpos( $archive_changed, '<section class="frpdepot-acp-section-catalogues"' )
 	< strpos( $archive_changed, FRPDEPOT_ACP_ARCHIVE_SHOP_MODULE_CLASS ),
 	'category panel is inserted immediately before the product shop module' );

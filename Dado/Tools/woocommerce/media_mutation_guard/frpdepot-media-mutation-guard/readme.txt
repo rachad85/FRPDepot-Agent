@@ -2,10 +2,11 @@
 Contributors: frpdepot
 Requires at least: 6.4
 Requires PHP: 8.0
-Stable tag: 1.0.1
+Stable tag: 1.0.2
 License: Proprietary
 
-Fixed internal safety plugin for FRP Depot's approved five-family product-gallery workflow.
+Fixed internal safety plugin for FRP Depot's approved five-family product-gallery workflow,
+including the staged 2026 catalogue-image update for the filament-wound pipe family.
 
 It serializes in-scope WordPress attachment mutations with one hard-coded MySQL advisory
 lock. While that lock is held, it builds complete original-file SHA-256 snapshots and

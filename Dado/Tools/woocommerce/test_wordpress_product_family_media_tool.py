@@ -425,6 +425,28 @@ class ProductFamilyMediaTests(unittest.TestCase):
         evidence = tool.validate_approved_manifest()
         self.assertEqual(evidence["sha256"], tool.APPROVED_MANIFEST_SHA256)
         self.assertEqual(evidence["status"], "APPROVED_WORKING_COLLECTION_NOT_PUBLISHED")
+        manifest = json.loads(tool.APPROVED_MANIFEST_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(
+            manifest["pipe_update_instruction"]["exact_user_message"],
+            "Yes stage the update",
+        )
+        self.assertIn("stage only", manifest["pipe_update_instruction"]["scope"])
+
+    def test_pipe_family_is_exact_clean_catalogue_gallery(self):
+        rows = tool.FAMILY_SPECS["pipe"]["images"]
+        self.assertEqual(
+            [row["filename"] for row in rows],
+            [
+                "01_pipe_catalogue_single_diagonal_hero.png",
+                "02_pipe_catalogue_single_vertical_profile.png",
+                "03_pipe_catalogue_open_end_wall_detail.png",
+                "04_pipe_catalogue_size_range_group.png",
+            ],
+        )
+        self.assertEqual([row["position"] for row in rows], [1, 2, 3, 4])
+        self.assertTrue(all((row["width"], row["height"]) == (1024, 1024) for row in rows))
+        self.assertTrue(all("bell" not in row["filename"].lower() for row in rows))
+        self.assertEqual(len(tool.validate_local_images("pipe")), 4)
 
     def test_approved_collection_manifest_hash_drift_refuses(self):
         with mock.patch.object(tool, "APPROVED_MANIFEST_SHA256", "0" * 64):
@@ -569,6 +591,32 @@ class ProductFamilyMediaTests(unittest.TestCase):
         for proof in bad_values:
             with self.subTest(proof=proof), self.assertRaises(tool.FamilyMediaError):
                 tool.require_empty_guard_snapshot(proof, "stub_flange", "atomic_snapshot")
+
+    def test_guard_snapshot_surfaces_exact_unreadable_attachment(self):
+        proof = self.guard_snapshot_ok()
+        proof["attachment_total"] += 1
+        proof["complete"] = False
+        proof["failures"] = [{"attachment_id": 4862, "reason": "unreadable_original"}]
+        with self.assertRaisesRegex(
+                tool.FamilyMediaError, r"4862:unreadable_original"):
+            tool.require_empty_guard_snapshot(proof, "stub_flange", "atomic_snapshot")
+
+    def test_guard_snapshot_rejects_duplicate_or_unknown_failure_evidence(self):
+        for failures in (
+            [
+                {"attachment_id": 4862, "reason": "unreadable_original"},
+                {"attachment_id": 4862, "reason": "hash_failed"},
+            ],
+            [{"attachment_id": 4862, "reason": "arbitrary"}],
+        ):
+            proof = self.guard_snapshot_ok()
+            proof["attachment_total"] += len(failures)
+            proof["complete"] = False
+            proof["failures"] = failures
+            with self.subTest(failures=failures), self.assertRaises(tool.FamilyMediaError):
+                tool.validate_guard_snapshot_proof(
+                    proof, "stub_flange", "atomic_snapshot", False
+                )
 
     def test_guard_runtime_manifest_matches_all_five_families_and_excludes_fnpt(self):
         contract = tool.validate_guard_manifest_contract()

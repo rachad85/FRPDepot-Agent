@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Media Mutation Guard
  * Description: Fixed atomic snapshot and five-family media mutation guard for FRP Depot.
- * Version: 1.0.1
+ * Version: 1.0.2
  * Author: FRP Depot
  */
 
@@ -10,8 +10,8 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('FRPD_MG_VERSION', '1.0.1');
-define('FRPD_MG_MANIFEST_SHA256', '2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b');
+define('FRPD_MG_VERSION', '1.0.2');
+define('FRPD_MG_MANIFEST_SHA256', '3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc');
 define('FRPD_MG_OPTION', 'frpd_media_mutation_guard_v1');
 define('FRPD_MG_COOKIE', 'frpd_media_guard_owner');
 define('FRPD_MG_LOCK_NAME', 'frpd_media_mutation_guard_v1');

@@ -38,8 +38,8 @@ sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Automatic Catalogue Presentation Deployment Tool"
-TOOL_VERSION = "1.1.1"
-SCHEMA_VERSION = 5
+TOOL_VERSION = "1.2.0"
+SCHEMA_VERSION = 6
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "catalogue_presentation_plugin_plans"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
@@ -56,12 +56,18 @@ PLUGIN_SLUG = "frpdepot-automatic-catalogue-presentation"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php"
 ARTIFACT_PATH = (ROOT / "Dado" / "Tools" / "woocommerce" / "catalogue_presentation"
                  / "frpdepot-automatic-catalogue-presentation.zip")
-ARTIFACT_VERSION = "1.2.0"
-PREDECESSOR_VERSION = "1.1.1"
+ARTIFACT_VERSION = "1.2.1"
+PREDECESSOR_VERSION = "1.2.0"
 DEACTIVATABLE_VERSIONS = frozenset({PREDECESSOR_VERSION, ARTIFACT_VERSION})
 # Superseded artifact and plan identities are refused explicitly. This includes
 # every earlier artifact; none can be restaged under the public-warning fix.
 SUPERSEDED_ARTIFACT_SHA256 = frozenset({
+	# First v1.2.1 draft inserted server-side wrappers and was withdrawn after
+	# accessibility review; it was never staged or uploaded.
+	"1fb126b3a2b582cf3d48bcaaca3c3b77ce8a5424c668dbdbb4f865fd56753a73",
+	# v1.2.0 remains the verified live predecessor, but its wide engineering
+	# tables clip on mobile and it may never be restaged as the repaired build.
+	"740b350d2df8b7513da956161fdd1346ae99fae65a9a38cb0d4db3aae7c04346",
     "b1e9ed3959ff38a003a44bd876ec0a0c29386fa54d5cd3cc5a879de99c098542",
     "9047bbb55637b46a30e2a3109affa24304d1e21d3c46479159214fb25dfb3f6c",
     "472d8fa0bd647b255093301386c2ce94779b8005daa76eadcf18169f372f468c",
@@ -93,8 +99,8 @@ SUPERSEDED_PLAN_SHA256 = frozenset({
     "f14054f4190f1c96b6b772c57a82688ec0c5d63f9dafe0e736a43f8e02d688ff",
     "dc9439c81b032f709dfa984b7a3dba43df57d12b182817ef9a6940df435284b9",
 })
-ARTIFACT_SHA256 = "740b350d2df8b7513da956161fdd1346ae99fae65a9a38cb0d4db3aae7c04346"
-ARTIFACT_BYTES = 10324407
+ARTIFACT_SHA256 = "9d57d369ba37fd5ed00735697b355b6de7b42067219e3719337380f0b1f0ef81"
+ARTIFACT_BYTES = 10326020
 POST_WRITE_READ_ROUNDS = 3
 POST_WRITE_READ_DELAY_MS = 1_000
 ARTIFACT_MEMBERS = (
@@ -109,9 +115,9 @@ ARTIFACT_MEMBERS = (
 )
 ARTIFACT_MEMBER_SHA256 = {
     f"{PLUGIN_SLUG}/frpdepot-automatic-catalogue-presentation.php":
-        "ae8538e08bf6bae163020683a6becdfde9027fb577761f68c2cee9c360c7d37c",
+        "fd115fec314bc58d1a996ad0d3d74ba675cd4f95302104de667e6bbae985ad63",
     f"{PLUGIN_SLUG}/readme.txt":
-        "150a6e38326c3263ec761fc03b41691c12c57d0e0985e1ac7cf3e0b2d2573188",
+        "ad3780c45e5dc201498d09002af3910b2d4a6e7637ba86edf9df9c2da55c60e4",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Stub_Flanges_2026.pdf":
         "f009764259b11136a3f7126de6a678773e0e4ed21293cd9e95a71c0f0a4cd4b6",
     f"{PLUGIN_SLUG}/catalogue-sections/FRP_Depots_Backing_Rings_2026.pdf":
@@ -232,6 +238,8 @@ DERAKANE_NEW_URL = "https://frpdepots.com/derakane-resin-resistance-search/"
 INLINE_CTA_PATH = "/derakane-resin-resistance-search/"
 EXPECTED_CATEGORY_IDS = frozenset({44, 45, 57, 58, 60})
 EXPECTED_PRODUCT_IDS = frozenset({1368, 1397, 1411, 1423, 1455, 2061, 2487})
+RESPONSIVE_TABLE_PRODUCT_IDS = frozenset({1368, 1397, 1411, 2487})
+MOBILE_TABLE_VIEWPORT = {"width": 390, "height": 844}
 FNPT_PRODUCT_ID = 2061
 FNPT_TARGET_CATEGORY_ID = 58
 REMOVED_RESIN_OPTION = "Hetron 922"
@@ -262,6 +270,14 @@ VALIDATION_CONTRACT = {
     "full_catalogue_product_url_count": 0,
     "section_catalogue_product_url_count": 1,
     "section_catalogue_card_count": 1,
+    "responsive_table_product_ids": sorted(RESPONSIVE_TABLE_PRODUCT_IDS),
+    "responsive_table_mobile_viewport": dict(MOBILE_TABLE_VIEWPORT),
+    "responsive_table_wrapper_count": 1,
+    "responsive_table_horizontal_scroll_required": True,
+    "responsive_table_document_overflow_allowed": False,
+    "responsive_table_swipe_cue_required": True,
+    "responsive_table_keyboard_region_required": True,
+    "responsive_table_content_filter_allowed": False,
     "section_catalogue_category_link_counts": {
         str(category_id): len(keys) for category_id, keys in CATEGORY_SECTION_KEYS.items()
     },
@@ -782,6 +798,69 @@ class PublicPage:
         return {"passed": all(row["passed"] for row in findings.values()),
                 "files": findings}
 
+    def _responsive_table_findings(self, product_id: int) -> dict[str, Any]:
+        """Prove target tables scroll on a 390px viewport and non-targets stay untouched."""
+        url = PRODUCT_URLS[product_id]
+        self._page.set_viewport_size(dict(MOBILE_TABLE_VIEWPORT))
+        health = self.require_healthy(url)
+        self._page.wait_for_timeout(250)
+        cues = self._page.query_selector_all(".frpdepot-acp-specification-table-cue")
+        scrollers = self._page.query_selector_all(
+            ".et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active"
+        )
+        styles = self._page.query_selector_all("#frpdepot-acp-responsive-table-styles")
+        scripts = self._page.query_selector_all("#frpdepot-acp-responsive-table-script")
+        target = product_id in RESPONSIVE_TABLE_PRODUCT_IDS
+        metrics: dict[str, Any] | None = None
+        table_count = 0
+        if len(scrollers) == 1:
+            table_count = len(scrollers[0].query_selector_all(":scope > table.spec-table"))
+            metrics = scrollers[0].evaluate(
+                """(node) => {
+                    const cue = document.querySelector('.frpdepot-acp-specification-table-cue');
+                    const before = node.scrollLeft;
+                    node.scrollLeft = node.scrollWidth;
+                    return {
+                        client_width: node.clientWidth,
+                        scroll_width: node.scrollWidth,
+                        overflow_x: getComputedStyle(node).overflowX,
+                        cue_display: cue ? getComputedStyle(cue).display : null,
+                        cue_id: cue ? cue.id : null,
+                        tabindex: node.getAttribute('tabindex'),
+                        aria_label: node.getAttribute('aria-label'),
+                        aria_describedby: node.getAttribute('aria-describedby'),
+                        scroll_left_before: before,
+                        scroll_left_after: node.scrollLeft,
+                        document_client_width: document.documentElement.clientWidth,
+                        document_scroll_width: document.documentElement.scrollWidth
+                    };
+                }"""
+            )
+        if target:
+            passed = bool(
+                len(cues) == len(scrollers) == len(styles) == len(scripts) == 1
+                and table_count == 1 and isinstance(metrics, dict)
+                and metrics["scroll_width"] > metrics["client_width"] > 0
+                and metrics["overflow_x"] in {"auto", "scroll"}
+                and metrics["cue_display"] != "none"
+                and metrics["cue_id"] == "frpdepot-acp-specification-table-instructions"
+                and metrics["tabindex"] == "0"
+                and metrics["aria_label"] == "Scrollable product specifications"
+                and metrics["aria_describedby"] == metrics["cue_id"]
+                and metrics["scroll_left_after"] > metrics["scroll_left_before"]
+                and metrics["document_scroll_width"] <= metrics["document_client_width"] + 2
+            )
+        else:
+            passed = bool(not cues and not scrollers and not styles and not scripts)
+        self._page.set_viewport_size({"width": 1280, "height": 960})
+        return {
+            "passed": passed, "product_id": product_id, "url": url,
+            "target": target, "health": health,
+            "cue_count": len(cues), "scroller_count": len(scrollers),
+            "style_count": len(styles), "script_count": len(scripts),
+            "table_count": table_count, "metrics": metrics,
+        }
+
     def _category_catalogue_findings(self, category_id: int,
                                      *, transformed: bool) -> dict[str, Any]:
         url = CATEGORY_URLS[category_id]
@@ -906,6 +985,10 @@ class PublicPage:
                                     for value in root.values())
         guides = {str(product_id): self._guide_findings(product_id, transformed=True)
                   for product_id in sorted(PRODUCT_URLS)}
+        responsive_tables = {
+            str(product_id): self._responsive_table_findings(product_id)
+            for product_id in sorted(PRODUCT_URLS)
+        }
         category_pages = {
             str(category_id): self._category_catalogue_findings(
                 category_id, transformed=True)
@@ -917,12 +1000,14 @@ class PublicPage:
         hetron_unavailable = self._hetron_unavailable_findings()
         passed = bool(all(item["matches_expected"] for item in projections.values())
                       and root["passed"] and all(item["passed"] for item in guides.values())
+                      and all(item["passed"] for item in responsive_tables.values())
                       and all(item["passed"] for item in category_pages.values())
                       and section_pdfs["passed"]
                       and fnpt["passed"] and derakane_v2["passed"]
                       and hetron_unavailable["passed"])
         return {"passed": passed, "projections": projections, "shop_root": root,
-                "guides": guides, "category_pages": category_pages,
+                "guides": guides, "responsive_tables": responsive_tables,
+                "category_pages": category_pages,
                 "section_pdfs": section_pdfs,
                 "fnpt": fnpt, "derakane_v2": derakane_v2,
                 "hetron_unavailable": hetron_unavailable}

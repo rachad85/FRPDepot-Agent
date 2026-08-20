@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Automatic Catalogue Presentation
  * Description: Keeps the public FRP Depot catalogue navigation and exact shared Divi product-guide presentation synchronized with the live, public WooCommerce catalogue.
- * Version:     1.2.0
+ * Version:     1.2.1
  * Author:      FRP Depot
  * License:     GPL-2.0-or-later
  * Requires PHP: 7.4
@@ -16,7 +16,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-const FRPDEPOT_ACP_VERSION = '1.2.0';
+const FRPDEPOT_ACP_VERSION = '1.2.1';
 const FRPDEPOT_ACP_MAIN_MENU_SLUG = 'main';
 const FRPDEPOT_ACP_FOOTER_MENU_SLUG = 'product-categories';
 const FRPDEPOT_ACP_SHOP_TITLE = 'Shop All';
@@ -72,6 +72,9 @@ const FRPDEPOT_ACP_PRODUCT_SECTION_KEYS = array(
 	2487 => 'backing_rings',
 );
 
+/** Exact product descriptions whose wide engineering table needs mobile scrolling. */
+const FRPDEPOT_ACP_RESPONSIVE_TABLE_PRODUCT_IDS = array( 1368, 1397, 1411, 2487 );
+
 /** Exact live category pages; the Piping parent receives distinct links. */
 const FRPDEPOT_ACP_CATEGORY_SECTION_KEYS = array(
 	44 => array( 'filament_wound_pipe' ),
@@ -112,6 +115,53 @@ function frpdepot_acp_is_public_request() {
 		return false;
 	}
 	return true;
+}
+
+/** True only for the four reviewed product pages with one wide engineering table. */
+function frpdepot_acp_is_responsive_table_product() {
+	if ( ! frpdepot_acp_is_public_request()
+		|| ! function_exists( 'is_product' ) || ! is_product()
+		|| ! function_exists( 'get_queried_object_id' ) ) {
+		return false;
+	}
+	return in_array(
+		(int) get_queried_object_id(),
+		FRPDEPOT_ACP_RESPONSIVE_TABLE_PRODUCT_IDS,
+		true
+	);
+}
+
+/** Print fixed mobile-only CSS; it is inert until the exact live table probe succeeds. */
+function frpdepot_acp_print_responsive_table_styles() {
+	if ( ! frpdepot_acp_is_responsive_table_product() ) {
+		return;
+	}
+	echo '<style id="frpdepot-acp-responsive-table-styles">'
+		. '.frpdepot-acp-specification-table-cue{display:none}'
+		. '@media(max-width:767px){'
+		. '.frpdepot-acp-specification-table-cue{display:block;margin:0 0 8px;font-size:14px;line-height:1.4;color:#4b4b4b}'
+		. 'body.single-product .et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-probe,'
+		. 'body.single-product .et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active{display:block;inline-size:100%;max-inline-size:100%;min-inline-size:0;overflow-x:auto;-webkit-overflow-scrolling:touch;scrollbar-width:thin;scrollbar-gutter:stable}'
+		. 'body.single-product .et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-probe>table.spec-table,'
+		. 'body.single-product .et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active>table.spec-table{inline-size:max-content!important;min-inline-size:100%!important;max-inline-size:none!important;margin-bottom:0!important;white-space:nowrap}'
+		. 'body.single-product .et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active:focus-visible{outline:3px solid #0072a8;outline-offset:3px}'
+		. '}'
+		. '</style>';
+}
+
+/** Enhance one existing spec table only when it actually overflows on mobile. */
+function frpdepot_acp_print_responsive_table_script() {
+	if ( ! frpdepot_acp_is_responsive_table_product() ) {
+		return;
+	}
+	echo '<script id="frpdepot-acp-responsive-table-script">(function(){"use strict";'
+		. 'var media=window.matchMedia("(max-width: 767px)"),generation=0,pending=false;'
+		. 'var selector="body.single-product .et_pb_wc_description .spec-table-wrapper > table.spec-table";'
+		. 'var cueId="frpdepot-acp-specification-table-instructions";'
+		. 'function cleanup(){generation+=1;document.querySelectorAll(".spec-table-wrapper[data-frpdepot-acp-responsive=\\"1\\"]").forEach(function(wrapper){wrapper.classList.remove("frpdepot-acp-responsive-active","frpdepot-acp-responsive-probe");wrapper.removeAttribute("data-frpdepot-acp-responsive");wrapper.removeAttribute("role");wrapper.removeAttribute("tabindex");wrapper.removeAttribute("aria-label");wrapper.removeAttribute("aria-describedby");});var cue=document.getElementById(cueId);if(cue){cue.remove();}}'
+		. 'function apply(){cleanup();var token=generation;if(!media.matches){return;}var tables=document.querySelectorAll(selector);if(tables.length!==1){return;}var table=tables[0],wrapper=table.parentElement;if(!wrapper||!wrapper.classList.contains("spec-table-wrapper")){return;}wrapper.classList.add("frpdepot-acp-responsive-probe");window.requestAnimationFrame(function(){var current=document.querySelectorAll(selector);if(token!==generation||!media.matches||current.length!==1||current[0]!==table||!document.documentElement.contains(wrapper)){wrapper.classList.remove("frpdepot-acp-responsive-probe");return;}if(wrapper.scrollWidth<=wrapper.clientWidth+1){wrapper.classList.remove("frpdepot-acp-responsive-probe");return;}var cue=document.createElement("p");cue.id=cueId;cue.className="frpdepot-acp-specification-table-cue";cue.textContent="Scroll horizontally to view all specifications.";wrapper.parentNode.insertBefore(cue,wrapper);wrapper.classList.remove("frpdepot-acp-responsive-probe");wrapper.classList.add("frpdepot-acp-responsive-active");wrapper.setAttribute("data-frpdepot-acp-responsive","1");wrapper.setAttribute("role","region");wrapper.setAttribute("tabindex","0");wrapper.setAttribute("aria-label","Scrollable product specifications");wrapper.setAttribute("aria-describedby",cueId);});}'
+		. 'function schedule(){if(pending){return;}pending=true;window.requestAnimationFrame(function(){pending=false;apply();});}'
+		. 'if(typeof media.addEventListener==="function"){media.addEventListener("change",schedule);}else if(typeof media.addListener==="function"){media.addListener(schedule);}window.addEventListener("resize",schedule,{passive:true});schedule();})();</script>';
 }
 
 /** Clear the request-local catalogue projection after a same-request state event. */
@@ -745,6 +795,8 @@ function frpdepot_acp_start_public_output_filter() {
 }
 
 add_filter( 'wp_get_nav_menu_items', 'frpdepot_acp_sync_menu_items', 90, 3 );
+add_action( 'wp_head', 'frpdepot_acp_print_responsive_table_styles', 90 );
+add_action( 'wp_footer', 'frpdepot_acp_print_responsive_table_script', 90 );
 add_action( 'template_redirect', 'frpdepot_acp_start_public_output_filter', 0 );
 
 // Request-local refresh hooks. They clear only an in-memory PHP array.

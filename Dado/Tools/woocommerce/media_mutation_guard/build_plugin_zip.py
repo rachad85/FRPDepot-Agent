@@ -17,10 +17,9 @@ ROOT = Path(r"C:\FRPDepot")
 HERE = Path(__file__).resolve().parent
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
 PLUGIN_DIR = HERE / PLUGIN_SLUG
-SOURCE_MANIFEST = (ROOT / "Dado" / "20_Working" / "product_image_overhaul_20260815"
-                   / "final_family_review_20260815"
-                   / "approved_product_family_media_manifest_20260815.json")
-SOURCE_MANIFEST_SHA256 = "9020dfbbedec473430fa02a4e07578284ec3da33009444a1467c28aa75cc9748"
+SOURCE_MANIFEST = (ROOT / "Dado" / "20_Working" / "clean_pipe_gallery_20260819"
+                   / "approved_product_family_media_manifest_pipe_update_20260819.json")
+SOURCE_MANIFEST_SHA256 = "4bbb8fb7dba7272ed2b239623cc9705c92abdad5a169f7e63aea797abe4d9a3c"
 DEFAULT_OUTPUT = HERE / f"{PLUGIN_SLUG}.zip"
 RUNTIME_MANIFEST = PLUGIN_DIR / "approved-media.json"
 FAMILY_IDS = {

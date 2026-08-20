@@ -113,6 +113,8 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-18 Pricing Request – D411/D470 Couplings — Permatech has not replied after 5 working days; chase draft prepared in the original Outlook thread.
 - 2026-08-18 Les Plastiques PV / Inbound RFQ — Roland Vaudrin requested pricing for 1x 24" manway with cover, 2x 4" Derakane 150 psi elbows, and 4x 2" Derakane 411 150 psi elbows; green light requested to prepare the quote.
 - 2026-08-18 PO5240 for Q 00034 — New Troy Dualam PO 5240 received from Jasminder Singh for quote QT-000034; approval requested to acknowledge and process.
+- 2026-08-19 New submission from Contact (SPARK LINE OILFIELD) — Hasham Abbas requested quotation for 6 items of PPR-lined Derakane 470 FRP filament-wound pipe (1", 3", 4", 6", 8", 12", 5000mm lengths, full vacuum/1035 kPa); requires green light to decline or route.
+- 2026-08-19 FRP Depot CAD Bank Account / Airwallex ticket 1616235 — Support (Jacob) needs business name, Global Account, and remittance documents to trace/return the two $3,234.71 accidental payments from Aug 12 & 18.
 
 ## CLOSED
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.

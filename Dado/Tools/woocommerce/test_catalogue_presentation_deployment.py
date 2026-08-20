@@ -238,9 +238,9 @@ class TestFixedCapability(unittest.TestCase):
         self.assertEqual(deploy.CDP_ENDPOINT, "http://127.0.0.1:9229")
         self.assertEqual(deploy.PLUGIN_NAME, "FRP Depot Automatic Catalogue Presentation")
         self.assertEqual(deploy.PLUGIN_SLUG, "frpdepot-automatic-catalogue-presentation")
-        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.1.1")
+        self.assertEqual(deploy.PREDECESSOR_VERSION, "1.2.0")
         self.assertEqual(deploy.DEACTIVATABLE_VERSIONS,
-                         frozenset({"1.1.1", deploy.ARTIFACT_VERSION}))
+                         frozenset({"1.2.0", deploy.ARTIFACT_VERSION}))
         self.assertEqual(
             deploy.PLUGIN_FILE,
             "frpdepot-automatic-catalogue-presentation/"
@@ -482,7 +482,7 @@ class TestArtifact(unittest.TestCase):
         self.assertEqual(Path(record["path"]).resolve(), deploy.ARTIFACT_PATH.resolve())
         self.assertEqual(record["sha256"], deploy.ARTIFACT_SHA256)
         self.assertEqual(record["bytes"], deploy.ARTIFACT_BYTES)
-        self.assertEqual(record["version"], "1.2.0")
+        self.assertEqual(record["version"], "1.2.1")
         self.assertEqual(record["members"], sorted(deploy.ARTIFACT_MEMBERS))
         self.assertEqual(len(deploy.ARTIFACT_MEMBER_SHA256), 8)
         self.assertEqual(
@@ -851,6 +851,35 @@ class CatalogueLink:
         return {"href": self.href, "target": "_blank", "rel": "noopener"}.get(name)
 
 
+class ResponsiveScroller:
+    def __init__(self, *, clipped=False):
+        self.clipped = clipped
+
+    def query_selector_all(self, selector):
+        if selector != ":scope > table.spec-table":
+            raise AssertionError(f"unexpected responsive-table selector {selector!r}")
+        return [object()]
+
+    def evaluate(self, _script):
+        if self.clipped:
+            return {
+                "client_width": 320, "scroll_width": 320, "overflow_x": "hidden",
+                "cue_display": "none", "cue_id": None, "tabindex": None,
+                "aria_label": None, "aria_describedby": None,
+                "scroll_left_before": 0, "scroll_left_after": 0,
+                "document_client_width": 390, "document_scroll_width": 960,
+            }
+        return {
+            "client_width": 320, "scroll_width": 960, "overflow_x": "auto",
+            "cue_display": "block",
+            "cue_id": "frpdepot-acp-specification-table-instructions", "tabindex": "0",
+            "aria_label": "Scrollable product specifications",
+            "aria_describedby": "frpdepot-acp-specification-table-instructions",
+            "scroll_left_before": 0, "scroll_left_after": 640,
+            "document_client_width": 390, "document_scroll_width": 390,
+        }
+
+
 class MenuRoot:
     def __init__(self, *, duplicate=False):
         categories = sorted(deploy.EXPECTED_CATEGORY_IDS)
@@ -876,13 +905,22 @@ class MenuRoot:
 
 class ContractPage:
     def __init__(self, *, missing_selector=None, duplicate=False, bad_guide=False,
-                 category_warning=False):
+                 bad_responsive=False, category_warning=False):
         self.url = deploy.HOME_URL
         self.missing_selector = missing_selector
         self.duplicate = duplicate
         self.bad_guide = bad_guide
+        self.bad_responsive = bad_responsive
         self.category_warning = category_warning
         self.navigations: list[str] = []
+        self.viewport_sizes: list[dict[str, int]] = []
+
+    def set_viewport_size(self, viewport):
+        self.viewport_sizes.append(dict(viewport))
+
+    def wait_for_timeout(self, milliseconds):
+        if milliseconds != 250:
+            raise AssertionError(f"unexpected responsive-table wait {milliseconds!r}")
 
     def goto(self, url, wait_until=None, timeout=None):
         if timeout is None:
@@ -917,6 +955,20 @@ class ContractPage:
                 return []
             return [MenuRoot(duplicate=self.duplicate)]
         if self.url in deploy.PRODUCT_URLS.values():
+            product_id = next(key for key, value in deploy.PRODUCT_URLS.items()
+                              if value == self.url)
+            responsive_selectors = {
+                ".frpdepot-acp-specification-table-cue",
+                ".et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active",
+                "#frpdepot-acp-responsive-table-styles",
+                "#frpdepot-acp-responsive-table-script",
+            }
+            if selector in responsive_selectors:
+                if product_id not in deploy.RESPONSIVE_TABLE_PRODUCT_IDS:
+                    return []
+                if selector == ".et_pb_wc_description .spec-table-wrapper.frpdepot-acp-responsive-active":
+                    return [ResponsiveScroller(clipped=self.bad_responsive)]
+                return [object()]
             counts = {
                 ".et_pb_blurb_1_tb_body h4.et_pb_module_header": 0,
                 ".et_pb_blurb_0_tb_body h4.et_pb_module_header": 1,
@@ -1011,6 +1063,16 @@ class TestAnonymousContract(unittest.TestCase):
             "derakane_v2_page_and_rest_required"])
         self.assertTrue(deploy.VALIDATION_CONTRACT[
             "obsolete_hetron_attachment_and_direct_pdf_unavailable"])
+        self.assertEqual(deploy.VALIDATION_CONTRACT["responsive_table_product_ids"],
+                         sorted(deploy.RESPONSIVE_TABLE_PRODUCT_IDS))
+        self.assertEqual(deploy.VALIDATION_CONTRACT["responsive_table_mobile_viewport"],
+                         deploy.MOBILE_TABLE_VIEWPORT)
+        self.assertTrue(deploy.VALIDATION_CONTRACT[
+            "responsive_table_horizontal_scroll_required"])
+        self.assertTrue(deploy.VALIDATION_CONTRACT[
+            "responsive_table_swipe_cue_required"])
+        self.assertTrue(deploy.VALIDATION_CONTRACT[
+            "responsive_table_keyboard_region_required"])
         self.assertFalse(deploy.VALIDATION_CONTRACT["retry"])
 
     def test_public_page_passes_only_the_exact_anonymous_projection(self):
@@ -1019,6 +1081,8 @@ class TestAnonymousContract(unittest.TestCase):
         self.assertTrue(findings["passed"])
         self.assertEqual(raw.navigations,
                          [deploy.HOME_URL]
+                         + [deploy.PRODUCT_URLS[product_id]
+                            for product_id in sorted(deploy.PRODUCT_URLS)]
                          + [deploy.PRODUCT_URLS[product_id]
                             for product_id in sorted(deploy.PRODUCT_URLS)]
                          + [deploy.CATEGORY_URLS[category_id]
@@ -1031,6 +1095,13 @@ class TestAnonymousContract(unittest.TestCase):
         self.assertEqual(set(findings["guides"]),
                          {str(product_id) for product_id in deploy.PRODUCT_URLS})
         self.assertTrue(all(item["passed"] for item in findings["guides"].values()))
+        self.assertEqual(set(findings["responsive_tables"]),
+                         {str(product_id) for product_id in deploy.PRODUCT_URLS})
+        self.assertTrue(all(item["passed"]
+                            for item in findings["responsive_tables"].values()))
+        self.assertTrue(all(item["target"]
+                            for product_id, item in findings["responsive_tables"].items()
+                            if int(product_id) in deploy.RESPONSIVE_TABLE_PRODUCT_IDS))
         self.assertEqual(set(findings["category_pages"]),
                          {str(category_id) for category_id in deploy.CATEGORY_URLS})
         self.assertTrue(all(item["passed"]
@@ -1049,6 +1120,7 @@ class TestAnonymousContract(unittest.TestCase):
             ContractPage(missing_selector=deploy.HEADER_MOBILE_SELECTOR),
             ContractPage(duplicate=True),
             ContractPage(bad_guide=True),
+            ContractPage(bad_responsive=True),
         )
         for raw in pages:
             with self.subTest(raw=vars(raw)):

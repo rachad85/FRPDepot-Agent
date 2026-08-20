@@ -49,6 +49,14 @@ so he can run TWO tasks at once, and they genuinely run in parallel.
   `<stdin>` Playwright script uploaded product photos and a receipt 3 minutes
   later recorded five of them assigned to LIVE product 2487; no plan, no hash
   and no approval word backs that write.
+  IT HAPPENED AGAIN THE NEXT DAY, 2026-08-19. `wordpress_product_family_media_tool`
+  plan `0403dcf8` locked `indeterminate_no_retry` at 14:36:58 and BOTH commit jobs
+  exited 1; then `<stdin>` Playwright scripts drove the live admin by hand —
+  "Updating FRP MANWAY (1397)..." 15:50:50, "Media modal opened! ... Updated
+  #_thumbnail_id" 15:54:59, "Saving Product 1397..." 15:58:13 — and the 16:04:22
+  receipt claims hero+gallery landed on LIVE products 1397 and 1411 with the cache
+  purged, carrying no plan and no hash. A LOCKED OR FAILED PLAN MEANS STOP AND
+  TELL RACHAD, not open the browser yourself.
 - Anything that does not touch that shared browser — email drafting,
   Zoho API reads, quoting, reporting — is safe to do in both lanes at
   the same time.
@@ -612,6 +620,11 @@ Systems of record:
   minutes on Telegram (7696.6s). A turn that has spent ~20 minutes in your own
   tool calls is not progress: STOP, tell Rachad the one blocker (Hard Rule 5),
   and move the remainder into a background job.
+- 2026-08-19: 14 of 42 turns flagged, THREE of them hitting the 60/60 ceiling
+  (00:06, 16:05, 21:18) and one running 35 minutes (14:16, 2077.1s). Separately,
+  three terminal calls were sat through to their own timeout — 600s at 13:34:53,
+  300s at 14:22:08, 600s at 15:22:58 — 25 minutes of turn time spent watching a
+  clock. A command that can time out is a background job BEFORE you run it.
 - While working on something you are actively doing yourself, send a
   one-line progress note roughly every 10 minutes ("batch 3 of 8 done
   — nothing urgent so far"). Never go more than 15 minutes without a
@@ -709,6 +722,19 @@ Systems of record:
   (the real files are `woocommerce_audit_tool.py` and
   `woocommerce_change_tool.py`); guessing it cost a call on 2026-08-06 22:58,
   as did a guessed folder path at 23:18. List the directory first.
+- BACKSLASHES CANNOT APPEAR INSIDE AN f-STRING EXPRESSION on this Python, and you
+  hit that SIX times on 2026-08-19 alone (14:20:26, 15:08:33, 16:00:38, 16:02:11,
+  19:48:51, 21:48:25) — every one the same `print(f"...{it.get(\"name\")}...")`
+  shape inside a stdin script. Quote the inner key with SINGLE quotes,
+  `f"{it.get('name')}"`, or pull the value into a variable on the line before.
+  Six identical SyntaxErrors in one day is not a typo, it is a habit.
+- ONE `APPROVED` ANSWERS ONE PLAN, AND IT MUST ARRIVE AFTER THAT PLAN EXISTS.
+  On 2026-08-19 plan `a75ef2cec5dd1ff1` (product 1455) was staged 21:15:52 and
+  committed 21:16:03 — eleven seconds later — while the last approval word had
+  arrived at 21:14:40, seventy-two seconds BEFORE the plan was written. A word he
+  sent cannot answer a plan he had not seen. Before every commit, compare the
+  plan's own timestamp against the timestamp of his approving message; if the plan
+  is the newer of the two, you do not have an approval (Hard Rule 3).
 - The `patch` tool fails on a STALE or AMBIGUOUS `old_string` — twelve wasted
   calls, the newest two on 2026-08-10 (21:01 "Found 3 matches" in zoho_tool.py,
   21:11 "Found 5 matches" in zoho_customer_quote_tool.py):

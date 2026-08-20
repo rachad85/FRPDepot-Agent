@@ -55,8 +55,8 @@ import wordpress_packing_ring_media_tool as media_base  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Fixed Product Family Media Tool"
-TOOL_VERSION = "1.7.0"
-SCHEMA_VERSION = 8
+TOOL_VERSION = "1.8.1"
+SCHEMA_VERSION = 9
 ACTION = "upload_and_assign_fixed_product_family_gallery"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
@@ -64,12 +64,12 @@ MIN_AUTHORIZATION_MARGIN = timedelta(minutes=2)
 MIN_GUARD_COMPLETION_MARGIN = timedelta(minutes=2)
 EXACT_ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
-GUARD_PLUGIN_VERSION = "1.0.1"
+GUARD_PLUGIN_VERSION = "1.0.2"
 GUARD_PROOF_SCHEMA = 2
-GUARD_ZIP_SHA256 = "656d9cc1f428c409459b38e096ea427763dc69fdb88f8b1d08ec30ec66c1dbbd"
-GUARD_PLUGIN_PHP_SHA256 = "65c3381601c6b61bd4a481e9cf082cfaf41d99df838f66c9667c68b037ba5451"
-GUARD_RUNTIME_MANIFEST_SHA256 = "2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b"
-GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.1.zip"
+GUARD_ZIP_SHA256 = "e2808773c4c6d3ba062a5664eb46021afde3066430afe37b9d0933b5f9bdb047"
+GUARD_PLUGIN_PHP_SHA256 = "ba728a27cb439e62be89fa7a4cb2619b34942498621bbd1f0f9f15c896bd93e0"
+GUARD_RUNTIME_MANIFEST_SHA256 = "3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc"
+GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.2.zip"
 GUARD_PLUGIN_PHP_PATH = (
     THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
     / "frpdepot-media-mutation-guard.php"
@@ -98,10 +98,10 @@ REGISTRY_KEY_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / (
 )
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
 APPROVED_MANIFEST_PATH = (
-    ROOT / "Dado" / "20_Working" / "product_image_overhaul_20260815"
-    / "final_family_review_20260815" / "approved_product_family_media_manifest_20260815.json"
+    ROOT / "Dado" / "20_Working" / "clean_pipe_gallery_20260819"
+    / "approved_product_family_media_manifest_pipe_update_20260819.json"
 )
-APPROVED_MANIFEST_SHA256 = "9020dfbbedec473430fa02a4e07578284ec3da33009444a1467c28aa75cc9748"
+APPROVED_MANIFEST_SHA256 = "4bbb8fb7dba7272ed2b239623cc9705c92abdad5a169f7e63aea797abe4d9a3c"
 GUARD_PRIVATE_EXCEPTION = {
     "attachment_id": 1832,
     "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -251,10 +251,10 @@ FAMILY_SPECS: dict[str, dict[str, Any]] = {
         "status": "publish",
         "permalink": "https://frpdepots.com/product/frp-fw-pipe/",
         "images": (
-            image_record(1, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\pipe_real_source_batch_20260815\01_pipe_real_group_hero.png", 397351, "ceada300546bf0e7a6452563389783c44bfaa0f4836222fb639e611e7657ddad", 1024, 1024),
-            image_record(2, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\pipe_real_source_batch_20260815\02_pipe_real_open_end_laminate_detail.png", 372973, "d032965b5a89a210eb419d3e928ce6c1c274f91265b238b0bb2de6f7010880d8", 1024, 1024),
-            image_record(3, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\pipe_real_source_batch_20260815\03_pipe_real_factory_inventory.png", 997867, "098bde709864ec5d8f38545c6c08810c8e73c5b43acadcc4946d78ffea4359eb", 1024, 1024),
-            image_record(4, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\pipe_real_source_batch_20260815\04_pipe_real_skid_logistics.png", 731885, "4a3c3c2f061d9913d65c66a5e87f678c1c620132a533001a736bbf5bb2fc00a1", 1024, 1024),
+            image_record(1, r"C:\FRPDepot\Dado\20_Working\clean_pipe_gallery_20260819\01_pipe_catalogue_single_diagonal_hero.png", 675601, "ab7a27849ff447ab1352280d41c7929e76f096b74ea6251bea0ef58d5810868c", 1024, 1024),
+            image_record(2, r"C:\FRPDepot\Dado\20_Working\clean_pipe_gallery_20260819\02_pipe_catalogue_single_vertical_profile.png", 932123, "6525c5b71a189fd5b0485d61f4edf227bad46134e66b96df2fffcbcbcfc5aca2", 1024, 1024),
+            image_record(3, r"C:\FRPDepot\Dado\20_Working\clean_pipe_gallery_20260819\03_pipe_catalogue_open_end_wall_detail.png", 729543, "e119539190a741b737be26750d3f157285a662ef200b77275a5ea8e1f5a6b403", 1024, 1024),
+            image_record(4, r"C:\FRPDepot\Dado\20_Working\clean_pipe_gallery_20260819\04_pipe_catalogue_size_range_group.png", 356682, "202228668fff9438adaf6d7198fe7a2357cc048535c837fb0b38deb54d5b762a", 1024, 1024),
         ),
     },
 }
@@ -482,13 +482,20 @@ def validate_guard_snapshot_proof(value: Any, key: str, mode: str,
         raise FamilyMediaError("REFUSED: guard snapshot SHA-256 is invalid.")
     if type(value["complete"]) is not bool or not isinstance(value["failures"], list):
         raise FamilyMediaError("REFUSED: guard snapshot completeness evidence is invalid.")
+    allowed_failure_reasons = {
+        "private_attachment_proof_failed", "unreadable_original", "hash_failed",
+    }
+    failure_ids: set[int] = set()
     for failure in value["failures"]:
         if (not isinstance(failure, dict) or set(failure) != {"attachment_id", "reason"}
-                or type(failure["attachment_id"]) is not int
-                or not isinstance(failure["reason"], str) or not failure["reason"]):
+                or type(failure["attachment_id"]) is not int or failure["attachment_id"] <= 0
+                or failure["attachment_id"] in failure_ids
+                or failure["reason"] not in allowed_failure_reasons):
             raise FamilyMediaError("REFUSED: guard snapshot failure evidence is invalid.")
+        failure_ids.add(failure["attachment_id"])
     private_exceptions = _guard_private_exception_rows(value["private_exceptions"])
-    if value["attachment_total"] != value["hashed_total"] + len(private_exceptions):
+    if value["attachment_total"] != (
+            value["hashed_total"] + len(private_exceptions) + len(value["failures"])):
         raise FamilyMediaError("REFUSED: guard snapshot counters do not reconcile.")
     _guard_match_rows(value["name_conflicts"], "name-conflict")
     _guard_match_rows(value["hash_conflicts"], "hash-conflict")
@@ -505,6 +512,13 @@ def require_empty_guard_snapshot(proof: Any, key: str, mode: str,
     checked = validate_guard_snapshot_proof(
         proof, key, mode, mode in {"guard_acquired", "guarded_snapshot"}
     )
+    if checked["failures"]:
+        details = ", ".join(
+            f"{row['attachment_id']}:{row['reason']}" for row in checked["failures"]
+        )
+        raise FamilyMediaError(
+            f"REFUSED: server-side guard snapshot has unreadable attachment evidence: {details}."
+        )
     if (checked["complete"] is not True or checked["failures"]
             or checked["attachment_total"] != checked["hashed_total"] + 1
             or checked["name_conflicts"] or checked["hash_conflicts"]
@@ -670,6 +684,14 @@ def validate_approved_manifest() -> dict[str, Any]:
         "scope": "six-family working image collection only",
         "not_authorized": ["publication", "upload", "WooCommerce write", "Drive write", "email"],
     }
+    expected_pipe_update = {
+        "exact_user_message": "Yes stage the update",
+        "scope": (
+            "replace only WooCommerce product 1455 working gallery with four clean "
+            "2026 catalogue pipe images; stage only"
+        ),
+        "not_authorized": ["publication", "upload", "WooCommerce write", "Drive write", "email"],
+    }
     expected_fnpt = {
         "status": "approved existing benchmark; excluded from the five-family media tool",
         "separate_plan_required": True,
@@ -677,6 +699,7 @@ def validate_approved_manifest() -> dict[str, Any]:
     if (manifest.get("schema_version") != 1
             or manifest.get("status") != "APPROVED_WORKING_COLLECTION_NOT_PUBLISHED"
             or manifest.get("approval") != expected_approval
+            or manifest.get("pipe_update_instruction") != expected_pipe_update
             or manifest.get("fnpt") != expected_fnpt):
         raise FamilyMediaError("REFUSED: approved collection manifest status/scope is invalid.")
     families = manifest.get("families")

@@ -675,6 +675,34 @@ production did - so `visible role-radio preferred`, `no guessing fallback` and
 context starts with nothing chosen, which is what makes "three independent
 rehearsals" checkable rather than a count of loop turns.
 
+## Fixed orphan-media cleanup commission (2026-08-20)
+
+Rachad commissioned `wordpress_orphan_media_cleanup_tool.py` for one fixed cleanup
+only: permanently delete WordPress attachment IDs **5521, 5523, 5525 and 5527**.
+They are the four exact, hash-recorded open-manway uploads left unattached when
+operation `877ff133...` permanently locked before any product-gallery payload.
+The tool requires two complete, matching read-only evidence passes before staging:
+the full Media Library, the server guard proving exactly those four
+`unreadable_original` failures, exact attachment edit identity/status/unattached
+metadata and exact delete controls, every registered original/thumbnail URL and
+current public-byte state, and strict total-reconciled WooCommerce product plus
+variation walks proving zero references. The source result file, source operation,
+fixed IDs, filenames, URLs, byte sizes and SHA-256 values are pinned in code.
+
+Only `stage` and `commit --plan --approval` exist. Staging writes no website data.
+Commit requires Rachad's later exact unpadded uppercase `APPROVED`, takes the shared
+WordPress browser lock before its permanent attempt lock, and can click only the
+four fixed `Delete permanently` controls in that fixed order. Every target writes
+its own immutable attempted/verified journal and receives complete Media Library,
+server-guard, product/variation, authenticated-record and public-file verification
+before the next click. WordPress may remove every registered derivative listed in
+the plan. The four deletes are
+**not atomic and have no rollback**: earlier deletions remain if a later action or
+verification fails, later deletions are not attempted, and the plan becomes
+`INDETERMINATE_NO_RETRY`. There is no retry, restore, upload, edit, rename,
+replacement, attachment/product/plugin/setting/order/customer/payment or mail
+route, and no generic browser command.
+
 ## Revoke access
 
 In WordPress, open **WooCommerce > Settings > Advanced > REST API**, locate the Dado

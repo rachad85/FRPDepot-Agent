@@ -5,7 +5,7 @@ Closed scope:
 - install exactly the pinned plugin ZIP, inactive, only when absent;
 - activate exactly that installed version;
 - deactivate exactly that installed version as the fixed emergency path.
-- replace the exact active v1.0.0 guard once with the exact v1.0.1 repair;
+- replace the exact active v1.0.1 guard once with the exact v1.0.2 pipe-gallery manifest update;
 
 Every action uses an immutable authenticated 24-hour plan and a later exact
 APPROVED. There is no arbitrary replace, delete, arbitrary plugin, generic browser,
@@ -38,8 +38,8 @@ if str(ROOT) not in sys.path:
 from Dado.Tools.common.ui_lane_lock import ui_browser_lock
 
 TOOL_NAME = "wordpress_media_guard_deployment_tool"
-TOOL_VERSION = "1.1.4"
-SCHEMA_VERSION = 2
+TOOL_VERSION = "1.2.0"
+SCHEMA_VERSION = 3
 APPROVAL_WORD = "APPROVED"
 ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
@@ -49,20 +49,20 @@ GUARD_URL = f"{ORIGIN}/wp-admin/tools.php?page=frpd-media-mutation-guard"
 PLUGIN_NAME = "FRP Depot Media Mutation Guard"
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"
-WITHDRAWN_PLUGIN_VERSION = "1.0.0"
-PLUGIN_VERSION = "1.0.1"
-ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.1.zip"
-ARTIFACT_SHA256 = "656d9cc1f428c409459b38e096ea427763dc69fdb88f8b1d08ec30ec66c1dbbd"
-ARTIFACT_BYTES = 17184
+WITHDRAWN_PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
+ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.2.zip"
+ARTIFACT_SHA256 = "e2808773c4c6d3ba062a5664eb46021afde3066430afe37b9d0933b5f9bdb047"
+ARTIFACT_BYTES = 17257
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/approved-media.json",
     f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php",
     f"{PLUGIN_SLUG}/readme.txt",
 )
 ARTIFACT_MEMBER_SHA256 = {
-    f"{PLUGIN_SLUG}/approved-media.json": "2e8fdde2ba90aedb07de5bddb64a4dc4d02b82a2db88deba4605bdbfa6f18d8b",
-    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "65c3381601c6b61bd4a481e9cf082cfaf41d99df838f66c9667c68b037ba5451",
-    f"{PLUGIN_SLUG}/readme.txt": "ad9f2bb0aad1286a4c18ba08ff11316ab182467764e3bdfd96d9cc3a05228f3e",
+    f"{PLUGIN_SLUG}/approved-media.json": "3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc",
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "ba728a27cb439e62be89fa7a4cb2619b34942498621bbd1f0f9f15c896bd93e0",
+    f"{PLUGIN_SLUG}/readme.txt": "5ee1a2fdcf62310c4edbaabc141693f4b84846993c47bebdc8e4744341b14c3d",
 }
 ACTIONS = frozenset({"install_inactive", "replace_active", "activate", "deactivate"})
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_media_guard_deployment_plans"
@@ -454,7 +454,7 @@ class AdminPage:
         return {"comparison_name": uploaded_name, "comparison_current_version": current_version,
                 "comparison_uploaded_version": uploaded_version,
                 "wordpress_success_marker_exact": True,
-                "active_v1_0_0_reverified_immediately_before_overwrite": True,
+                "active_withdrawn_version_reverified_immediately_before_overwrite": True,
                 "after": after}
 
     def prepare_state_click(self, action: str) -> Any:
@@ -637,7 +637,7 @@ def validate_before(action: str, before: dict[str, Any]) -> None:
     if action == "replace_active" and before != project_row(
             True, True, WITHDRAWN_PLUGIN_VERSION, False):
         raise DeploymentError(
-            "REFUSED: replacement requires exact active v1.0.0 without an update marker."
+            "REFUSED: replacement requires exact active v1.0.1 without an update marker."
         )
 
 
@@ -658,8 +658,8 @@ def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tupl
             "activate": "one fixed plugin activation click; its hook creates and verifies one fixed InnoDB guard-state table",
             "deactivate": "one fixed plugin deactivation click",
         }[action]],
-        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.0 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it cannot stop direct database/filesystem mutation, malicious PHP, or privileged plugin disable/replace.",
-        "forbidden": ["replace outside exact v1.0.0-to-v1.0.1 repair", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
+        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.1 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it does not defend against direct database/filesystem mutation, malicious PHP, or a privileged administrator replacing or disabling it. A replacement plan authorizes the upload only; an exact overwrite control is discovered after that write and absence leaves the plan indeterminate with the temporary upload possibly present.",
+        "forbidden": ["replace outside exact v1.0.1-to-v1.0.2 update", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
                       "generic browser", "setting", "content", "user", "media", "product", "order",
                       "customer", "payment", "email", "Zoho", "Drive"],
     }

@@ -433,7 +433,7 @@ class PlanTests(unittest.TestCase):
                         "comparison_current_version": tool.WITHDRAWN_PLUGIN_VERSION,
                         "comparison_uploaded_version": tool.PLUGIN_VERSION,
                         "wordpress_success_marker_exact": True,
-                        "active_v1_0_0_reverified_immediately_before_overwrite": True,
+                        "active_withdrawn_version_reverified_immediately_before_overwrite": True,
                         "after": tool.expected_after("replace_active")}
 
         self_outer = self
@@ -505,7 +505,7 @@ class SourceSurfaceTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(chooser.files[0]["buffer"]).hexdigest(),
                          tool.ARTIFACT_SHA256)
         self.assertTrue(audit_page.closed)
-        self.assertTrue(result["active_v1_0_0_reverified_immediately_before_overwrite"])
+        self.assertTrue(result["active_withdrawn_version_reverified_immediately_before_overwrite"])
 
         bad_link = FakeElement(evaluate_result=False)
         page.row = fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION)
