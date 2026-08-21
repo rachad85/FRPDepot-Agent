@@ -1,18 +1,23 @@
 #!/usr/bin/env python
-"""Fixed cleanup tool for four known orphan WordPress media records.
+"""One fixed successor correction for four unreadable orphan media records.
 
-Commissioned by Rachad Homsi on 2026-08-20 after the permanently locked
-open-manway gallery operation uploaded four files but never assigned a product
-gallery. This tool can do exactly one thing: permanently delete attachment IDs
-5521, 5523, 5525 and 5527 after a read-only immutable 24-hour plan and Rachad's
-later exact APPROVED.
+Commissioned by Rachad Homsi on 2026-08-21 after the predecessor cleanup
+operation was permanently locked by a recorded write attempt on attachment
+5521 while all four exact records still appeared in the complete Media Library
+and in the guard's unreadable-original failure set. This is not a replay of the
+predecessor plan: it has a distinct fixed correction action, isolated state,
+and requires the immutable predecessor event as part of its source evidence.
 
-The four deletes are independent WordPress actions. They are NOT atomic and
-there is NO rollback, restore, retry, upload, edit, attachment replacement,
-product write, plugin write, generic browser, order/customer/payment or mail
-route. Any failure after the permanent attempt lock leaves the plan
-INDETERMINATE_NO_RETRY; earlier deletions remain live and later ones are not
-attempted.
+The tool may permanently delete only attachment IDs 5521, 5523, 5525 and 5527,
+after a new read-only immutable 24-hour plan and Rachad's later exact APPROVED.
+It deliberately replaces the failed wp.media model fetch with a closed
+attachment-edit DOM identity route plus complete library, guard, product and
+variation proofs. The four deletes are independent WordPress actions. They are
+NOT atomic and there is NO rollback, restore, retry, upload, edit, attachment
+replacement, product write, plugin write, generic browser, order/customer/
+payment or mail route. Any failure after the new permanent attempt lock leaves
+the correction INDETERMINATE_NO_RETRY; earlier deletions remain live and later
+ones are not attempted.
 """
 from __future__ import annotations
 
@@ -40,28 +45,41 @@ import wordpress_packing_ring_media_tool as media_base  # noqa: E402
 import wordpress_product_family_media_tool as family_media  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
-TOOL_NAME = "FRP Depot Fixed Orphan Media Cleanup Tool"
-TOOL_VERSION = "1.0.7"
-SCHEMA_VERSION = 3
-# The operation identity is a business-action identity, not a plan-schema
-# identity. Keep the original schema-1 operation digest forever so a plan
-# schema bump can never route around an earlier attempt/event lock.
+TOOL_NAME = "FRP Depot Fixed Orphan Media Record Correction Tool"
+TOOL_VERSION = "1.0.0"
+SCHEMA_VERSION = 1
 OPERATION_SCHEMA_VERSION = 1
-ACTION = "delete_four_fixed_orphan_attachments"
+ACTION = "correct_four_fixed_unreadable_orphan_records_after_locked_cleanup"
 APPROVAL_WORD = "APPROVED"
 ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
 PLAN_LIFETIME = timedelta(hours=24)
 COMMIT_EXPIRY_MARGIN = timedelta(minutes=45)
-PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_orphan_media_cleanup_plans"
+PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_orphan_media_correction_plans"
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
-LOCAL_STATE = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "FRPDepot-WordPress" / "orphan-media-cleanup"
+LOCAL_STATE = Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local"))) / "FRPDepot-WordPress" / "orphan-media-correction-v1"
 REGISTRY_KEY = LOCAL_STATE / "stage-registry.key"
 REGISTRY_DIR = LOCAL_STATE / "stages"
 ATTEMPT_DIR = LOCAL_STATE / "attempts"
 RESULT_DIR = LOCAL_STATE / "results"
 EVENT_DIR = LOCAL_STATE / "events"
 RUNTIME_TEMP = ROOT / "Dado" / "Temp" / "playwright-runtime"
+PREDECESSOR_OPERATION_SHA256 = "7045aee2e8fb340ffee491c9dfd5413b50b6c30c6d26cc6ad2379d0a9eb27dae"
+PREDECESSOR_PLAN_SHA256 = "f13801a092261916cbef87512c624ee85f24247d6255aa70b52a4a38a512bd2d"
+PREDECESSOR_EVENT_SHA256 = "e1c81bd795708a73ac5840c363e82ff665febdcdc9f5ca1aea3b995a8e297b9d"
+PREDECESSOR_STATE = (
+    Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    / "FRPDepot-WordPress" / "orphan-media-cleanup"
+)
+PREDECESSOR_EVENT = (
+    PREDECESSOR_STATE / "events"
+    / PREDECESSOR_OPERATION_SHA256 / "01-5521-attempted.json"
+)
+PINNED_GUARD_PLUGIN_VERSION = "1.0.5"
+PINNED_GUARD_PROOF_SCHEMA = 2
+PINNED_GUARD_ZIP_SHA256 = "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74"
+PINNED_GUARD_PLUGIN_PHP_SHA256 = "7d09ad8eb45e552e7dfb31ecf50b800ea50ea1c8074a8e1a899e375f47a2f887"
+PINNED_GUARD_RUNTIME_MANIFEST_SHA256 = "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565"
 SOURCE_OPERATION_SHA256 = "877ff133b0e4fbf560b3be5877b755c72e5c33dc217c7e4affb23c1a314e2a26"
 SOURCE_PLAN_SHA256 = "0403dcf8b8cc597086439f801dd8493ae6c0b1461887be3f1dc3f0f2ba79fab5"
 SOURCE_RESULT_SHA256 = "0fa72aceb74bbf231618d4b09026f6d7442962a4827c839bfa005187f4ea8ddf"
@@ -271,6 +289,17 @@ def validate_fixed_contract() -> dict[str, Any]:
                 or int(row["bytes"]) <= 0
                 or row["source_url"] != f"{ORIGIN}/wp-content/uploads/2026/08/{row['filename']}"):
             raise CleanupError("REFUSED: fixed target bytes or URL contract changed.")
+    if (family_media.GUARD_PLUGIN_VERSION != PINNED_GUARD_PLUGIN_VERSION
+            or family_media.GUARD_PROOF_SCHEMA != PINNED_GUARD_PROOF_SCHEMA
+            or family_media.GUARD_ZIP_SHA256 != PINNED_GUARD_ZIP_SHA256
+            or family_media.GUARD_PLUGIN_PHP_SHA256 != PINNED_GUARD_PLUGIN_PHP_SHA256
+            or family_media.GUARD_RUNTIME_MANIFEST_SHA256
+            != PINNED_GUARD_RUNTIME_MANIFEST_SHA256):
+        raise CleanupError("REFUSED: pinned Media Mutation Guard contract drifted.")
+    try:
+        family_media.validate_guard_manifest_contract()
+    except family_media.FamilyMediaError as exc:
+        raise CleanupError("REFUSED: pinned Media Mutation Guard files failed validation.") from exc
     if (not SOURCE_RESULT.is_file() or is_reparse(SOURCE_RESULT)
             or getattr(SOURCE_RESULT.stat(), "st_nlink", 1) != 1):
         raise CleanupError("REFUSED: fixed source result is missing or aliased.")
@@ -293,15 +322,53 @@ def validate_fixed_contract() -> dict[str, Any]:
             or source.get("delete_performed") is not False
             or projected != list(TARGETS)):
         raise CleanupError("REFUSED: fixed source result no longer proves these four orphan uploads.")
+    if (not PREDECESSOR_EVENT.is_file() or is_reparse(PREDECESSOR_EVENT)
+            or getattr(PREDECESSOR_EVENT.stat(), "st_nlink", 1) != 1):
+        raise CleanupError("REFUSED: immutable predecessor attempt evidence is missing or aliased.")
+    try:
+        predecessor_bytes = PREDECESSOR_EVENT.read_bytes()
+        predecessor = json.loads(predecessor_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise CleanupError("REFUSED: immutable predecessor attempt evidence is unreadable.") from exc
+    if (hashlib.sha256(predecessor_bytes).hexdigest() != PREDECESSOR_EVENT_SHA256
+            or predecessor.get("schema") != 1
+            or predecessor.get("tool") != "FRP Depot Fixed Orphan Media Cleanup Tool"
+            or predecessor.get("operation_sha256") != PREDECESSOR_OPERATION_SHA256
+            or predecessor.get("plan_sha256") != PREDECESSOR_PLAN_SHA256
+            or predecessor.get("position") != 1
+            or predecessor.get("attachment_id") != 5521
+            or predecessor.get("status") != "write_attempted_no_retry"):
+        raise CleanupError("REFUSED: predecessor attempt evidence is not the exact locked cleanup event.")
+    if not PREDECESSOR_STATE.is_dir() or is_reparse(PREDECESSOR_STATE):
+        raise CleanupError("REFUSED: predecessor state root is missing or aliased.")
+    observed_predecessor_files: list[str] = []
+    try:
+        for entry in PREDECESSOR_STATE.rglob("*"):
+            if is_reparse(entry):
+                raise CleanupError("REFUSED: predecessor state contains an alias or reparse point.")
+            if entry.is_file():
+                observed_predecessor_files.append(entry.relative_to(PREDECESSOR_STATE).as_posix())
+    except OSError as exc:
+        raise CleanupError("REFUSED: predecessor state could not be enumerated completely.") from exc
+    expected_predecessor_file = PREDECESSOR_EVENT.relative_to(PREDECESSOR_STATE).as_posix()
+    if sorted(observed_predecessor_files) != [expected_predecessor_file]:
+        raise CleanupError("REFUSED: predecessor state is not the exact one-event permanent lock.")
     return {
-        "result_path": str(SOURCE_RESULT.resolve()),
-        "result_file_sha256": SOURCE_RESULT_SHA256,
-        "operation_sha256": SOURCE_OPERATION_SHA256,
-        "plan_sha256": SOURCE_PLAN_SHA256,
-        "status": "INDETERMINATE_NO_RETRY",
-        "product_may_have_changed": False,
-        "gallery_payload": None,
-        "delete_performed": False,
+        "source_result_path": str(SOURCE_RESULT.resolve()),
+        "source_result_sha256": SOURCE_RESULT_SHA256,
+        "source_operation_sha256": SOURCE_OPERATION_SHA256,
+        "source_plan_sha256": SOURCE_PLAN_SHA256,
+        "source_status": "INDETERMINATE_NO_RETRY",
+        "source_product_may_have_changed": False,
+        "source_gallery_payload": None,
+        "source_delete_performed": False,
+        "predecessor_event_path": str(PREDECESSOR_EVENT.resolve()),
+        "predecessor_event_sha256": PREDECESSOR_EVENT_SHA256,
+        "predecessor_operation_sha256": PREDECESSOR_OPERATION_SHA256,
+        "predecessor_plan_sha256": PREDECESSOR_PLAN_SHA256,
+        "predecessor_attachment_id": 5521,
+        "predecessor_status": "write_attempted_no_retry",
+        "correction_reason": "replace_failed_wp_media_model_fetch_with_closed_edit_dom_identity",
     }
 
 
@@ -309,60 +376,6 @@ def target_spec(attachment_id: int) -> dict[str, Any]:
     if type(attachment_id) is not int or attachment_id not in TARGET_BY_ID:
         raise CleanupError("REFUSED: attachment ID is outside the four fixed orphan records.")
     return TARGET_BY_ID[attachment_id]
-
-
-def normalize_rest_media_projection(attachment_id: int, response: Any) -> dict[str, Any]:
-    """Validate one authenticated core REST media record and preserve the staged shape."""
-    spec = target_spec(attachment_id)
-    expected_keys = {
-        "id", "status", "type", "source_url", "media_type", "mime_type", "post",
-        "media_details",
-    }
-    if not isinstance(response, dict) or set(response) != expected_keys:
-        raise CleanupError("REFUSED: authenticated attachment REST projection is malformed.")
-    if (response["id"] != attachment_id
-            or response["status"] != "inherit"
-            or response["type"] != "attachment"
-            or response["source_url"] != spec["source_url"]
-            or response["media_type"] != "image"
-            or response["mime_type"] != "image/png"
-            or response["post"] is not None):
-        raise CleanupError("REFUSED: fixed attachment REST identity is not exact and unattached.")
-    details = response["media_details"]
-    if not isinstance(details, dict) or not isinstance(details.get("file"), str):
-        raise CleanupError("REFUSED: fixed attachment REST file metadata is unavailable.")
-    source_path = urlsplit(spec["source_url"]).path
-    marker = "/wp-content/uploads/"
-    if marker not in source_path or details["file"] != source_path.split(marker, 1)[1]:
-        raise CleanupError("REFUSED: fixed attachment REST file path changed.")
-    raw_sizes = details.get("sizes")
-    if not isinstance(raw_sizes, dict):
-        raise CleanupError("REFUSED: registered attachment derivative metadata is unavailable.")
-    sizes: list[dict[str, Any]] = []
-    for name in sorted(raw_sizes):
-        row = raw_sizes[name]
-        if (not isinstance(name, str) or not name or not isinstance(row, dict)
-                or not isinstance(row.get("source_url"), str) or not row["source_url"]
-                or type(row.get("width")) is not int or row["width"] <= 0
-                or type(row.get("height")) is not int or row["height"] <= 0):
-            raise CleanupError("REFUSED: registered attachment derivative metadata is invalid.")
-        media_base.assert_public_upload_url(row["source_url"], allowed_extensions=(".png",))
-        sizes.append({
-            "name": name,
-            "url": row["source_url"],
-            "width": row["width"],
-            "height": row["height"],
-        })
-    return {
-        "id": response["id"],
-        "filename": spec["filename"],
-        "url": response["source_url"],
-        "mime": response["mime_type"],
-        "type": response["media_type"],
-        "subtype": "png",
-        "uploaded_to": 0,
-        "sizes": sizes,
-    }
 
 
 def public_url_state(url: str, *, require_present: bool = False,
@@ -387,23 +400,20 @@ def public_url_state(url: str, *, require_present: bool = False,
 
 
 def public_evidence(attachments: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_url: dict[str, tuple[str | None, int | None]] = {}
-    for attachment in attachments:
-        spec = target_spec(attachment["attachment_id"])
-        for url in attachment.get("registered_urls") or []:
-            if not isinstance(url, str):
-                raise CleanupError("REFUSED: registered public media URL is invalid.")
-            expected = (spec["sha256"], spec["bytes"]) if url == spec["source_url"] else (None, None)
-            if url in by_url and by_url[url] != expected:
-                raise CleanupError("REFUSED: registered public media URL provenance conflicts.")
-            by_url[url] = expected
-    rows = [
-        public_url_state(url, require_present=expected_sha is not None,
-                         expected_sha256=expected_sha, expected_bytes=expected_bytes)
-        for url, (expected_sha, expected_bytes) in sorted(by_url.items())
-    ]
-    if not rows or sum(row["state"] == "present" for row in rows) < len(TARGETS):
-        raise CleanupError("REFUSED: public source provenance is incomplete.")
+    """Prove the four fixed records point only at their now-unreadable originals.
+
+    The immutable source result already proves the original upload bytes and
+    hashes. The correction eligibility state instead requires each current
+    attachment-edit screen to expose the same fixed URL while that public URL
+    is now 404/410, matching the guard's unreadable_original evidence.
+    """
+    if [row.get("attachment_id") for row in attachments] != list(TARGET_IDS):
+        raise CleanupError("REFUSED: attachment identity list is not the exact fixed set.")
+    rows = [public_url_state(target_spec(row["attachment_id"])["source_url"])
+            for row in attachments]
+    if ([row["url"] for row in rows] != sorted(item["source_url"] for item in TARGETS)
+            or any(row["state"] != "not_found" for row in rows)):
+        raise CleanupError("REFUSED: the four fixed unreadable original URLs are not exactly absent.")
     return rows
 
 
@@ -467,6 +477,16 @@ def library_projection(snapshot: dict[str, Any], *,
 def strict_get_all(endpoint: str, params: dict[str, Any], vault: dict[str, Any],
                    *, max_items: int = 20000) -> list[dict[str, Any]]:
     """Closed, total-proven WooCommerce GET paginator; never drops malformed rows."""
+    product_fields = "id,status,images,variations,description,short_description,downloads,meta_data"
+    variation_fields = "id,image,description,downloads,meta_data"
+    if endpoint == "/products":
+        expected_params = {"_fields": product_fields}
+    elif re.fullmatch(r"/products/[1-9][0-9]*/variations", endpoint):
+        expected_params = {"_fields": variation_fields}
+    else:
+        raise CleanupError("REFUSED: WooCommerce read endpoint is outside the correction allowlist.")
+    if params != expected_params or max_items != media_base.MAX_LIBRARY_ROWS:
+        raise CleanupError("REFUSED: WooCommerce read parameters are outside the correction allowlist.")
     per_page = 100
     collected: list[dict[str, Any]] = []
     expected_total: int | None = None
@@ -509,6 +529,12 @@ def _contains_fixed_marker(value: Any) -> list[str]:
                    if marker in text})
 
 
+def _contains_fixed_id_marker(value: Any) -> list[int]:
+    text = canonical(value)
+    return [attachment_id for attachment_id in TARGET_IDS
+            if re.search(rf"(?<![0-9]){attachment_id}(?![0-9])", text)]
+
+
 def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
     fields = "id,status,images,variations,description,short_description,downloads,meta_data"
     products = strict_get_all("/products", {"_fields": fields}, vault,
@@ -518,6 +544,16 @@ def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
     variations_checked = 0
     protected_gallery: list[dict[str, Any]] | None = None
     for product in products:
+        if (set(product) != set(fields.split(","))
+                or type(product.get("id")) is not int or product["id"] <= 0
+                or not isinstance(product.get("status"), str)
+                or not isinstance(product.get("images"), list)
+                or not isinstance(product.get("variations"), list)
+                or not isinstance(product.get("description"), str)
+                or not isinstance(product.get("short_description"), str)
+                or not isinstance(product.get("downloads"), list)
+                or not isinstance(product.get("meta_data"), list)):
+            raise CleanupError("REFUSED: WooCommerce product projection schema is not exact.")
         product_id = product["id"]
         image_ids: list[int] = []
         for position, image in enumerate(product.get("images") or [], 1):
@@ -553,6 +589,15 @@ def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
         if markers:
             references.append({"kind": "product_text_or_meta", "product_id": product_id,
                                "markers": markers})
+        id_markers = _contains_fixed_id_marker({
+            "description": product["description"],
+            "short_description": product["short_description"],
+            "downloads": product["downloads"],
+            "meta_data": product["meta_data"],
+        })
+        if id_markers:
+            references.append({"kind": "product_numeric_reference", "product_id": product_id,
+                               "attachment_ids": id_markers})
         expected_variation_ids = product.get("variations") or []
         if (not isinstance(expected_variation_ids, list)
                 or any(type(value) is not int or value <= 0 for value in expected_variation_ids)
@@ -569,6 +614,14 @@ def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
                 raise CleanupError("REFUSED: WooCommerce variation walk is incomplete.")
             variations_checked += len(variations)
             for variation in variations:
+                if (set(variation) != set(variation_fields.split(","))
+                        or type(variation.get("id")) is not int or variation["id"] <= 0
+                        or variation.get("image") is not None
+                        and not isinstance(variation.get("image"), dict)
+                        or not isinstance(variation.get("description"), str)
+                        or not isinstance(variation.get("downloads"), list)
+                        or not isinstance(variation.get("meta_data"), list)):
+                    raise CleanupError("REFUSED: WooCommerce variation projection schema is not exact.")
                 image = variation.get("image")
                 image_id = None
                 if image is not None:
@@ -589,6 +642,17 @@ def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
                     references.append({
                         "kind": "variation_text_or_meta", "product_id": product_id,
                         "variation_id": variation["id"], "markers": variation_markers,
+                    })
+                variation_id_markers = _contains_fixed_id_marker({
+                    "description": variation["description"],
+                    "downloads": variation["downloads"],
+                    "meta_data": variation["meta_data"],
+                })
+                if variation_id_markers:
+                    references.append({
+                        "kind": "variation_numeric_reference", "product_id": product_id,
+                        "variation_id": variation["id"],
+                        "attachment_ids": variation_id_markers,
                     })
                 variation_projection.append({"variation_id": variation["id"], "image_id": image_id})
         variation_projection.sort(key=lambda row: row["variation_id"])
@@ -613,6 +677,10 @@ def product_projection(vault: dict[str, Any]) -> dict[str, Any]:
 
 def guard_projection(proof: dict[str, Any], *,
                      expected_failure_ids: tuple[int, ...]) -> dict[str, Any]:
+    if (not isinstance(proof, dict)
+            or proof.get("schema") != PINNED_GUARD_PROOF_SCHEMA
+            or proof.get("plugin_version") != PINNED_GUARD_PLUGIN_VERSION):
+        raise CleanupError("REFUSED: server-side guard is not the pinned 1.0.5/schema-2 contract.")
     try:
         proof = family_media.validate_guard_snapshot_proof(
             proof, "open_manway", "atomic_snapshot", False
@@ -635,8 +703,8 @@ def guard_projection(proof: dict[str, Any], *,
     private_ids = sorted(
         int(row.get("attachment_id") or 0) for row in private if isinstance(row, dict)
     )
-    if (proof.get("schema") != family_media.GUARD_PROOF_SCHEMA
-            or proof.get("plugin_version") != family_media.GUARD_PLUGIN_VERSION
+    if (proof.get("schema") != PINNED_GUARD_PROOF_SCHEMA
+            or proof.get("plugin_version") != PINNED_GUARD_PLUGIN_VERSION
             or proof.get("mode") != "atomic_snapshot"
             or proof.get("family") != "open_manway"
             or proof.get("guard_active") is not False):
@@ -706,10 +774,102 @@ def guard_projection(proof: dict[str, Any], *,
         "hashed_total": hashed_total,
         "failures": failure_projection,
         "private_exception_ids": private_ids,
+        "name_conflicts": [],
+        "hash_conflicts": [],
+        "fixed_matches": [],
         "guard_fixed_conflicts": details,
         "complete": complete_wanted,
         "snapshot_sha256": str(proof.get("snapshot_sha256") or ""),
     }
+
+
+def assert_correction_eligible(state: dict[str, Any],
+                               expected_present_ids: tuple[int, ...]) -> dict[str, Any]:
+    """One closed predicate shared by stage, commit and the delete adapter."""
+    allowed_states = tuple(TARGET_IDS[index:] for index in range(len(TARGET_IDS) + 1))
+    if expected_present_ids not in allowed_states:
+        raise CleanupError("REFUSED: correction eligibility target state is not a fixed suffix.")
+    if not isinstance(state, dict) or set(state) != {
+        "guard", "library", "attachments", "products", "public_files"
+    }:
+        raise CleanupError("REFUSED: correction eligibility projection schema is not exact.")
+    guard = state["guard"]
+    expected_failures = [
+        {"attachment_id": attachment_id, "reason": "unreadable_original"}
+        for attachment_id in expected_present_ids
+    ]
+    if (not isinstance(guard, dict)
+            or guard.get("plugin_version") != PINNED_GUARD_PLUGIN_VERSION
+            or guard.get("family") != "open_manway"
+            or guard.get("failures") != expected_failures
+            or guard.get("private_exception_ids") != [PRIVATE_EXCEPTION_ID]
+            or guard.get("name_conflicts") != []
+            or guard.get("hash_conflicts") != []
+            or guard.get("fixed_matches") != []
+            or guard.get("guard_fixed_conflicts") != []
+            or guard.get("complete") is not (not expected_present_ids)
+            or not re.fullmatch(r"[0-9a-f]{64}", str(guard.get("snapshot_sha256") or ""))):
+        raise CleanupError("REFUSED: correction eligibility guard state is not exact.")
+    library = state["library"]
+    expected_target_rows = [
+        {"id": row["attachment_id"], "filename": row["filename"]}
+        for row in TARGETS if row["attachment_id"] in expected_present_ids
+    ]
+    if (not isinstance(library, dict)
+            or set(library) != {"total", "rows", "rows_sha256", "survivor_rows_sha256", "target_rows"}
+            or type(library.get("total")) is not int or library["total"] < len(expected_present_ids)
+            or library.get("target_rows") != expected_target_rows
+            or not re.fullmatch(r"[0-9a-f]{64}", str(library.get("rows_sha256") or ""))
+            or not re.fullmatch(r"[0-9a-f]{64}", str(library.get("survivor_rows_sha256") or ""))):
+        raise CleanupError("REFUSED: correction eligibility Media Library state is not exact.")
+    expected_attachments = []
+    for attachment_id in expected_present_ids:
+        spec = target_spec(attachment_id)
+        expected_attachments.append({
+            "attachment_id": attachment_id,
+            "filename": spec["filename"],
+            "source_url": spec["source_url"],
+            "edit_identity": {
+                "post_id": str(attachment_id),
+                "post_type": "attachment",
+                "original_post_status": "inherit",
+                "post_parent": "0",
+            },
+            "identity_route": "canonical_attachment_edit_dom_only",
+            "source_provenance": "immutable_locked_upload_result",
+            "registered_urls": [spec["source_url"]],
+            "delete_control_exact": True,
+        })
+    if state["attachments"] != expected_attachments:
+        raise CleanupError("REFUSED: correction eligibility attachment DOM identity is not exact.")
+    products = state["products"]
+    if (not isinstance(products, dict)
+            or set(products) != {
+                "products_checked", "variations_checked",
+                "product_and_variation_galleries_sha256", "target_references",
+                "protected_survivor_gallery", "strict_totals_proven",
+            }
+            or type(products.get("products_checked")) is not int
+            or products["products_checked"] <= 0
+            or type(products.get("variations_checked")) is not int
+            or products["variations_checked"] < 0
+            or not re.fullmatch(r"[0-9a-f]{64}",
+                                str(products.get("product_and_variation_galleries_sha256") or ""))
+            or products.get("target_references") != []
+            or products.get("protected_survivor_gallery") != list(PROTECTED_SURVIVOR_GALLERY)
+            or products.get("strict_totals_proven") is not True):
+        raise CleanupError("REFUSED: correction eligibility product/variation state is not exact.")
+    public_files = state["public_files"]
+    expected_urls = sorted(row["source_url"] for row in TARGETS)
+    if (not isinstance(public_files, list)
+            or [row.get("url") for row in public_files] != expected_urls
+            or any(not isinstance(row, dict)
+                   or set(row) != {"url", "state", "http_status"}
+                   or row["state"] != "not_found"
+                   or row["http_status"] not in (404, 410)
+                   for row in public_files)):
+        raise CleanupError("REFUSED: correction eligibility public-file absence is not exact.")
+    return state
 
 
 class CleanupAdmin:
@@ -805,11 +965,16 @@ class CleanupAdmin:
         }""", attachment_id))
 
     def _edit_identity(self, attachment_id: int) -> dict[str, str]:
+        forms = self._page.query_selector_all("form#post")
+        if len(forms) != 1:
+            raise CleanupError("REFUSED: exact attachment edit form is unavailable.")
         values: dict[str, str] = {}
         for key, selector in (
-            ("post_id", "#post_ID"),
-            ("post_type", "#post_type"),
-            ("original_post_status", "#original_post_status"),
+            ("post_id", 'input#post_ID[name="post_ID"][type="hidden"]'),
+            ("post_type", 'input#post_type[name="post_type"][type="hidden"]'),
+            ("original_post_status",
+             'input#original_post_status[name="original_post_status"][type="hidden"]'),
+            ("post_parent", 'input#post_parent[name="post_parent"][type="hidden"]'),
         ):
             elements = self._page.query_selector_all(selector)
             if len(elements) != 1:
@@ -817,92 +982,72 @@ class CleanupAdmin:
             values[key] = str(elements[0].input_value() or "")
         if (values["post_id"] != str(attachment_id)
                 or values["post_type"] != "attachment"
-                or values["original_post_status"] != "inherit"):
+                or values["original_post_status"] != "inherit"
+                or values["post_parent"] != "0"):
             raise CleanupError("REFUSED: fixed attachment edit identity changed.")
         return values
 
-    def _media_model_projection(self, attachment_id: int) -> dict[str, Any]:
-        target_spec(attachment_id)
-        value = self._page.evaluate("""async (expectedId) => {
-            if (!window.wp || typeof wp.apiFetch !== 'function') {
-                return {ok: false, response: null};
-            }
-            try {
-                const a = await wp.apiFetch({
-                    path: '/wp/v2/media/' + String(expectedId) + '?context=edit'
-                });
-                return {
-                    ok: true,
-                    response: {
-                        id: a && a.id,
-                        status: a && a.status,
-                        type: a && a.type,
-                        source_url: a && a.source_url,
-                        media_type: a && a.media_type,
-                        mime_type: a && a.mime_type,
-                        post: a && Object.prototype.hasOwnProperty.call(a, 'post') ? a.post : '__missing__',
-                        media_details: a && a.media_details
-                    }
-                };
-            } catch (_) {
-                return {ok: false, response: null};
-            }
-        }""", attachment_id)
-        if (not isinstance(value, dict) or set(value) != {"ok", "response"}
-                or value["ok"] is not True or not isinstance(value["response"], dict)):
-            raise CleanupError("REFUSED: exact authenticated attachment REST metadata is unavailable.")
-        return normalize_rest_media_projection(attachment_id, value["response"])
+    def _edit_dom_projection(self, attachment_id: int) -> dict[str, Any]:
+        """Project only fields already rendered on the fixed attachment edit page.
 
-    def read_target(self, attachment_id: int) -> dict[str, Any]:
+        This intentionally does not call any model, REST, asynchronous admin,
+        or page-supplied URL reader. The predecessor failed specifically at
+        that metadata-fetch boundary. Identity comes from the exact canonical edit
+        route, the attachment URL/name/type boxes, hidden post identity fields,
+        and the single allowlisted permanent-delete control.
+        """
         spec = target_spec(attachment_id)
-        identity = self.read_attachment(attachment_id, expected_basename=spec["filename"])
-        if identity.get("source_url") != spec["source_url"]:
-            raise CleanupError("REFUSED: fixed attachment public URL changed.")
+        identity = self.read_attachment(
+            attachment_id, expected_basename=spec["filename"]
+        )
+        landed = urlsplit(str(self._page.url or ""))
+        landed_pairs = parse_qsl(landed.query, keep_blank_values=True)
+        if (landed.scheme != "https" or landed.netloc != "frpdepots.com"
+                or landed.path != "/wp-admin/post.php"
+                or sorted(landed_pairs) != [("action", "edit"), ("post", str(attachment_id))]
+                or len(landed_pairs) != 2 or landed.fragment
+                or landed.username or landed.password):
+            raise CleanupError("REFUSED: attachment reader did not land on the exact fixed edit route.")
+        if identity != {
+            "attachment_id": attachment_id,
+            "filename": spec["filename"],
+            "source_url": spec["source_url"],
+            "extension": ".png",
+            "filetype_matches_name": True,
+        }:
+            raise CleanupError("REFUSED: fixed attachment edit DOM identity is not exact.")
         edit_identity = self._edit_identity(attachment_id)
-        model = self._media_model_projection(attachment_id)
-        controls = self._page.query_selector_all("#delete-action > a.submitdelete.deletion")
-        controls = [control for control in controls
-                    if "delete permanently" == " ".join(
-                        str(control.inner_text() or "").casefold().split()
-                    )]
+        controls = [control for control in self._page.query_selector_all(
+            "#delete-action > a.submitdelete.deletion"
+        ) if "delete permanently" == " ".join(
+            str(control.inner_text() or "").casefold().split()
+        )]
         if len(controls) != 1 or not self._delete_control_exact(controls[0], attachment_id):
             raise CleanupError("REFUSED: exact fixed permanent-delete control is unavailable.")
-        registered_urls = sorted({spec["source_url"], *(row["url"] for row in model["sizes"])})
         return {
             "attachment_id": attachment_id,
-            "filename": identity["filename"],
-            "source_url": identity["source_url"],
+            "filename": spec["filename"],
+            "source_url": spec["source_url"],
             "edit_identity": edit_identity,
-            "uploaded_to": 0,
-            "registered_derivatives": model["sizes"],
-            "registered_urls": registered_urls,
+            "identity_route": "canonical_attachment_edit_dom_only",
+            "source_provenance": "immutable_locked_upload_result",
+            "registered_urls": [spec["source_url"]],
             "delete_control_exact": True,
         }
 
-    def media_model_missing(self, attachment_id: int) -> dict[str, Any]:
-        target_spec(attachment_id)
-        self._reader._goto(media_base.MEDIA_LIBRARY_URL)
-        result = self._page.evaluate("""async (expectedId) => {
-            if (!window.wp || typeof wp.apiFetch !== 'function') {
-                return {missing: false, code: 'api_fetch_unavailable', status: null};
-            }
-            try {
-                await wp.apiFetch({path: '/wp/v2/media/' + String(expectedId) + '?context=edit'});
-                return {missing: false, code: 'record_present', status: 200};
-            } catch (error) {
-                const status = error && error.data && Number.isInteger(error.data.status)
-                    ? error.data.status : null;
-                return {missing: status === 404, code: String(error && error.code || ''), status: status};
-            }
-        }""", attachment_id)
-        if (not isinstance(result, dict) or set(result) != {"missing", "code", "status"}
-                or result["missing"] is not True or result["status"] != 404
-                or result["code"] != "rest_post_invalid_id"):
-            raise IndeterminateError("Authenticated media record did not prove absent.")
-        return result
+    def read_target(self, attachment_id: int) -> dict[str, Any]:
+        return self._edit_dom_projection(attachment_id)
 
-    def delete_one(self, attachment_id: int, on_write_attempt: Any) -> dict[str, Any]:
+    def delete_one(self, attachment_id: int, on_write_attempt: Any, *,
+                   eligibility_state: dict[str, Any],
+                   expected_present_ids: tuple[int, ...]) -> dict[str, Any]:
+        assert_correction_eligible(eligibility_state, expected_present_ids)
+        if not expected_present_ids or attachment_id != expected_present_ids[0]:
+            raise CleanupError("REFUSED: delete adapter target is not the next fixed eligible record.")
         before = self.read_target(attachment_id)
+        expected_before = eligibility_state["attachments"][0]
+        if before != expected_before:
+            raise CleanupError("REFUSED: fixed attachment changed after eligibility proof.")
         controls = [control for control in self._page.query_selector_all(
             "#delete-action > a.submitdelete.deletion"
         ) if "delete permanently" == " ".join(
@@ -923,10 +1068,13 @@ class CleanupAdmin:
                 dialog.dismiss()
 
         self._page.once("dialog", handle_dialog)
-        on_write_attempt()
         try:
-            controls[0].click(timeout=media_base.ACTION_TIMEOUT_MS)
-            self._page.wait_for_load_state("domcontentloaded", timeout=media_base.UPLOAD_TIMEOUT_MS)
+            on_write_attempt()
+            with self._page.expect_navigation(
+                    wait_until="domcontentloaded", timeout=media_base.UPLOAD_TIMEOUT_MS):
+                controls[0].click(
+                    timeout=media_base.ACTION_TIMEOUT_MS, no_wait_after=True
+                )
         finally:
             try:
                 self._page.remove_listener("dialog", handle_dialog)
@@ -979,13 +1127,14 @@ def collect_before(admin: CleanupAdmin, vault: dict[str, Any]) -> dict[str, Any]
     identities = [admin.read_target(attachment_id) for attachment_id in TARGET_IDS]
     products = product_projection(vault)
     public = public_evidence(identities)
-    return {
+    state = {
         "guard": guard,
         "library": library,
         "attachments": identities,
         "products": products,
         "public_files": public,
     }
+    return assert_correction_eligible(state, TARGET_IDS)
 
 
 def expected_after(before: dict[str, Any]) -> dict[str, Any]:
@@ -1014,12 +1163,16 @@ def operation_sha(source_evidence: dict[str, Any], _before: dict[str, Any]) -> s
         "targets": list(TARGETS),
         "source_operation_sha256": SOURCE_OPERATION_SHA256,
         "source_plan_sha256": SOURCE_PLAN_SHA256,
-        "source_result_sha256": source_evidence["result_file_sha256"],
+        "source_result_sha256": source_evidence["source_result_sha256"],
+        "predecessor_operation_sha256": source_evidence["predecessor_operation_sha256"],
+        "predecessor_plan_sha256": source_evidence["predecessor_plan_sha256"],
+        "predecessor_event_sha256": source_evidence["predecessor_event_sha256"],
+        "correction_reason": source_evidence["correction_reason"],
     })
 
 
 def plan_path(created: datetime, plan_sha: str) -> Path:
-    return (PLAN_DIR / f"{created.strftime('%Y%m%dT%H%M%SZ')}_four_orphans_{plan_sha[:16]}.json").resolve()
+    return (PLAN_DIR / f"{created.strftime('%Y%m%dT%H%M%SZ')}_four_orphan_correction_{plan_sha[:16]}.json").resolve()
 
 
 def stage_registry_path(plan_sha: str) -> Path:
@@ -1050,6 +1203,7 @@ def assert_operation_not_attempted(operation: str) -> None:
 
 
 def stage_plan(source_evidence: dict[str, Any], before: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
+    assert_correction_eligible(before, TARGET_IDS)
     created = utc_now()
     operation = operation_sha(source_evidence, before)
     core = {
@@ -1067,17 +1221,19 @@ def stage_plan(source_evidence: dict[str, Any], before: dict[str, Any]) -> tuple
         "before": before,
         "after_expected": expected_after(before),
         "writes_if_committed": [
-            "four independent permanent WordPress attachment deletions, in fixed ID order 5521, 5523, 5525, 5527"
+            "four independent permanent WordPress orphan-record deletions, in fixed ID order 5521, 5523, 5525, 5527"
         ],
         "risk": (
-            "NOT ATOMIC AND NOT REVERSIBLE. Each attachment deletion is one independent "
-            "permanent WordPress action. If deletion N fails or verification becomes "
-            "uncertain, earlier deletions remain, later deletions are not attempted, and "
-            "the plan is permanently INDETERMINATE_NO_RETRY. There is no rollback, "
-            "restore, retry, cleanup or re-upload route. WordPress may also delete every "
-            "registered thumbnail/derived file inventoried in this plan. The browser lane "
-            "excludes Dado's other lane but cannot eliminate a human/plugin/cron race; "
-            "fresh reference and guard proofs run immediately before every click."
+            "SEPARATE CORRECTION; NOT A REPLAY OF PREDECESSOR OPERATION 7045aee2... . "
+            "NOT ATOMIC AND NOT REVERSIBLE. Each attachment-record deletion is one "
+            "independent permanent WordPress action. If deletion N fails or verification "
+            "becomes uncertain, earlier deletions remain, later deletions are not attempted, "
+            "and this correction is permanently INDETERMINATE_NO_RETRY. There is no "
+            "rollback, restore, retry, cleanup or re-upload route. Exact current identity is "
+            "proved from canonical attachment-edit DOM fields rather than the failed "
+            "wp.media model route. The browser lane excludes Dado's other lane but cannot "
+            "eliminate a human/plugin/cron race; fresh complete reference and guard proofs "
+            "run before locking and after every deletion."
         ),
         "forbidden": [
             "any attachment except 5521,5523,5525,5527", "upload", "edit", "rename",
@@ -1104,7 +1260,7 @@ def stage_plan(source_evidence: dict[str, Any], before: dict[str, Any]) -> tuple
     exclusive_json(stage_registry_path(plan["sha256"]), {
         **registry_core, "hmac_sha256": registry_mac(registry_core),
     })
-    append_receipt("wordpress_orphan_media_cleanup_plan_staged", str(path))
+    append_receipt("wordpress_orphan_media_correction_plan_staged", str(path))
     return path, plan
 
 
@@ -1222,20 +1378,41 @@ def verify_after_step(admin: CleanupAdmin, vault: dict[str, Any], plan: dict[str
     remaining_rows = [admin.read_target(attachment_id) for attachment_id in remaining]
     if remaining_rows != [before_by_id[attachment_id] for attachment_id in remaining]:
         raise IndeterminateError("An untouched fixed attachment changed during cleanup.")
-    missing_records = [admin.media_model_missing(attachment_id) for attachment_id in deleted_ids]
-    deleted_urls = [
-        url for attachment_id in deleted_ids
-        for url in before_by_id[attachment_id]["registered_urls"]
+    all_fixed_urls = [row["source_url"] for row in TARGETS]
+    public_absent = public_absence_evidence(all_fixed_urls)
+    record_removal_proof = [
+        {
+            "attachment_id": attachment_id,
+            "media_library_absent": all(
+                row["id"] != attachment_id for row in library["rows"]
+            ),
+            "guard_failure_absent": all(
+                row["attachment_id"] != attachment_id for row in guard["failures"]
+            ),
+        }
+        for attachment_id in deleted_ids
     ]
-    public_absent = public_absence_evidence(deleted_urls)
+    if any(row["media_library_absent"] is not True
+           or row["guard_failure_absent"] is not True
+           for row in record_removal_proof):
+        raise IndeterminateError("A deleted record did not disappear from both complete proofs.")
+    eligibility_state = {
+        "guard": guard,
+        "library": library,
+        "attachments": remaining_rows,
+        "products": products,
+        "public_files": public_absent,
+    }
+    assert_correction_eligible(eligibility_state, remaining)
     return {
         "deleted_ids": list(deleted_ids),
         "remaining_ids": list(remaining),
         "library": library,
         "guard": guard,
         "products": products,
-        "authenticated_missing": missing_records,
+        "record_removal_proof": record_removal_proof,
         "public_absent": public_absent,
+        "eligibility_state": eligibility_state,
     }
 
 
@@ -1266,6 +1443,7 @@ def command_stage(_: argparse.Namespace) -> None:
 def command_commit(args: argparse.Namespace) -> None:
     require_approval(args.approval)
     path, plan = load_plan(args.plan)
+    assert_correction_eligible(plan["before"], TARGET_IDS)
     operation = plan["operation_sha256"]
     assert_operation_not_attempted(operation)
     locked = False
@@ -1290,7 +1468,9 @@ def command_commit(args: argparse.Namespace) -> None:
             })
             locked = True
 
+            eligibility_state = fresh
             for position, attachment_id in enumerate(TARGET_IDS, 1):
+                expected_present_ids = TARGET_IDS[position - 1:]
                 def note_write(*, _position: int = position,
                                _attachment_id: int = attachment_id) -> None:
                     nonlocal write_attempts
@@ -1308,10 +1488,16 @@ def command_commit(args: argparse.Namespace) -> None:
                     })
                     write_attempts += 1
 
-                landed = admin.delete_one(attachment_id, note_write)
+                landed = admin.delete_one(
+                    attachment_id,
+                    note_write,
+                    eligibility_state=eligibility_state,
+                    expected_present_ids=expected_present_ids,
+                )
                 step = verify_after_step(
                     admin, vault, plan, TARGET_IDS[:position]
                 )
+                eligibility_state = step["eligibility_state"]
                 step_summary = {
                     "deleted_ids": step["deleted_ids"],
                     "remaining_ids": step["remaining_ids"],
@@ -1319,8 +1505,9 @@ def command_commit(args: argparse.Namespace) -> None:
                     "library_rows_sha256": step["library"]["rows_sha256"],
                     "guard": step["guard"],
                     "products": step["products"],
-                    "authenticated_missing": step["authenticated_missing"],
+                    "record_removal_proof": step["record_removal_proof"],
                     "public_absent": step["public_absent"],
+                    "eligibility_state_sha256": digest_for(step["eligibility_state"]),
                 }
                 exclusive_json(event_path(
                     operation, position, attachment_id, "verified"
@@ -1379,7 +1566,7 @@ def command_commit(args: argparse.Namespace) -> None:
             except CleanupError:
                 pass
         raise
-    append_receipt("wordpress_four_orphan_media_cleanup_verified", str(result_path(operation)))
+    append_receipt("wordpress_four_orphan_media_correction_verified", str(result_path(operation)))
     print_json(result)
 
 

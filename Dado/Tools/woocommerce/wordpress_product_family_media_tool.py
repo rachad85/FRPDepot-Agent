@@ -12,7 +12,7 @@ Commands:
     commit --plan PATH --approval APPROVED
 
 Each commit first acquires the exact active FRP Depot Media Mutation Guard for
-its fixed family, then uploads four exact hard-coded files through the same
+its fixed family, then uploads the exact per-family hard-coded files through the same
 already-authenticated WordPress browser. The tool verifies the server's guarded
 snapshot, verifies every public copy by SHA-256, makes one PUT to the fixed
 existing WooCommerce product containing only the ordered image IDs, and asks
@@ -20,7 +20,7 @@ the guard to prove and complete that exact gallery. The guard blocks every
 other attachment mutation during its 30-minute owner session; this tool never
 reads its nonce or owner cookie.
 
-The guard acquisition, four uploads, gallery PUT, and guard completion are
+The guard acquisition, exact family uploads, gallery PUT, and guard completion are
 independent writes. The operation is therefore NOT atomic and has NO rollback:
 verified early uploads remain unattached if a later upload fails; if any write
 lands but read-back cannot prove it, the plan is permanently indeterminate and
@@ -55,8 +55,8 @@ import wordpress_packing_ring_media_tool as media_base  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Fixed Product Family Media Tool"
-TOOL_VERSION = "1.8.1"
-SCHEMA_VERSION = 9
+TOOL_VERSION = "2.1.0"
+SCHEMA_VERSION = 12
 ACTION = "upload_and_assign_fixed_product_family_gallery"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
@@ -64,12 +64,15 @@ MIN_AUTHORIZATION_MARGIN = timedelta(minutes=2)
 MIN_GUARD_COMPLETION_MARGIN = timedelta(minutes=2)
 EXACT_ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
-GUARD_PLUGIN_VERSION = "1.0.2"
+GUARD_PLUGIN_VERSION = "1.0.5"
 GUARD_PROOF_SCHEMA = 2
-GUARD_ZIP_SHA256 = "e2808773c4c6d3ba062a5664eb46021afde3066430afe37b9d0933b5f9bdb047"
-GUARD_PLUGIN_PHP_SHA256 = "ba728a27cb439e62be89fa7a4cb2619b34942498621bbd1f0f9f15c896bd93e0"
-GUARD_RUNTIME_MANIFEST_SHA256 = "3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc"
-GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.2.zip"
+GUARD_ZIP_SHA256 = "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74"
+GUARD_ZIP_BYTES = 21035
+GUARD_PLUGIN_PHP_SHA256 = "7d09ad8eb45e552e7dfb31ecf50b800ea50ea1c8074a8e1a899e375f47a2f887"
+GUARD_PLUGIN_PHP_BYTES = 86320
+GUARD_RUNTIME_MANIFEST_SHA256 = "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565"
+GUARD_RUNTIME_MANIFEST_BYTES = 4475
+GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.5.zip"
 GUARD_PLUGIN_PHP_PATH = (
     THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
     / "frpdepot-media-mutation-guard.php"
@@ -98,10 +101,11 @@ REGISTRY_KEY_PATH = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / (
 )
 RECEIPTS = ROOT / "Dado" / "40_Logs" / "receipts.jsonl"
 APPROVED_MANIFEST_PATH = (
-    ROOT / "Dado" / "20_Working" / "clean_pipe_gallery_20260819"
-    / "approved_product_family_media_manifest_pipe_update_20260819.json"
+    ROOT / "Dado" / "20_Working" / "frp_manway" / "approved_gallery_20260820"
+    / "approved_product_family_media_manifest_open_manway_update_20260820.json"
 )
-APPROVED_MANIFEST_SHA256 = "4bbb8fb7dba7272ed2b239623cc9705c92abdad5a169f7e63aea797abe4d9a3c"
+APPROVED_MANIFEST_SHA256 = "b0e020eaa9de9a43a64b2441e0b194b4972ace28cd84fe52cf92d8e6a72f05c7"
+APPROVED_MANIFEST_CONTENT_SHA256 = "46af190c549e882af2160acb8e49880208529848651f65abc485710676c1f100"
 GUARD_PRIVATE_EXCEPTION = {
     "attachment_id": 1832,
     "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
@@ -127,10 +131,29 @@ class FamilyMediaIndeterminate(FamilyMediaError):
 
 
 def parse_exact_attachment_edit_url(value: str) -> int | None:
-    """Return one exact attachment ID; reject duplicate or extra query keys."""
+    """Return one exact attachment ID from an absolute or root-relative admin link.
+
+    WordPress currently renders Media Library edit links as root-relative paths.
+    Accept only that one relative form after proving the raw path is already the
+    exact admin edit path; protocol-relative, dot-segment, encoded-path and
+    ordinary relative forms remain refused. The resolved URL must still pass the
+    exact same-origin, path, fragment and two-key query checks below.
+    """
+    raw = str(value)
     try:
-        media_base.assert_origin(value)
-        parsed = urlsplit(str(value))
+        initial = urlsplit(raw)
+    except ValueError:
+        return None
+    if raw.startswith("/") and not raw.startswith("//"):
+        if (initial.scheme or initial.netloc or initial.username or initial.password
+                or initial.path != media_base.POST_EDIT_PATH or initial.fragment):
+            return None
+        raw = urljoin(media_base.EXACT_ORIGIN + "/", raw)
+    elif not raw.startswith("https://"):
+        return None
+    try:
+        media_base.assert_origin(raw)
+        parsed = urlsplit(raw)
         pairs = parse_qsl(parsed.query, keep_blank_values=True, strict_parsing=True)
     except (FamilyMediaError, media_base.MediaUploadError, ValueError):
         return None
@@ -155,8 +178,9 @@ def is_attachment_edit_candidate_url(value: str) -> bool:
     WordPress puts ordinary Delete and public View links in the same title cell,
     so not every link there is an edit candidate. Any row link that claims
     `action=edit` is a candidate regardless of origin or browser normalization
-    and must pass the exact parser. Relative, credentialed, Unicode-host,
-    percent-encoded and dot-segment forms therefore fail closed.
+    and must pass the exact parser. Only an exact root-relative admin path is
+    accepted; credentialed, Unicode-host, protocol-relative, ordinary-relative,
+    percent-encoded and dot-segment forms fail closed.
     """
     try:
         # Resolve relative syntax to parse its query as a browser would, but do
@@ -195,10 +219,12 @@ FAMILY_SPECS: dict[str, dict[str, Any]] = {
         "status": "publish",
         "permalink": "https://frpdepots.com/product/frp-stub-flange/",
         "images": (
-            image_record(1, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\stub_flange_real_source_batch_20260815\01_stub_flange_real_source_hero.png", 895251, "aa9c8da37cc4a1ee98b5f0b2c77dd5b369c327a583412938778210562936b3da", 1024, 1024),
-            image_record(2, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\stub_flange_real_source_batch_20260815\02_stub_flange_face_view.png", 1136874, "c84ac2a0a4b1d5144d1d595f4e9a77584c8f3eeafa108c691d0e9593c58f4da7", 1024, 1024),
-            image_record(3, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\stub_flange_real_source_batch_20260815\03_stub_flange_side_transition.png", 1023979, "10c5377036bae9903d5f7ed13c0c880fcabba3777c4f3b7b0a141783d190dcdb", 1024, 1024),
-            image_record(4, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\stub_flange_real_source_batch_20260815\04_stub_flange_owned_group_deterministic.png", 1458889, "5e9d0094d6bea212b7d9b5240776417baf907659fed095ae63450ac6548a9c1b", 1024, 1024),
+            image_record(1, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\01_authentic_source_hero.png", 895251, "aa9c8da37cc4a1ee98b5f0b2c77dd5b369c327a583412938778210562936b3da", 1024, 1024),
+            image_record(2, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\02_chatgpt_overhead_face.png", 1477996, "25f3c3ee9d3b3ae11297d4d6d4b9c8c1fcfc52806f1f585e9b9296d2f5ee2156", 1254, 1254),
+            image_record(3, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\03_chatgpt_low_profile.png", 1462525, "00050f0ec36fb814f35e696572e5af3f38000aff1bd721ac85c5f3a265591ed3", 1306, 1204),
+            image_record(4, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\04_chatgpt_straight_mating_face.png", 1968000, "3bd2cfb0e102c9b9dece6a67d2d0f463bcf418fc88d429ec22bee92ede8aebc6", 1254, 1254),
+            image_record(5, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\05_chatgpt_laminate_detail.png", 2152308, "20dce528fd560c77f73eb96d11ca35fc72db91670bf73ad8ca44d6accc028d07", 1122, 1402),
+            image_record(6, r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820\06_chatgpt_opposite_high_angle.png", 1583619, "010aaec08c1eca0117c0c30da92c51990a99e2ab1900cc01d872d584f6a711e2", 1254, 1254),
         ),
     },
     "open_manway": {
@@ -209,10 +235,12 @@ FAMILY_SPECS: dict[str, dict[str, Any]] = {
         "status": "publish",
         "permalink": "https://frpdepots.com/product/frp-manway/",
         "images": (
-            image_record(1, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\manway_real_source_batch_20260815\01_manway_real_hero.png", 261492, "db886ee83d211d755ffc5e095b3546351f9b01478be73d1a71c5b299a1643be6", 1024, 1024),
-            image_record(2, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\manway_real_source_batch_20260815\02_manway_real_alternate.png", 366491, "07d1678e976152a5fdc8ccdc0396a43a92e0055125fffc587508b354c747484b", 1024, 1024),
-            image_record(3, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\manway_real_source_batch_20260815\03_manway_real_laminate_detail.png", 301011, "572741ffd433acbc8b2bd36dbd9cb2afe02dbd8b6346978c38a7c0d4f8a352d9", 1024, 1024),
-            image_record(4, r"C:\FRPDepot\Dado\20_Working\product_image_overhaul_20260815\generated_review_batches\manway_real_source_batch_20260815\04_manway_real_bore_flange_detail.png", 416461, "c5742b9ee84370d2ed6034d891955ff1a7774e89c1f1ad1ffd5b2b5d14bfd753", 1024, 1024),
+            image_record(1, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\01_manway_premium_hero.png", 1750111, "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd", 1254, 1254),
+            image_record(2, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\02_manway_top_oblique.png", 1821849, "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181", 1254, 1254),
+            image_record(3, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\03_manway_low_side_angle.png", 1805796, "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63", 1402, 1122),
+            image_record(4, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\04_manway_flange_bore_detail.png", 2118498, "d740be620cf0c083e7e399127c2205dd6f7b9e73fb08fdee31e1b79568d75950", 1402, 1122),
+            image_record(5, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\05_manway_opposite_face.png", 1751997, "c54c9fd74fbdc55d0b9295b1bb7fb1dd0146cee645f455025d1b1895f21a543a", 1254, 1254),
+            image_record(6, r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820\06_manway_laminate_detail.png", 2347237, "bfde2b6ab1f1de5cc6ad24b9aa556ef1ed46bd9cd43b34a2a5b1c77bb612e0e7", 1402, 1122),
         ),
     },
     "manway_cover": {
@@ -260,6 +288,29 @@ FAMILY_SPECS: dict[str, dict[str, Any]] = {
 }
 
 FAMILY_KEYS = tuple(FAMILY_SPECS)
+FAMILY_IMAGE_COUNTS = {
+    "stub_flange": 6,
+    "open_manway": 6,
+    "manway_cover": 4,
+    "elbow_90": 4,
+    "pipe": 4,
+}
+STUB_FLANGE_REQUIRED_BEFORE_GALLERY_IDS = (4849, 4850, 4851, 4852)
+REUSED_EXISTING_EXCEPTION = {
+    "family": "stub_flange",
+    "product_id": 1368,
+    "position": 1,
+    "attachment_id": 4849,
+    "actual_filename": "01_stub_flange_real_source_hero-1.png",
+    "source_basename": "01_stub_flange_real_source_hero-1.png",
+    "approved_filename": "01_authentic_source_hero.png",
+    "bytes": 895251,
+    "sha256": "aa9c8da37cc4a1ee98b5f0b2c77dd5b369c327a583412938778210562936b3da",
+    "width": 1024,
+    "height": 1024,
+    "format": "PNG",
+    "mode": "RGB",
+}
 FIXED_PRODUCT_IDS = frozenset(int(spec["product_id"]) for spec in FAMILY_SPECS.values())
 ALL_FIXED_PATHS = frozenset(Path(record["path"]).resolve()
                             for spec in FAMILY_SPECS.values() for record in spec["images"])
@@ -273,31 +324,131 @@ PERMITTED_PRODUCT_READBACK_DRIFT_FIELDS = frozenset({
     "images", "date_modified", "date_modified_gmt", "yoast_head", "yoast_head_json",
 })
 
-RISK_DISCLOSURE = (
-    "NOT ATOMIC; NO ROLLBACK. One server-side guarded-commit acquisition happens first, "
-    "then four independent WordPress uploads, then one independent WooCommerce gallery PUT "
-    "containing only the four returned media IDs, then one guard-completion write. If "
-    "upload N fails, it may itself have landed and earlier verified uploads remain live but "
-    "unattached; the guard reserves each fixed filename durably before WordPress moves the file. "
-    "Later uploads do "
-    "not happen, the product gallery is not written, and the plan is permanently no-retry. "
-    "If the gallery PUT lands but fresh API, media, public-page, JavaScript-error and "
-    "protected-field checks do not all pass, the product may be changed and the plan is "
-    "permanently indeterminate. Replaced gallery attachments remain in the Media Library; "
-    "the tool does not delete or edit them. A failure after guard acquisition can leave the "
-    "fixed or poisoned guard active until its authoritative 30-minute database expiry, blocking other "
-    "attachment mutations during that interval. The tool cannot delete, detach, roll back, "
-    "retry, clear, or clean up anything. Every attempted guard transition, upload and possible "
-    "landed-media state is recorded in a hash-keyed append-only attempt journal. The guard "
-    "serializes the fixed product's gallery metadata for the active family and atomically claims "
-    "the one exact images-only PUT only when its non-secret If-Match SHA-256 still proves the complete "
-    "pre-write gallery ID list. Independent writes to unrelated product fields are not serialized, "
-    "but the images-only PUT cannot overwrite them; fresh protected reads before the PUT, after the "
-    "PUT and after guard completion still fail closed on any such drift. The live guard UI "
-    "exposes exact version, health, family keys and proof schemas but no source-byte or manifest-"
-    "digest endpoint; live-byte identity relies on the previously pinned exact ZIP installation "
-    "provenance plus those live checks."
-)
+def expected_image_count(key: str) -> int:
+    if key not in FAMILY_IMAGE_COUNTS:
+        raise FamilyMediaError("REFUSED: family must be one of: " + ", ".join(FAMILY_KEYS))
+    return FAMILY_IMAGE_COUNTS[key]
+
+
+def reuse_exception(key: str) -> dict[str, Any] | None:
+    family_spec(key)
+    if key != REUSED_EXISTING_EXCEPTION["family"]:
+        return None
+    hero = FAMILY_SPECS[key]["images"][0]
+    expected = {
+        "family": key,
+        "product_id": FAMILY_SPECS[key]["product_id"],
+        "position": hero["position"],
+        "attachment_id": 4849,
+        "actual_filename": "01_stub_flange_real_source_hero-1.png",
+        "source_basename": "01_stub_flange_real_source_hero-1.png",
+        "approved_filename": hero["filename"],
+        "bytes": hero["bytes"],
+        "sha256": hero["sha256"],
+        "width": hero["width"],
+        "height": hero["height"],
+        "format": hero["format"],
+        "mode": hero["mode"],
+    }
+    if REUSED_EXISTING_EXCEPTION != expected:
+        raise FamilyMediaError("REFUSED: the one fixed existing-media reuse exception drifted.")
+    return copy.deepcopy(expected)
+
+
+def upload_image_records(key: str) -> list[dict[str, Any]]:
+    spec = family_spec(key)
+    reused = reuse_exception(key)
+    rows = [copy.deepcopy(row) for row in spec["images"]
+            if reused is None or row["position"] != reused["position"]]
+    wanted_positions = (list(range(2, expected_image_count(key) + 1))
+                        if reused is not None else list(range(1, expected_image_count(key) + 1)))
+    if [row["position"] for row in rows] != wanted_positions:
+        raise FamilyMediaError(f"REFUSED: fixed upload positions drifted for {key}.")
+    return rows
+
+
+def expected_upload_count(key: str) -> int:
+    return len(upload_image_records(key))
+
+
+def guard_reuse_proof(key: str) -> dict[str, Any] | None:
+    reused = reuse_exception(key)
+    if reused is None:
+        return None
+    return {
+        field: reused[field] for field in (
+            "family", "product_id", "position", "attachment_id",
+            "actual_filename", "approved_filename", "bytes", "sha256",
+        )
+    } | {
+        "must_be_current_product_hero": True,
+        "required_current_raw_meta": {
+            "_thumbnail_id": "4849",
+            "_product_image_gallery": "4850,4851,4852",
+        },
+        "upload_positions": [2, 3, 4, 5, 6],
+    }
+
+
+def expected_public_basename(key: str, image: dict[str, Any]) -> str:
+    reused = reuse_exception(key)
+    if reused is not None and image["position"] == reused["position"]:
+        return reused["actual_filename"]
+    return str(image["filename"])
+
+
+def risk_disclosure(key: str) -> str:
+    count = expected_image_count(key)
+    upload_count = expected_upload_count(key)
+    reused = reuse_exception(key)
+    reuse_text = (
+        "The existing Stub Flange position-1 attachment 4849 is reused byte-for-byte without "
+        "rename, metadata edit, detach, delete, or upload; " if reused is not None else ""
+    )
+    return (
+        "NOT ATOMIC; NO ROLLBACK. One server-side guarded-commit acquisition happens first, "
+        + reuse_text
+        + f"then {upload_count} independent WordPress uploads, then one independent WooCommerce gallery PUT "
+        f"containing only the {count} returned media IDs, then one guard-completion write. If "
+        "upload N fails, it may itself have landed and earlier verified uploads remain live but "
+        "unattached; the guard reserves each fixed filename durably before WordPress moves the file. "
+        "Later uploads do "
+        "not happen, the product gallery is not written, and the plan is permanently no-retry. "
+        "If the gallery PUT lands but fresh API, media, public-page, JavaScript-error and "
+        "protected-field checks do not all pass, the product may be changed and the plan is "
+        "permanently indeterminate. Replaced gallery attachments remain in the Media Library; "
+        "the tool does not delete or edit them. A failure after guard acquisition can leave the "
+        "fixed or poisoned guard active until its authoritative 30-minute database expiry, blocking other "
+        "attachment mutations during that interval. The tool cannot delete, detach, roll back, "
+        "retry, clear, or clean up anything. Every attempted guard transition, upload and possible "
+        "landed-media state is recorded in a hash-keyed append-only attempt journal. The guard "
+        "serializes the fixed product's gallery metadata for the active family and atomically claims "
+        "the one exact images-only PUT only when its non-secret If-Match SHA-256 still proves the complete "
+        "pre-write gallery ID list. Independent writes to unrelated product fields are not serialized, "
+        "but the images-only PUT cannot overwrite them; fresh protected reads before the PUT, after the "
+        "PUT and after guard completion still fail closed on any such drift. The live guard UI "
+        "exposes exact version, health, family keys and proof schemas but no source-byte or manifest-"
+        "digest endpoint; live-byte identity relies on the previously pinned exact ZIP installation "
+        "provenance plus those live checks."
+    )
+
+
+def writes_if_committed(key: str, product_id: int) -> list[str]:
+    count = expected_image_count(key)
+    upload_count = expected_upload_count(key)
+    rows = [
+        "one fixed server-side guarded-commit acquisition",
+    ]
+    if reuse_exception(key) is not None:
+        rows.append(
+            "reuse existing attachment 4849 at position 1 without any attachment mutation"
+        )
+    rows += [
+        f"{upload_count} independent authenticated WordPress media uploads",
+        f"one PUT /products/{product_id} containing only {count} image IDs",
+        "one fixed guard-completion state transition after complete verification",
+    ]
+    return rows
 
 
 def utc_now() -> datetime:
@@ -339,15 +490,19 @@ def validate_guard_manifest_contract() -> dict[str, Any]:
     actual_zip_sha256 = hashlib.sha256(zip_raw).hexdigest()
     actual_plugin_sha256 = hashlib.sha256(plugin_raw).hexdigest()
     actual_sha256 = hashlib.sha256(raw).hexdigest()
-    if (not secrets.compare_digest(actual_zip_sha256, GUARD_ZIP_SHA256)
+    if (len(zip_raw) != GUARD_ZIP_BYTES
+            or len(plugin_raw) != GUARD_PLUGIN_PHP_BYTES
+            or len(raw) != GUARD_RUNTIME_MANIFEST_BYTES
+            or not secrets.compare_digest(actual_zip_sha256, GUARD_ZIP_SHA256)
             or not secrets.compare_digest(actual_plugin_sha256, GUARD_PLUGIN_PHP_SHA256)):
         raise FamilyMediaError("REFUSED: fixed guard package or PHP source hash changed.")
     if not secrets.compare_digest(actual_sha256, GUARD_RUNTIME_MANIFEST_SHA256):
         raise FamilyMediaError("REFUSED: fixed guard runtime manifest hash changed.")
     if (not isinstance(parsed, dict)
-            or set(parsed) != {"schema", "source_manifest_sha256", "families"}
-            or parsed.get("schema") != 1
+            or set(parsed) != {"schema", "source_manifest_sha256", "fixed_reuse", "families"}
+            or parsed.get("schema") != 2
             or parsed.get("source_manifest_sha256") != APPROVED_MANIFEST_SHA256
+            or parsed.get("fixed_reuse") != guard_reuse_proof("stub_flange")
             or not isinstance(parsed.get("families"), dict)
             or set(parsed["families"]) != set(FAMILY_KEYS)
             or "fnpt" in parsed["families"]):
@@ -365,12 +520,14 @@ def validate_guard_manifest_contract() -> dict[str, Any]:
                 f"REFUSED: guard runtime manifest disagrees with fixed family {key}."
             )
     return {
-        "schema": 1,
+        "schema": 2,
         "zip_sha256": actual_zip_sha256,
         "plugin_php_sha256": actual_plugin_sha256,
         "sha256": actual_sha256,
         "source_manifest_sha256": APPROVED_MANIFEST_SHA256,
         "families": list(FAMILY_KEYS),
+        "family_image_counts": dict(FAMILY_IMAGE_COUNTS),
+        "fixed_reuse": guard_reuse_proof("stub_flange"),
         "fnpt_present": False,
     }
 
@@ -382,7 +539,8 @@ def guard_contract(key: str) -> dict[str, Any]:
         "proof_schema": GUARD_PROOF_SCHEMA,
         "runtime_manifest": validate_guard_manifest_contract(),
         "live_identity": {
-            "checks": ["exact_version", "exact_health", "exact_family_keys", "closed_proof_schema"],
+            "checks": ["exact_version", "exact_health", "exact_family_keys",
+                       "closed_proof_schema", "exact_reused_existing_proof"],
             "live_byte_digest_exposed": False,
             "byte_identity_basis": "pinned_exact_zip_installation_provenance",
         },
@@ -391,7 +549,10 @@ def guard_contract(key: str) -> dict[str, Any]:
         "family": key,
         "product_id": spec["product_id"],
         "fixed_private_exception": copy.deepcopy(GUARD_PRIVATE_EXCEPTION),
-        "flow": ["atomic_snapshot", "acquire", "four_fixed_uploads",
+        "image_count": expected_image_count(key),
+        "upload_count": expected_upload_count(key),
+        "fixed_reuse": guard_reuse_proof(key),
+        "flow": ["atomic_snapshot", "acquire", "exact_family_uploads",
                  "post_acquire_owner_snapshot", "guarded_snapshot",
                  "images_only_put", "complete", "post_completion_public_verification"],
     }
@@ -431,7 +592,7 @@ def _guard_timestamp(value: Any, label: str) -> str:
     return value
 
 
-def _guard_match_rows(value: Any, label: str) -> list[dict[str, int]]:
+def _guard_match_rows(value: Any, label: str, key: str) -> list[dict[str, int]]:
     if not isinstance(value, list):
         raise FamilyMediaError(f"REFUSED: guard {label} evidence is not a list.")
     rows: list[dict[str, int]] = []
@@ -439,7 +600,7 @@ def _guard_match_rows(value: Any, label: str) -> list[dict[str, int]]:
         if (not isinstance(row, dict) or set(row) != {"attachment_id", "fixed_position"}
                 or type(row["attachment_id"]) is not int or row["attachment_id"] <= 0
                 or type(row["fixed_position"]) is not int
-                or row["fixed_position"] not in (1, 2, 3, 4)):
+                or row["fixed_position"] not in range(1, expected_image_count(key) + 1)):
             raise FamilyMediaError(f"REFUSED: guard {label} evidence has an invalid row.")
         rows.append({"attachment_id": row["attachment_id"],
                      "fixed_position": row["fixed_position"]})
@@ -497,12 +658,14 @@ def validate_guard_snapshot_proof(value: Any, key: str, mode: str,
     if value["attachment_total"] != (
             value["hashed_total"] + len(private_exceptions) + len(value["failures"])):
         raise FamilyMediaError("REFUSED: guard snapshot counters do not reconcile.")
-    _guard_match_rows(value["name_conflicts"], "name-conflict")
-    _guard_match_rows(value["hash_conflicts"], "hash-conflict")
-    _guard_match_rows(value["fixed_matches"], "fixed-match")
+    _guard_match_rows(value["name_conflicts"], "name-conflict", key)
+    _guard_match_rows(value["hash_conflicts"], "hash-conflict", key)
+    _guard_match_rows(value["fixed_matches"], "fixed-match", key)
+
     if mode in {"guard_acquired", "guarded_snapshot"}:
         _guard_timestamp(value["guard_expires_utc"], "expiry")
-        if type(value["reserved_uploads"]) is not int or not 0 <= value["reserved_uploads"] <= 4:
+        if (type(value["reserved_uploads"]) is not int
+                or not 0 <= value["reserved_uploads"] <= expected_upload_count(key)):
             raise FamilyMediaError("REFUSED: guard reserved-upload count is invalid.")
     return copy.deepcopy(value)
 
@@ -519,10 +682,18 @@ def require_empty_guard_snapshot(proof: Any, key: str, mode: str,
         raise FamilyMediaError(
             f"REFUSED: server-side guard snapshot has unreadable attachment evidence: {details}."
         )
+    reused = reuse_exception(key)
+    expected_name_conflicts: list[dict[str, int]] = []
+    expected_fixed_matches = ([{
+        "attachment_id": reused["attachment_id"],
+        "fixed_position": reused["position"],
+    }] if reused is not None else [])
+    expected_hash_conflicts = copy.deepcopy(expected_fixed_matches)
     if (checked["complete"] is not True or checked["failures"]
             or checked["attachment_total"] != checked["hashed_total"] + 1
-            or checked["name_conflicts"] or checked["hash_conflicts"]
-            or checked["fixed_matches"]):
+            or checked["name_conflicts"] != expected_name_conflicts
+            or checked["hash_conflicts"] != expected_hash_conflicts
+            or checked["fixed_matches"] != expected_fixed_matches):
         raise FamilyMediaError("REFUSED: server-side guard snapshot did not prove duplicate absence.")
     if duplicate is not None and checked["attachment_total"] != duplicate.get("library_total"):
         raise FamilyMediaError("REFUSED: browser and server attachment totals disagree.")
@@ -535,16 +706,26 @@ def require_guarded_upload_snapshot(proof: dict[str, Any], key: str,
                                     baseline_total: int,
                                     attachment_ids: list[int]) -> dict[str, Any]:
     checked = validate_guard_snapshot_proof(proof, key, "guarded_snapshot", True)
-    wanted = [{"attachment_id": attachment_id, "fixed_position": position}
-              for position, attachment_id in enumerate(attachment_ids, 1)]
+    count = expected_image_count(key)
+    if len(attachment_ids) != count or len(set(attachment_ids)) != count:
+        raise FamilyMediaError("REFUSED: guarded snapshot attachment set has the wrong exact count.")
+    reused = reuse_exception(key)
+    wanted_fixed = [{"attachment_id": attachment_id, "fixed_position": position}
+                    for position, attachment_id in enumerate(attachment_ids, 1)]
+    wanted_uploads = [row for row in wanted_fixed
+                      if reused is None or row["fixed_position"] != reused["position"]]
+    upload_count = expected_upload_count(key)
     if (checked["complete"] is not True or checked["failures"]
-            or checked["attachment_total"] != baseline_total + 4
-            or checked["hashed_total"] != baseline_total + 3
-            or checked["reserved_uploads"] != 4
-            or sorted(checked["name_conflicts"], key=lambda row: row["fixed_position"]) != wanted
-            or sorted(checked["hash_conflicts"], key=lambda row: row["fixed_position"]) != wanted
-            or sorted(checked["fixed_matches"], key=lambda row: row["fixed_position"]) != wanted):
-        raise FamilyMediaError("Guarded snapshot does not prove the four exact uploaded attachments.")
+            or checked["attachment_total"] != baseline_total + upload_count
+            or checked["hashed_total"] != baseline_total + upload_count - 1
+            or checked["reserved_uploads"] != upload_count
+            or sorted(checked["name_conflicts"], key=lambda row: row["fixed_position"])
+                != wanted_uploads
+            or sorted(checked["hash_conflicts"], key=lambda row: row["fixed_position"])
+                != wanted_fixed
+            or sorted(checked["fixed_matches"], key=lambda row: row["fixed_position"])
+                != wanted_fixed):
+        raise FamilyMediaError("Guarded snapshot does not prove the exact family uploaded attachments.")
     return checked
 
 
@@ -555,12 +736,14 @@ def validate_guard_completion_proof(value: Any, key: str,
         "attachment_ids", "attachment_total", "snapshot_sha256",
     }
     spec = family_spec(key)
+    count = expected_image_count(key)
     if (not isinstance(value, dict) or set(value) != expected_keys
             or value["schema"] != GUARD_PROOF_SCHEMA or value["plugin_version"] != GUARD_PLUGIN_VERSION
             or value["mode"] != "guard_completed" or value["family"] != key
             or value["product_id"] != spec["product_id"]
             or value["attachment_ids"] != attachment_ids
-            or type(value["attachment_total"]) is not int or value["attachment_total"] < 4):
+            or len(attachment_ids) != count or len(set(attachment_ids)) != count
+            or type(value["attachment_total"]) is not int or value["attachment_total"] < count):
         raise FamilyMediaError("REFUSED: guard completion proof is not exact.")
     digest = value["snapshot_sha256"]
     if (not isinstance(digest, str) or len(digest) != 64
@@ -588,7 +771,12 @@ def require_guard_completion_margin(proof: dict[str, Any]) -> None:
 def family_spec(key: str) -> dict[str, Any]:
     if key not in FAMILY_SPECS:
         raise FamilyMediaError("REFUSED: family must be one of: " + ", ".join(FAMILY_KEYS))
-    return FAMILY_SPECS[key]
+    spec = FAMILY_SPECS[key]
+    count = expected_image_count(key)
+    if (not isinstance(spec.get("images"), tuple) or len(spec["images"]) != count
+            or [row.get("position") for row in spec["images"]] != list(range(1, count + 1))):
+        raise FamilyMediaError(f"REFUSED: fixed image count/order is invalid for {key}.")
+    return spec
 
 
 def validate_local_images(key: str) -> list[dict[str, Any]]:
@@ -618,8 +806,11 @@ def validate_local_images(key: str) -> list[dict[str, Any]]:
             "height": expected["height"], "format": expected["format"],
             "mode": expected["mode"], "regular_file": True, "reparse_point": False,
         })
-    if [row["position"] for row in evidence] != [1, 2, 3, 4]:
-        raise FamilyMediaError("REFUSED: every family must contain exactly positions 1-4.")
+    wanted_positions = list(range(1, expected_image_count(key) + 1))
+    if [row["position"] for row in evidence] != wanted_positions:
+        raise FamilyMediaError(
+            f"REFUSED: {key} must contain exactly positions 1-{expected_image_count(key)}."
+        )
     return evidence
 
 
@@ -692,6 +883,37 @@ def validate_approved_manifest() -> dict[str, Any]:
         ),
         "not_authorized": ["publication", "upload", "WooCommerce write", "Drive write", "email"],
     }
+    expected_stub_update = {
+        "exact_user_message": "much better, proceed",
+        "scope": "six reviewed Stub Flange images; staging only",
+        "review_sheet": {
+            "path": (
+                r"C:\FRPDepot\Dado\20_Working\stub_flange_chatgpt_views_v2_20260820"
+                r"\00_stub_flange_chatgpt_six_view_review.jpg"
+            ),
+            "sha256": "3d3fbbb409ff3a4eea810cbc9c726a79f623012acc23f7ee621cec4960831478",
+        },
+        "not_authorized": [
+            "publication", "upload", "WordPress write", "WooCommerce write",
+            "website write", "Drive write", "Zoho write", "email",
+        ],
+    }
+    expected_manway_update = {
+        "exact_user_message": "Yes",
+        "scope": "six reviewed FRP Manway images; staging only",
+        "review_evidence": {
+            "path": (
+                r"C:\FRPDepot\Dado\20_Working\frp_manway\approved_gallery_20260820"
+                r"\approved_gallery_manifest.json"
+            ),
+            "sha256": "abac2f99e4b3dd5f292097b06f36f883a2d866a3c8d57c289dfc2dcb76aa3d45",
+        },
+        "order": "image 1 hero; images 2-6 gallery in shown order",
+        "not_authorized": [
+            "publication", "upload", "WordPress write", "WooCommerce write",
+            "website write", "Drive write", "Zoho write", "email",
+        ],
+    }
     expected_fnpt = {
         "status": "approved existing benchmark; excluded from the five-family media tool",
         "separate_plan_required": True,
@@ -700,8 +922,17 @@ def validate_approved_manifest() -> dict[str, Any]:
             or manifest.get("status") != "APPROVED_WORKING_COLLECTION_NOT_PUBLISHED"
             or manifest.get("approval") != expected_approval
             or manifest.get("pipe_update_instruction") != expected_pipe_update
+            or manifest.get("stub_flange_update_instruction") != expected_stub_update
+            or manifest.get("open_manway_update_instruction") != expected_manway_update
             or manifest.get("fnpt") != expected_fnpt):
         raise FamilyMediaError("REFUSED: approved collection manifest status/scope is invalid.")
+    content_sha256 = str(manifest.get("content_sha256") or "")
+    content = dict(manifest)
+    content.pop("content_sha256", None)
+    actual_content_sha256 = hashlib.sha256(canonical(content).encode("utf-8")).hexdigest()
+    if (not secrets.compare_digest(content_sha256, APPROVED_MANIFEST_CONTENT_SHA256)
+            or not secrets.compare_digest(actual_content_sha256, APPROVED_MANIFEST_CONTENT_SHA256)):
+        raise FamilyMediaError("REFUSED: approved collection content hash is invalid.")
     families = manifest.get("families")
     if not isinstance(families, dict) or set(families) != set(FAMILY_KEYS):
         raise FamilyMediaError("REFUSED: approved collection manifest does not contain exactly five families.")
@@ -711,7 +942,8 @@ def validate_approved_manifest() -> dict[str, Any]:
         images = family.get("accepted_images") if isinstance(family, dict) else None
         if not isinstance(family, dict) or family.get("product_id") != spec["product_id"]:
             raise FamilyMediaError(f"REFUSED: approved collection identity is invalid for {key}.")
-        if not isinstance(images, list) or len(images) != 4 or not all(isinstance(row, dict) for row in images):
+        if (not isinstance(images, list) or len(images) != expected_image_count(key)
+                or not all(isinstance(row, dict) for row in images)):
             raise FamilyMediaError(f"REFUSED: approved collection image list is invalid for {key}.")
         projected = [{field: row.get(field) for field in fields} for row in images]
         expected = [{field: row[field] for field in fields} for row in spec["images"]]
@@ -797,6 +1029,75 @@ def assert_product_eligibility(key: str, evidence: dict[str, Any],
         raise FamilyMediaError("REFUSED: fixed product changed after the approved stage read.")
 
 
+def validate_reused_existing_record(key: str, value: Any) -> dict[str, Any] | None:
+    exception = reuse_exception(key)
+    if exception is None:
+        if value is not None:
+            raise FamilyMediaError("REFUSED: existing-media reuse is not allowed for this family.")
+        return None
+    expected_keys = set(exception) | {"source_url"}
+    if not isinstance(value, dict) or set(value) != expected_keys:
+        raise FamilyMediaError("REFUSED: existing-media reuse record has the wrong closed schema.")
+    if {field: value.get(field) for field in exception} != exception:
+        raise FamilyMediaError("REFUSED: existing-media reuse is not the one exact Stub Flange hero.")
+    source_url = str(value.get("source_url") or "")
+    media_base.assert_public_upload_url(
+        source_url, expected_basename=exception["source_basename"]
+    )
+    return copy.deepcopy(value)
+
+
+def validate_final_attachment_ids(key: str, final_attachment_ids: Any) -> list[int]:
+    """Validate the closed gallery-ID payload before any live product read or write."""
+    count = expected_image_count(key)
+    if (not isinstance(final_attachment_ids, list) or len(final_attachment_ids) != count
+            or any(type(value) is not int or value <= 0 for value in final_attachment_ids)
+            or len(set(final_attachment_ids)) != count):
+        raise FamilyMediaError(
+            f"REFUSED: gallery assignment requires exactly {count} unique positive attachment IDs."
+        )
+    exception = reuse_exception(key)
+    if exception is not None:
+        if final_attachment_ids[0] != exception["attachment_id"]:
+            raise FamilyMediaError(
+                "REFUSED: final Stub Flange gallery position 1 must be reused attachment 4849."
+            )
+        if exception["attachment_id"] in final_attachment_ids[1:]:
+            raise FamilyMediaError("REFUSED: reused attachment 4849 may appear only at position 1.")
+    return list(final_attachment_ids)
+
+
+def assert_family_operation_eligibility(
+        key: str, product: dict[str, Any], reused_existing: Any,
+        *, expected_product: dict[str, Any] | None = None,
+        expected_reused_existing: dict[str, Any] | None = None,
+        final_attachment_ids: list[int] | None = None) -> None:
+    """One predicate shared by stage, fresh commit preflight and the PUT adapter."""
+    assert_product_eligibility(key, product, expected_product)
+    checked_reuse = validate_reused_existing_record(key, reused_existing)
+    exception = reuse_exception(key)
+    if exception is not None:
+        gallery = product.get("before_gallery")
+        if (not isinstance(gallery, list)
+                or any(not isinstance(row, dict) or set(row) != {"id", "alt"}
+                       or type(row["id"]) is not int or row["id"] <= 0
+                       or type(row["alt"]) is not str for row in gallery)
+                or [row["id"] for row in gallery]
+                    != list(STUB_FLANGE_REQUIRED_BEFORE_GALLERY_IDS)):
+            raise FamilyMediaError(
+                "REFUSED: current Stub Flange gallery is not the exact required "
+                "[4849, 4850, 4851, 4852] baseline."
+            )
+    if expected_reused_existing is not None:
+        checked_expected = validate_reused_existing_record(key, expected_reused_existing)
+        if checked_reuse != checked_expected:
+            raise FamilyMediaError(
+                "REFUSED: existing Stub Flange hero evidence changed after staging."
+            )
+    if final_attachment_ids is not None:
+        validate_final_attachment_ids(key, final_attachment_ids)
+
+
 def product_evidence(key: str, vault: dict[str, Any] | None = None) -> dict[str, Any]:
     spec = family_spec(key)
     product_id = int(spec["product_id"])
@@ -838,14 +1139,17 @@ def gallery_precondition(before_gallery: Any) -> str:
 
 def assign_fixed_gallery(key: str, attachment_ids: list[int], vault: dict[str, Any],
                          expected_product: dict[str, Any],
+                         reused_existing: dict[str, Any] | None = None,
                          on_put_attempt: Any | None = None) -> dict[str, Any]:
     spec = family_spec(key)
-    if (not isinstance(attachment_ids, list) or len(attachment_ids) != 4
-            or any(type(value) is not int or value <= 0 for value in attachment_ids)
-            or len(set(attachment_ids)) != 4):
-        raise FamilyMediaError("REFUSED: gallery assignment requires four unique positive attachment IDs.")
+    validate_final_attachment_ids(key, attachment_ids)
     fresh_product = product_evidence(key, vault)
-    assert_product_eligibility(key, fresh_product, expected_product)
+    assert_family_operation_eligibility(
+        key, fresh_product, reused_existing,
+        expected_product=expected_product,
+        expected_reused_existing=reused_existing,
+        final_attachment_ids=attachment_ids,
+    )
     if on_put_attempt is not None:
         on_put_attempt()
     payload = {"images": [{"id": value} for value in attachment_ids]}
@@ -1012,20 +1316,152 @@ class ProductFamilyAdmin(media_base.AdminPage):
         health = self._guard_status("Guard inactive")
         return {"proof": proof, "post_completion_health": health}
 
+    def _sanitized_row_structure_diagnostic(self) -> dict[str, Any]:
+        """Describe page-one row/cell/link structure without retaining URL values."""
+        try:
+            self._goto(media_base.library_page_url(1))
+            rows = self._page.query_selector_all(media_base.LIST_ROW_SELECTOR)
+        except Exception as exc:  # noqa: BLE001 - diagnostic must not mask the refusal
+            return {
+                "page": 1,
+                "row_count": 0,
+                "sampled_rows": 0,
+                "row_shapes": [],
+                "reader_error_type": type(exc).__name__,
+                "retains_query_values": False,
+                "retains_link_text": False,
+                "retains_control_values": False,
+            }
+        if not isinstance(rows, list):
+            return {
+                "page": 1,
+                "row_count": 0,
+                "sampled_rows": 0,
+                "row_shapes": [],
+                "reader_result_type": type(rows).__name__,
+                "retains_query_values": False,
+                "retains_link_text": False,
+                "retains_control_values": False,
+            }
+        row_shapes: dict[str, int] = {}
+        for row in rows[:3]:
+            cells: list[dict[str, Any]] = []
+            row_id = str(row.get_attribute("id") or "")
+            if re.fullmatch(r"post-[1-9][0-9]*", row_id):
+                row_id_shape = "post-positive-int"
+            elif row_id:
+                row_id_shape = "other"
+            else:
+                row_id_shape = "empty"
+            for cell in row.query_selector_all("th,td"):
+                class_tokens = sorted(set(str(cell.get_attribute("class") or "").split()))
+                try:
+                    tag = str(cell.evaluate("el => el.tagName.toLowerCase()") or "")
+                except Exception:  # noqa: BLE001 - shape-only diagnostic
+                    tag = "unknown"
+                links: list[dict[str, Any]] = []
+                for link in cell.query_selector_all("a[href]"):
+                    raw = str(link.get_attribute("href") or "")
+                    raw_form = "other"
+                    if raw.startswith("/") and not raw.startswith("//"):
+                        raw_form = "root_relative"
+                    elif raw.startswith("https://"):
+                        raw_form = "absolute_https"
+                    elif raw.startswith("//"):
+                        raw_form = "protocol_relative"
+                    try:
+                        parsed = urlsplit(urljoin(media_base.EXACT_ORIGIN + "/", raw))
+                        pairs = parse_qsl(
+                            parsed.query, keep_blank_values=True, strict_parsing=False
+                        )
+                        shape = {
+                            "raw_form": raw_form,
+                            "path": parsed.path,
+                            "query_keys": sorted(key for key, _value in pairs),
+                            "fragment_present": bool(parsed.fragment),
+                            "exact_attachment_edit": (
+                                parse_exact_attachment_edit_url(raw) is not None
+                            ),
+                        }
+                    except ValueError:
+                        shape = {
+                            "raw_form": raw_form,
+                            "path": "parse_error",
+                            "query_keys": [],
+                            "fragment_present": False,
+                            "exact_attachment_edit": False,
+                        }
+                    links.append(shape)
+                controls: list[dict[str, Any]] = []
+                for control in cell.query_selector_all('input[name="media[]"]'):
+                    raw_type = str(control.get_attribute("type") or "")
+                    raw_id = str(control.get_attribute("id") or "")
+                    raw_value = str(control.get_attribute("value") or "")
+                    id_match = re.fullmatch(r"cb-select-([1-9][0-9]*)", raw_id)
+                    value_match = re.fullmatch(r"[1-9][0-9]*", raw_value)
+                    row_match = re.fullmatch(r"post-([1-9][0-9]*)", row_id)
+                    controls.append({
+                        "type_exact_checkbox": raw_type == "checkbox",
+                        "id_shape": "cb-select-positive-int" if id_match else (
+                            "empty" if not raw_id else "other"
+                        ),
+                        "value_shape": "positive-int" if value_match else (
+                            "empty" if not raw_value else "other"
+                        ),
+                        "id_value_agree": bool(
+                            id_match and value_match and id_match.group(1) == raw_value
+                        ),
+                        "row_value_agree": bool(
+                            row_match and value_match and row_match.group(1) == raw_value
+                        ),
+                    })
+                cells.append({
+                    "tag": tag,
+                    "classes": class_tokens,
+                    "data_colname": str(cell.get_attribute("data-colname") or ""),
+                    "link_count": len(links),
+                    "link_shapes": links,
+                    "media_control_count": len(controls),
+                    "media_control_shapes": controls,
+                })
+            key = canonical({"row_id_shape": row_id_shape, "cells": cells})
+            row_shapes[key] = row_shapes.get(key, 0) + 1
+        return {
+            "page": 1,
+            "row_count": len(rows),
+            "sampled_rows": min(len(rows), 3),
+            "row_shapes": [
+                {"count": row_shapes[key], **json.loads(key)}
+                for key in sorted(row_shapes)
+            ],
+            "retains_query_values": False,
+            "retains_link_text": False,
+            "retains_control_values": False,
+        }
+
     def _row_records(self) -> list[dict[str, Any]]:
-        """Preserve a unique attachment ID when the list filename cell is blank.
+        """Preserve one exact row identity when filename/title cells are absent.
 
         WordPress attachment 1767 proved this live shape on 2026-08-15: five
         links all named one attachment, while the list filename selector was
-        empty. The base scanner correctly fails closed, but discards the ID.
-        Keeping the unique ID lets `enumerate_library` resolve the filename from
-        that attachment's own fixed, read-only identity screen instead of
-        sampling the row or weakening completeness.
+        empty. Keeping the unique ID lets `enumerate_library` resolve the
+        filename from that attachment's own fixed, read-only identity screen.
+
+        A sanitized complete-row diagnostic on 2026-08-20 then proved the
+        current list view exposes one bulk-action checkbox in every populated
+        row while all title/link cells are absent. WordPress posts the exact
+        attachment ID in that fixed `media[]` checkbox. Accept that canonical
+        control only when there is exactly one strict positive decimal value,
+        and require it to agree with an exact edit-link identity whenever both
+        are present.
         """
         rows = self._page.query_selector_all(media_base.LIST_ROW_SELECTOR)
         found: list[dict[str, Any]] = []
+        identity_selector = 'input[name="media[]"]'
         for row in rows:
+            identity_controls = row.query_selector_all(identity_selector)
             if (not row.query_selector_all("a[href]")
+                    and not identity_controls
                     and len(row.query_selector_all(media_base.EMPTY_TABLE_CELL_SELECTOR)) == 1):
                 continue
             ids: set[int] = set()
@@ -1037,10 +1473,36 @@ class ProductFamilyAdmin(media_base.AdminPage):
                     ids.add(attachment_id)
                 elif is_attachment_edit_candidate_url(href):
                     invalid_edit_candidate = True
-            if invalid_edit_candidate or len(ids) != 1:
+            checkbox_ids: set[int] = set()
+            invalid_checkbox = False
+            if len(identity_controls) > 1:
+                invalid_checkbox = True
+            elif len(identity_controls) == 1:
+                control = identity_controls[0]
+                raw_type = str(control.get_attribute("type") or "")
+                raw_value = str(control.get_attribute("value") or "")
+                raw_control_id = str(control.get_attribute("id") or "")
+                raw_row_id = str(row.get_attribute("id") or "")
+                if not re.fullmatch(r"[1-9][0-9]*", raw_value):
+                    invalid_checkbox = True
+                else:
+                    checkbox_id = int(raw_value)
+                    if (raw_type != "checkbox"
+                            or raw_control_id != f"cb-select-{checkbox_id}"
+                            or raw_row_id != f"post-{checkbox_id}"):
+                        invalid_checkbox = True
+                    else:
+                        checkbox_ids.add(checkbox_id)
+            if (invalid_edit_candidate or invalid_checkbox or len(ids) > 1
+                    or len(checkbox_ids) > 1
+                    or (ids and checkbox_ids and ids != checkbox_ids)):
                 found.append({"id": None, "filename": "", "stem": ""})
                 continue
-            attachment_id = ids.pop()
+            resolved_ids = ids or checkbox_ids
+            if len(resolved_ids) != 1:
+                found.append({"id": None, "filename": "", "stem": ""})
+                continue
+            attachment_id = next(iter(resolved_ids))
             name_node = row.query_selector(media_base.ROW_FILENAME_SELECTOR)
             raw = str(name_node.inner_text() or "") if name_node is not None else ""
             filename = re.sub(r"(?i)^\s*file\s*name\s*:\s*", "", raw).strip()
@@ -1117,19 +1579,30 @@ class ProductFamilyAdmin(media_base.AdminPage):
             and unidentified == 0
             and len(rows) == total
         )
-        return {
+        result = {
             "rows": rows,
             "total": total,
             "pages": pages,
             "complete": complete,
             "unidentified": unidentified,
         }
+        if not complete:
+            result["sanitized_row_structure_diagnostic"] = (
+                self._sanitized_row_structure_diagnostic()
+            )
+        return result
 
     def upload_one(self, expected: dict[str, Any], known_ids: set[int],
                    on_submit_attempt: Any | None = None) -> int:
         resolved = Path(str(expected.get("path") or "")).resolve()
+        reused_hero_path = Path(FAMILY_SPECS["stub_flange"]["images"][0]["path"]).resolve()
+        if resolved == reused_hero_path or expected.get("position") == 1 and (
+                expected.get("sha256") == REUSED_EXISTING_EXCEPTION["sha256"]):
+            raise FamilyMediaError(
+                "REFUSED: Stub Flange position 1 is reuse-only and can never be uploaded."
+            )
         if resolved not in self._allowed_paths or resolved not in ALL_FIXED_PATHS:
-            raise FamilyMediaError("REFUSED: only the four fixed files in this plan may be uploaded.")
+            raise FamilyMediaError("REFUSED: only the exact fixed files in this family plan may be uploaded.")
         payload = verified_upload_payload(expected)
         self._goto(media_base.MEDIA_NEW_URL)
         inputs = self._page.query_selector_all(media_base.FILE_INPUT_SELECTOR)
@@ -1151,11 +1624,16 @@ class ProductFamilyAdmin(media_base.AdminPage):
         spec = family_spec(key)
         permalink = spec["permalink"]
         product_id = spec["product_id"]
-        if (not isinstance(verified_source_urls, list) or len(verified_source_urls) != 4
+        count = expected_image_count(key)
+        if (not isinstance(verified_source_urls, list) or len(verified_source_urls) != count
                 or any(not isinstance(value, str) for value in verified_source_urls)):
-            raise FamilyMediaError("Public verification requires four ordered verified attachment URLs.")
+            raise FamilyMediaError(
+                f"Public verification requires exactly {count} ordered verified attachment URLs."
+            )
         for value, image in zip(verified_source_urls, spec["images"]):
-            media_base.assert_public_upload_url(value, expected_basename=image["filename"])
+            media_base.assert_public_upload_url(
+                value, expected_basename=expected_public_basename(key, image)
+            )
         javascript_errors: list[str] = []
 
         def on_console(message: Any) -> None:
@@ -1200,9 +1678,12 @@ class ProductFamilyAdmin(media_base.AdminPage):
                     };
                 })
             """)
-            if not isinstance(gallery, list) or len(gallery) != 4:
-                raise FamilyMediaError("Public product page did not render exactly four gallery items.")
+            if not isinstance(gallery, list) or len(gallery) != count:
+                raise FamilyMediaError(
+                    f"Public product page did not render exactly {count} gallery items."
+                )
             for row, image, source_url in zip(gallery, spec["images"], verified_source_urls):
+                public_basename = expected_public_basename(key, image)
                 if (not isinstance(row, dict) or row.get("link_count") != 1
                         or row.get("image_count") != 1 or row.get("complete") is not True
                         or int(row.get("natural_width") or 0) <= 0
@@ -1212,15 +1693,15 @@ class ProductFamilyAdmin(media_base.AdminPage):
                 current_src = urlsplit(str(row.get("current_src") or ""))
                 source = urlsplit(source_url)
                 media_base.assert_public_upload_url(str(row.get("href") or ""),
-                                                    expected_basename=image["filename"])
+                                                    expected_basename=public_basename)
                 if href != source:
                     raise FamilyMediaError("Public product gallery original link is not the verified attachment URL.")
-                wanted_stem = Path(image["filename"]).stem
+                wanted_stem = Path(public_basename).stem
                 current_name = Path(current_src.path).name
                 media_base.assert_public_upload_url(str(row.get("current_src") or ""))
                 if Path(current_src.path).parent != Path(source.path).parent:
                     raise FamilyMediaError("Public product gallery rendered source left the verified upload directory.")
-                original_name = image["filename"]
+                original_name = public_basename
                 derivative = re.fullmatch(
                     re.escape(wanted_stem) + r"-(\d+)x(\d+)\.png", current_name
                 )
@@ -1237,7 +1718,7 @@ class ProductFamilyAdmin(media_base.AdminPage):
                 raise FamilyMediaError("Public product page produced one or more unknown JavaScript errors.")
             return {
                 "url": permalink, "http_status": 200, "product_id": product_id,
-                "fixed_images_in_order": 4, "rendered_gallery_items": 4,
+                "fixed_images_in_order": count, "rendered_gallery_items": count,
                 "broken_images": 0, "javascript_errors": 0,
             }
         finally:
@@ -1266,6 +1747,84 @@ def admin_session(allowed_paths: frozenset[Path]) -> Iterator[ProductFamilyAdmin
             yield admin
         finally:
             admin.leave_on_media_list()
+
+
+def _downloaded_image_identity(data: bytes) -> tuple[str, str, int, int]:
+    import io
+    import warnings
+
+    from PIL import Image
+
+    if Image.MAX_IMAGE_PIXELS is None:
+        raise FamilyMediaError("REFUSED: Pillow decompression-bomb protection is disabled.")
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)) as image:
+                image.load()
+                return str(image.format or ""), str(image.mode), int(image.width), int(image.height)
+    except (Image.DecompressionBombError, Image.DecompressionBombWarning) as exc:
+        raise FamilyMediaError("REFUSED: downloaded reuse image exceeded safe dimensions.") from exc
+    except Exception as exc:  # noqa: BLE001 - malformed image is a fail-closed scan
+        raise FamilyMediaError("REFUSED: downloaded reuse image could not be decoded.") from exc
+
+
+def _observed_reuse_record(key: str, attachment_id: int,
+                           detail: dict[str, Any], data: bytes) -> dict[str, Any]:
+    exception = reuse_exception(key)
+    if exception is None:
+        raise FamilyMediaError("REFUSED: no existing-media exception exists for this family.")
+    source_url = str(detail.get("source_url") or "")
+    source_basename = Path(urlsplit(source_url).path).name
+    image_format, mode, width, height = _downloaded_image_identity(data)
+    return {
+        "family": key,
+        "product_id": family_spec(key)["product_id"],
+        "position": 1,
+        "attachment_id": int(attachment_id),
+        "actual_filename": str(detail.get("filename") or "").strip(),
+        "source_basename": source_basename,
+        "approved_filename": exception["approved_filename"],
+        "bytes": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+        "width": width,
+        "height": height,
+        "format": image_format,
+        "mode": mode,
+        "source_url": source_url,
+    }
+
+
+def _is_reuse_candidate(key: str, attachment_id: int,
+                        detail: dict[str, Any], digest: str) -> bool:
+    exception = reuse_exception(key)
+    if exception is None:
+        return False
+    source_basename = Path(urlsplit(str(detail.get("source_url") or "")).path).name
+    return bool(
+        attachment_id == exception["attachment_id"]
+        or str(detail.get("filename") or "").strip() == exception["actual_filename"]
+        or source_basename == exception["source_basename"]
+        or secrets.compare_digest(digest, exception["sha256"])
+    )
+
+
+def read_reused_existing(admin: ProductFamilyAdmin, key: str) -> dict[str, Any] | None:
+    exception = reuse_exception(key)
+    if exception is None:
+        return None
+    detail = admin.read_attachment(
+        exception["attachment_id"],
+        expected_basename=exception["actual_filename"],
+        allowed_extensions=media_base.SCANNED_EXTENSIONS,
+    )
+    data = media_base.download_public_bytes(
+        detail["source_url"],
+        expected_basename=exception["source_basename"],
+        allowed_extensions=media_base.SCANNED_EXTENSIONS,
+    )
+    record = _observed_reuse_record(key, exception["attachment_id"], detail, data)
+    return validate_reused_existing_record(key, record)
 
 
 def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, Any]],
@@ -1318,6 +1877,8 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
     total_bytes = 0
     hash_conflicts: list[dict[str, Any]] = []
     first_content: dict[int, tuple[str, str, str]] = {}
+    reuse_key = "stub_flange" if "stub_flange" in target_specs else None
+    first_reuse_candidates: list[dict[str, Any]] = []
     if walked.get("complete") is True:
         if len(image_rows) > media_base.MAX_IMAGE_ATTACHMENTS:
             raise FamilyMediaError("REFUSED: Media Library exceeds complete hash-scan bounds.")
@@ -1352,6 +1913,11 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
             if digest in target_hashes:
                 hash_conflicts.append({"attachment_id": row["id"],
                                        "matches_fixed_image": target_hashes[digest]})
+            if (reuse_key is not None
+                    and _is_reuse_candidate(reuse_key, int(row["id"]), detail, digest)):
+                first_reuse_candidates.append(
+                    _observed_reuse_record(reuse_key, int(row["id"]), detail, data)
+                )
     rechecked: dict[str, Any] = {
         "rows": [], "total": 0, "pages": 0, "complete": False, "unidentified": 0,
     }
@@ -1365,6 +1931,7 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
         "rows": [], "total": 0, "pages": 0, "complete": False, "unidentified": 0,
     }
     final_snapshot_stable = False
+    rechecked_reuse_candidates: list[dict[str, Any]] = []
     if (walked.get("complete") is True and failures == 0
             and completed == len(image_rows)):
         rechecked = admin.enumerate_library()
@@ -1415,6 +1982,11 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
                     }
                     if conflict not in hash_conflicts:
                         hash_conflicts.append(conflict)
+                if (reuse_key is not None
+                        and _is_reuse_candidate(reuse_key, int(row["id"]), detail, digest)):
+                    rechecked_reuse_candidates.append(
+                        _observed_reuse_record(reuse_key, int(row["id"]), detail, data)
+                    )
             recheck_hash_complete = bool(
                 recheck_hash_failures == 0
                 and recheck_hashes_completed == len(recheck_image_rows)
@@ -1457,14 +2029,20 @@ def duplicate_scan(admin: ProductFamilyAdmin, target_specs: dict[str, dict[str, 
         "private_exception_proven": private_exception_proven,
         "name_conflicts": name_conflicts,
         "hash_conflicts": hash_conflicts,
+        "reuse_candidates": first_reuse_candidates,
         "target_families": sorted(target_specs),
     }
+    if walked.get("complete") is not True:
+        evidence["sanitized_row_structure_diagnostic"] = walked.get(
+            "sanitized_row_structure_diagnostic"
+        )
     evidence["complete"] = bool(
         evidence["enumeration_complete"] and evidence["private_exception_proven"]
         and evidence["hash_complete"]
         and evidence["recheck_complete"] and evidence["snapshot_stable"]
         and evidence["recheck_hash_complete"] and evidence["content_stable"]
         and evidence["final_complete"] and evidence["final_snapshot_stable"]
+        and first_reuse_candidates == rechecked_reuse_candidates
     )
     return evidence
 
@@ -1488,9 +2066,55 @@ def require_no_duplicates(evidence: dict[str, Any]) -> None:
             or evidence.get("image_hashes_completed") != evidence.get("image_rows")
             or evidence.get("recheck_hash_failures") != 0
             or evidence.get("recheck_image_hashes_completed") != evidence.get("image_rows")):
-        raise FamilyMediaError("REFUSED: complete Media Library duplicate absence was not proven.")
-    if evidence.get("name_conflicts") or evidence.get("hash_conflicts"):
-        raise FamilyMediaError("REFUSED: Media Library already contains a fixed name or SHA-256.")
+        diagnostic_fields = (
+            "library_total", "enumerated", "pages_read", "enumeration_complete",
+            "image_rows", "image_hashes_completed", "hash_failures", "hash_complete",
+            "recheck_total", "recheck_enumerated", "recheck_pages", "recheck_complete",
+            "snapshot_stable", "recheck_image_hashes_completed", "recheck_hash_failures",
+            "recheck_hash_complete", "content_stable", "final_total", "final_enumerated",
+            "final_pages", "final_complete", "final_snapshot_stable",
+            "private_exception_proven", "complete",
+        )
+        diagnostic = {field: evidence.get(field) for field in diagnostic_fields}
+        if "sanitized_row_structure_diagnostic" in evidence:
+            diagnostic["sanitized_row_structure_diagnostic"] = evidence.get(
+                "sanitized_row_structure_diagnostic"
+            )
+        raise FamilyMediaError(
+            "REFUSED: complete Media Library duplicate absence was not proven: "
+            + json.dumps(diagnostic, sort_keys=True, separators=(",", ":"))
+        )
+    targets = evidence.get("target_families")
+    allows_stub_reuse = isinstance(targets, list) and "stub_flange" in targets
+    expected_name_conflicts: list[dict[str, Any]] = []
+    expected_hash_conflicts = ([{
+        "attachment_id": REUSED_EXISTING_EXCEPTION["attachment_id"],
+        "matches_fixed_image": (
+            "stub_flange:" + REUSED_EXISTING_EXCEPTION["approved_filename"]
+        ),
+    }] if allows_stub_reuse else [])
+    candidates = evidence.get("reuse_candidates")
+    candidate_ok = False
+    if allows_stub_reuse and isinstance(candidates, list) and len(candidates) == 1:
+        try:
+            validate_reused_existing_record("stub_flange", candidates[0])
+            candidate_ok = True
+        except FamilyMediaError:
+            candidate_ok = False
+    elif not allows_stub_reuse and candidates == []:
+        candidate_ok = True
+    if (evidence.get("name_conflicts") != expected_name_conflicts
+            or evidence.get("hash_conflicts") != expected_hash_conflicts
+            or not candidate_ok):
+        conflict_diagnostic = {
+            "name_conflicts": evidence.get("name_conflicts"),
+            "hash_conflicts": evidence.get("hash_conflicts"),
+            "reuse_candidates": evidence.get("reuse_candidates"),
+        }
+        raise FamilyMediaError(
+            "REFUSED: Media Library conflicts are not the one exact reusable Stub Flange hero: "
+            + json.dumps(conflict_diagnostic, sort_keys=True, separators=(",", ":"))
+        )
 
 
 def validate_duplicate_evidence(evidence: Any, key: str) -> None:
@@ -1502,7 +2126,8 @@ def validate_duplicate_evidence(evidence: Any, key: str) -> None:
         "recheck_hash_failures", "recheck_hash_bytes_read", "recheck_hash_complete",
         "content_stable", "final_total", "final_enumerated", "final_pages",
         "final_complete", "final_snapshot_stable", "name_conflicts", "hash_conflicts",
-        "private_exception", "private_exception_proven", "target_families", "complete",
+        "reuse_candidates", "private_exception", "private_exception_proven",
+        "target_families", "complete",
     }
     if not isinstance(evidence, dict) or set(evidence) != expected_keys:
         raise FamilyMediaError("REFUSED: duplicate evidence schema is invalid.")
@@ -1532,7 +2157,9 @@ def validate_duplicate_evidence(evidence: Any, key: str) -> None:
     targets = evidence.get("target_families")
     if targets not in ([key], sorted(FAMILY_KEYS)):
         raise FamilyMediaError("REFUSED: duplicate evidence covers the wrong families.")
-    if not isinstance(evidence["name_conflicts"], list) or not isinstance(evidence["hash_conflicts"], list):
+    if (not isinstance(evidence["name_conflicts"], list)
+            or not isinstance(evidence["hash_conflicts"], list)
+            or not isinstance(evidence["reuse_candidates"], list)):
         raise FamilyMediaError("REFUSED: duplicate conflict evidence is invalid.")
     if (evidence["private_exception_proven"] is not True
             or evidence["private_exception"] != {
@@ -1541,6 +2168,16 @@ def validate_duplicate_evidence(evidence: Any, key: str) -> None:
             }):
         raise FamilyMediaError("REFUSED: duplicate evidence lacks the exact private attachment.")
     require_no_duplicates(evidence)
+
+
+def reused_existing_from_duplicate(evidence: dict[str, Any], key: str) -> dict[str, Any] | None:
+    validate_duplicate_evidence(evidence, key)
+    if reuse_exception(key) is None:
+        return None
+    candidates = evidence["reuse_candidates"]
+    if len(candidates) != 1:
+        raise FamilyMediaError("REFUSED: exact Stub Flange reuse evidence is missing or ambiguous.")
+    return validate_reused_existing_record(key, candidates[0])
 
 
 def _validated_plan_sha(plan_sha256: str) -> str:
@@ -1639,8 +2276,39 @@ def _file_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
+def upload_file_evidence(key: str, local: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    wanted_positions = [row["position"] for row in upload_image_records(key)]
+    rows = [copy.deepcopy(row) for row in local if row.get("position") in wanted_positions]
+    if [row.get("position") for row in rows] != wanted_positions:
+        raise FamilyMediaError("REFUSED: local upload evidence does not contain exact upload positions.")
+    return rows
+
+
+def fixed_gallery_template(key: str, local: list[dict[str, Any]],
+                           reused_existing: dict[str, Any] | None) -> list[dict[str, Any]]:
+    validate_reused_existing_record(key, reused_existing)
+    template: list[dict[str, Any]] = []
+    exception = reuse_exception(key)
+    for row in local:
+        if exception is not None and row["position"] == exception["position"]:
+            template.append({
+                "position": row["position"], "sha256": row["sha256"],
+                "filename": row["filename"], "disposition": "reuse_existing",
+                "attachment_id": exception["attachment_id"],
+                "actual_filename": exception["actual_filename"],
+            })
+        else:
+            template.append({
+                "position": row["position"], "sha256": row["sha256"],
+                "filename": row["filename"], "disposition": "upload_once",
+                "attachment_id": None,
+            })
+    return template
+
+
 def operation_sha256(key: str, local: list[dict[str, Any]],
-                     product: dict[str, Any], approval_manifest: dict[str, Any]) -> str:
+                     product: dict[str, Any], approval_manifest: dict[str, Any],
+                     reused_existing: dict[str, Any] | None = None) -> str:
     spec = family_spec(key)
     semantic = {
         "schema_version": SCHEMA_VERSION,
@@ -1652,6 +2320,10 @@ def operation_sha256(key: str, local: list[dict[str, Any]],
         "approved_manifest": approval_manifest,
         "files": [{field: row[field] for field in ("position", "filename", "bytes", "sha256")}
                   for row in local],
+        "upload_files": [{field: row[field] for field in ("position", "filename", "bytes", "sha256")}
+                         for row in upload_file_evidence(key, local)],
+        "reused_existing": validate_reused_existing_record(key, reused_existing),
+        "gallery_payload_template": fixed_gallery_template(key, local, reused_existing),
         "product_identity": product["identity"],
         "protected_fingerprint": product["protected_fingerprint"],
         "before_gallery": product["before_gallery"],
@@ -1749,10 +2421,13 @@ def stage_one(key: str, local: list[dict[str, Any]], product: dict[str, Any],
     spec = family_spec(key)
     approval_manifest = validate_approved_manifest()
     validate_duplicate_evidence(duplicate, key)
+    reused_existing = reused_existing_from_duplicate(duplicate, key)
+    assert_family_operation_eligibility(key, product, reused_existing)
     guard_stage_snapshot = require_empty_guard_snapshot(
         guard_stage_snapshot, key, "atomic_snapshot", duplicate
     )
-    operation = operation_sha256(key, local, product, approval_manifest)
+    operation = operation_sha256(key, local, product, approval_manifest, reused_existing)
+    upload_files = upload_file_evidence(key, local)
     core = {
         "schema_version": SCHEMA_VERSION,
         "tool": TOOL_NAME,
@@ -1770,19 +2445,15 @@ def stage_one(key: str, local: list[dict[str, Any]], product: dict[str, Any],
         "operation_sha256": operation,
         "approval_manifest": approval_manifest,
         "files": local,
+        "upload_files": upload_files,
+        "reused_existing": reused_existing,
         "product_before": product,
         "duplicate_check": duplicate,
         "guard_contract": guard_contract(key),
         "guard_stage_snapshot": guard_stage_snapshot,
-        "gallery_payload_template": [{"position": row["position"], "sha256": row["sha256"],
-                                      "filename": row["filename"]} for row in local],
-        "risk": RISK_DISCLOSURE,
-        "writes_if_committed": [
-            "one fixed server-side guarded-commit acquisition",
-            "four independent authenticated WordPress media uploads",
-            f"one PUT /products/{spec['product_id']} containing only four image IDs",
-            "one fixed guard-completion state transition after complete verification",
-        ],
+        "gallery_payload_template": fixed_gallery_template(key, local, reused_existing),
+        "risk": risk_disclosure(key),
+        "writes_if_committed": writes_if_committed(key, spec["product_id"]),
         "forbidden": [
             "delete", "rollback", "retry", "media edit", "alt text", "product content",
             "price", "stock", "status", "category", "attribute", "customer", "order",
@@ -1830,7 +2501,7 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
         "schema_version", "tool", "tool_version", "origin", "action", "family",
         "family_label", "product_id", "method", "endpoint", "created_utc", "expires_utc",
         "nonce", "operation_sha256", "approval_manifest", "files", "product_before", "duplicate_check",
-        "guard_contract", "guard_stage_snapshot",
+        "upload_files", "reused_existing", "guard_contract", "guard_stage_snapshot",
         "gallery_payload_template", "risk", "writes_if_committed", "forbidden", "sha256",
     }
     if set(plan) != expected_keys:
@@ -1867,23 +2538,21 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
     expected_local = validate_local_images(key)
     if plan.get("files") != expected_local:
         raise FamilyMediaError("REFUSED: plan files do not match the fixed approved evidence.")
+    expected_upload_files = upload_file_evidence(key, expected_local)
+    if plan.get("upload_files") != expected_upload_files:
+        raise FamilyMediaError("REFUSED: plan does not carry the exact upload-only positions.")
     if plan.get("approval_manifest") != validate_approved_manifest():
         raise FamilyMediaError("REFUSED: plan does not carry the exact approved collection artifact.")
-    expected_template = [{"position": row["position"], "sha256": row["sha256"],
-                          "filename": row["filename"]} for row in expected_local]
-    expected_writes = [
-        "one fixed server-side guarded-commit acquisition",
-        "four independent authenticated WordPress media uploads",
-        f"one PUT /products/{spec['product_id']} containing only four image IDs",
-        "one fixed guard-completion state transition after complete verification",
-    ]
+    reused_existing = validate_reused_existing_record(key, plan.get("reused_existing"))
+    expected_template = fixed_gallery_template(key, expected_local, reused_existing)
+    expected_writes = writes_if_committed(key, spec["product_id"])
     expected_forbidden = [
         "delete", "rollback", "retry", "media edit", "alt text", "product content",
         "price", "stock", "status", "category", "attribute", "customer", "order",
         "payment", "plugin", "setting", "user", "email", "Zoho", "Drive", "FNPT",
     ]
     if (plan.get("gallery_payload_template") != expected_template
-            or plan.get("risk") != RISK_DISCLOSURE
+            or plan.get("risk") != risk_disclosure(key)
             or plan.get("writes_if_committed") != expected_writes
             or plan.get("forbidden") != expected_forbidden):
         raise FamilyMediaError("REFUSED: plan write surface or risk disclosure is invalid.")
@@ -1912,12 +2581,21 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
         raise FamilyMediaError("REFUSED: staged current gallery evidence is invalid.")
     duplicate = plan.get("duplicate_check")
     validate_duplicate_evidence(duplicate, key)
+    staged_reuse = reused_existing_from_duplicate(duplicate, key)
+    if reused_existing != staged_reuse:
+        raise FamilyMediaError("REFUSED: plan reuse record does not match duplicate proof.")
+    assert_family_operation_eligibility(
+        key, product, reused_existing,
+        expected_reused_existing=staged_reuse,
+    )
     if plan.get("guard_contract") != guard_contract(key):
         raise FamilyMediaError("REFUSED: plan does not carry the exact fixed guard contract.")
     require_empty_guard_snapshot(
         plan.get("guard_stage_snapshot"), key, "atomic_snapshot", duplicate
     )
-    wanted_operation = operation_sha256(key, expected_local, product, plan["approval_manifest"])
+    wanted_operation = operation_sha256(
+        key, expected_local, product, plan["approval_manifest"], reused_existing
+    )
     if (not isinstance(plan.get("operation_sha256"), str)
             or not secrets.compare_digest(plan["operation_sha256"], wanted_operation)):
         raise FamilyMediaError("REFUSED: stable operation identity is invalid.")
@@ -1933,7 +2611,7 @@ def command_stage(args: argparse.Namespace) -> None:
     with ui_browser_lock("wordpress", purpose=f"WordPress: read-only media stage for {key}"):
         vault = wc.load_vault()
         product = product_evidence(key, vault)
-        allowed = frozenset(Path(row["path"]).resolve() for row in local)
+        allowed = frozenset(Path(row["path"]).resolve() for row in upload_file_evidence(key, local))
         with admin_session(allowed) as admin:
             duplicate = duplicate_scan(admin, {key: family_spec(key)})
             require_no_duplicates(duplicate)
@@ -1946,7 +2624,9 @@ def command_stage(args: argparse.Namespace) -> None:
           "expires_utc": plan["expires_utc"], "family": key,
           "product_id": plan["product_id"], "product_name": product["identity"]["name"],
           "before_gallery": product["before_gallery"], "files": plan["files"],
-          "risk": RISK_DISCLOSURE, "approval": APPROVAL_WORD})
+          "reused_existing": plan["reused_existing"], "upload_files": plan["upload_files"],
+          "final_gallery_template": plan["gallery_payload_template"],
+          "risk": risk_disclosure(key), "approval": APPROVAL_WORD})
 
 
 def command_stage_all(_: argparse.Namespace) -> None:
@@ -1970,9 +2650,11 @@ def command_stage_all(_: argparse.Namespace) -> None:
                        "product_name": products[key]["identity"]["name"], "plan": str(path),
                        "plan_sha256": plan["sha256"],
                        "operation_sha256": plan["operation_sha256"],
-                       "expires_utc": plan["expires_utc"]})
+                       "expires_utc": plan["expires_utc"],
+                       "risk": risk_disclosure(key)})
     emit({"status": "FIVE_FAMILY_PLANS_STAGED_NOT_COMMITTED", "website_writes": 0,
-          "plans": staged, "risk": RISK_DISCLOSURE,
+          "plans": staged,
+          "risk_by_family": {key: risk_disclosure(key) for key in FAMILY_KEYS},
           "approval": "A fresh exact APPROVED is required separately for each plan."})
 
 
@@ -2066,12 +2748,14 @@ def command_commit(args: argparse.Namespace) -> None:
     key = plan["family"]
     spec = family_spec(key)
     local = validate_local_images(key)
+    upload_expected = upload_image_records(key)
+    reused_existing = validate_reused_existing_record(key, plan["reused_existing"])
     vault = wc.load_vault()
     if vault.get("declared_permissions") != "read_write":
         raise FamilyMediaError("REFUSED: WooCommerce vault is not declared read/write.")
     if wc.normalize_site_url(str(vault.get("site_url") or "")) != EXACT_ORIGIN:
         raise FamilyMediaError("REFUSED: WooCommerce vault is not the exact FRP Depot origin.")
-    allowed = frozenset(Path(row["path"]).resolve() for row in local)
+    allowed = frozenset(Path(row["path"]).resolve() for row in upload_expected)
     uploaded: list[dict[str, Any]] = []
     gallery_payload: list[dict[str, Any]] | None = None
     public_verification: dict[str, Any] | None = None
@@ -2091,12 +2775,21 @@ def command_commit(args: argparse.Namespace) -> None:
     try:
         with ui_browser_lock("wordpress", purpose=f"WordPress: approved media commit for {key}"):
             current = product_evidence(key, vault)
-            if current != plan["product_before"]:
-                raise FamilyMediaError("REFUSED: fixed product changed after staging; stage a fresh plan.")
+            assert_family_operation_eligibility(
+                key, current, reused_existing,
+                expected_product=plan["product_before"],
+                expected_reused_existing=reused_existing,
+            )
             with admin_session(allowed) as admin:
                 walked = admin.enumerate_library()
                 duplicate = duplicate_scan(admin, {key: spec}, walked=walked)
                 require_no_duplicates(duplicate)
+                fresh_reuse = reused_existing_from_duplicate(duplicate, key)
+                assert_family_operation_eligibility(
+                    key, current, fresh_reuse,
+                    expected_product=plan["product_before"],
+                    expected_reused_existing=reused_existing,
+                )
                 server_snapshot = admin.atomic_snapshot(key)
                 require_empty_guard_snapshot(
                     server_snapshot, key, "atomic_snapshot", duplicate
@@ -2149,7 +2842,7 @@ def command_commit(args: argparse.Namespace) -> None:
                     "guard_may_be_active": True,
                 })
 
-                for expected in spec["images"]:
+                for expected in upload_expected:
                     stage = f"upload_{expected['position']}"
                     current_upload = {
                         "position": expected["position"], "filename": expected["filename"],
@@ -2189,7 +2882,15 @@ def command_commit(args: argparse.Namespace) -> None:
                     current_upload_may_have_landed = False
                     observed_attachment_id = None
 
-                attachment_ids = [row["attachment_id"] for row in uploaded]
+                attachment_ids = ([reused_existing["attachment_id"]]
+                                  if reused_existing is not None else [])
+                attachment_ids += [row["attachment_id"] for row in uploaded]
+                assert_family_operation_eligibility(
+                    key, current, fresh_reuse,
+                    expected_product=plan["product_before"],
+                    expected_reused_existing=reused_existing,
+                    final_attachment_ids=attachment_ids,
+                )
                 stage = "guarded_snapshot"
                 guarded_snapshot = require_guarded_upload_snapshot(
                     admin.guarded_snapshot(key), key,
@@ -2203,7 +2904,12 @@ def command_commit(args: argparse.Namespace) -> None:
                 })
 
                 stage = "pre_gallery_revalidation"
-                for row, expected in zip(uploaded, spec["images"]):
+                pre_put_reuse = read_reused_existing(admin, key)
+                if pre_put_reuse != reused_existing:
+                    raise FamilyMediaError(
+                        "Pre-PUT reused Stub Flange hero proof changed after fresh duplicate scan."
+                    )
+                for row, expected in zip(uploaded, upload_expected):
                     detail = admin.read_attachment(
                         row["attachment_id"], expected_basename=expected["filename"]
                     )
@@ -2216,8 +2922,12 @@ def command_commit(args: argparse.Namespace) -> None:
                             hashlib.sha256(data).hexdigest(), expected["sha256"]):
                         raise FamilyMediaError("Pre-PUT media revalidation did not match approved bytes/hash.")
                 pre_put_product = product_evidence(key, vault)
-                if pre_put_product != plan["product_before"]:
-                    raise FamilyMediaError("Fixed product changed while uploads were running.")
+                assert_family_operation_eligibility(
+                    key, pre_put_product, pre_put_reuse,
+                    expected_product=plan["product_before"],
+                    expected_reused_existing=reused_existing,
+                    final_attachment_ids=attachment_ids,
+                )
                 record_event(operation_id, plan_sha256, "500_pre_put_verified", {
                     "stage": stage, "uploaded_verified": copy.deepcopy(uploaded),
                     "product_fingerprint": plan["product_before"]["protected_fingerprint"],
@@ -2232,7 +2942,8 @@ def command_commit(args: argparse.Namespace) -> None:
                     product_may_have_changed = True
 
                 assign_fixed_gallery(
-                    key, attachment_ids, vault, plan["product_before"], mark_put_attempt
+                    key, attachment_ids, vault, plan["product_before"],
+                    pre_put_reuse, mark_put_attempt
                 )
                 readback, _ = wc.api_get(f"/products/{spec['product_id']}", vault=vault)
                 if gallery_ids(readback) != attachment_ids:
@@ -2276,7 +2987,12 @@ def command_commit(args: argparse.Namespace) -> None:
                     raise FamilyMediaError(
                         "A protected product field changed after guard completion."
                     )
-                for row, expected in zip(uploaded, spec["images"]):
+                final_reuse = read_reused_existing(admin, key)
+                if final_reuse != reused_existing:
+                    raise FamilyMediaError(
+                        "Final reused Stub Flange hero proof changed after gallery assignment."
+                    )
+                for row, expected in zip(uploaded, upload_expected):
                     detail = admin.read_attachment(
                         row["attachment_id"], expected_basename=expected["filename"]
                     )
@@ -2289,13 +3005,16 @@ def command_commit(args: argparse.Namespace) -> None:
                             hashlib.sha256(data).hexdigest(), expected["sha256"]):
                         raise FamilyMediaError("Final media verification did not match approved bytes/hash.")
                 public_verification = admin.verify_public_product(
-                    key, [row["source_url"] for row in uploaded]
+                    key,
+                    ([reused_existing["source_url"]] if reused_existing is not None else [])
+                    + [row["source_url"] for row in uploaded]
                 )
 
         final = {
             "status": "COMMITTED_AND_VERIFIED", "plan_sha256": plan_sha256,
             "operation_sha256": operation_id,
             "family": key, "product_id": spec["product_id"],
+            "reused_existing_verified": reused_existing,
             "uploaded_verified": uploaded, "gallery": gallery_payload,
             "public_verification": public_verification,
             "guard_acquisition": guard_acquisition,

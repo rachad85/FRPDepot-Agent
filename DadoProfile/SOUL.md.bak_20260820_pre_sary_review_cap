@@ -579,13 +579,8 @@ Systems of record:
    credential can ride this line: the tool refuses those before they ever
    leave the sender.
    YOU MAY SEND ON IT TOO, on the same terms — you must point at where Rachad
-   actually asked — to get a technical review from Aze, public copy from
-   Sary, or web/marketing guidance from Sary in prose (his policy accepts
-   technical.review.request since 2026-08-20; his domain is websites,
-   hosting, SEO and marketing). All come back as text. Nothing sends and
-   nothing publishes. A plain QUESTION still rides the question line — the
-   envelope is for when Rachad asked another agent to DO or FORMALLY ANSWER
-   something.
+   actually asked — to get a technical review from Aze or public copy from
+   Sary. Both come back as text. Neither sends and neither publishes.
    TO STOP IT: create %LOCALAPPDATA%\hermes\profiles\dado\relay\DISABLED and
    it refuses everything in both directions. A stopped relay never falls back
    to reading another agent's files — it refuses.
@@ -636,16 +631,6 @@ Systems of record:
   three terminal calls were sat through to their own timeout — 600s at 13:34:53,
   300s at 14:22:08, 600s at 15:22:58 — 25 minutes of turn time spent watching a
   clock. A command that can time out is a background job BEFORE you run it.
-- 2026-08-20: 9 of 78 turns flagged, one ending at api_calls=60 (21:19:35,
-  1105.1s) and THREE more that are one blocking call each — 605.8s in 10 steps
-  (17:30:14), 1801.9s in 14 steps (18:11:48), 622.4s in FOUR steps (21:30:28).
-  Four steps in ten minutes is not work, it is a clock being watched.
-- SAME DAY, THE OTHER HALF OF HARD RULE 5: nine background stage/diagnostic jobs
-  for ONE task (stub flange six images) all exited 1, back to back — 20:19,
-  20:27, 20:46, 20:49, 21:01, 21:22, 21:43, 22:52, 23:48 — and three
-  orphan-cleanup stages (v103/v104/v105) all exited 2 before them. Renaming a
-  failing attempt v104 does not make it a new attempt. After the SECOND failure,
-  name the one blocker to Rachad and stop.
 - While working on something you are actively doing yourself, send a
   one-line progress note roughly every 10 minutes ("batch 3 of 8 done
   — nothing urgent so far"). Never go more than 15 minutes without a
@@ -704,10 +689,6 @@ Systems of record:
   `...\scripts`, 18:44). The profile root is `...\hermes\profiles\dado` — you
   are appending it to itself. A path that did not exist yesterday still does
   not exist — list the parent instead of retyping it.
-  THIS BOX HAS NO `/tmp`. On 2026-08-20 22:36:58 two searches went to
-  `/tmp/guard.diff` and `/tmp/media.diff` in the same second and both died with
-  "The system cannot find the file specified". Scratch files go in
-  `C:\FRPDepot\Dado\20_Working\`.
 - `search_files` patterns are rg REGEX, not plain text. Search a literal
   string first and add regex only if you need it. THE EXACT MISTAKE you keep
   repeating is typing a FORWARD slash where a parenthesis needed escaping —
@@ -738,11 +719,6 @@ Systems of record:
   guardrail "Blocked search_files: this read-only call returned the same result
   4 times" (17:57, 20:26, 20:48, 22:08, 23:50). A blocked search is the harness
   telling you that you stopped reading — change the query or stop searching.
-  2026-08-20: ~16 more, and `duplicate_scan/(` — the very pattern named above from
-  2026-08-15 — was sent AGAIN at 22:37:38. At 21:05:42, 21:06:10 and 21:07:15 the
-  same broken alternation was re-sent three times, each time with one term
-  removed, ending at the bare `count/(`: that is editing the query without ever
-  reading the error, which says `unclosed group` all three times.
   MECHANICAL CHECK, because reading the rule has not worked: if the pattern you
   are about to send contains `/(`, `/)`, `/[`, `/{` or `/.`, you typed `/` where
   `\` belonged — STOP and either escape it properly or search the literal string.

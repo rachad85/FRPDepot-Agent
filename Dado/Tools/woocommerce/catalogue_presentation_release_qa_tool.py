@@ -29,7 +29,7 @@ from typing import Any, Iterable
 from urllib.parse import urlsplit
 
 TOOL_NAME = "catalogue_presentation_release_qa_tool"
-TOOL_VERSION = "1.2.0"
+TOOL_VERSION = "1.2.1"
 SCHEMA_VERSION = 1
 EXACT_ORIGIN = "https://frpdepots.com"
 ALLOWED_HOST = "frpdepots.com"
@@ -42,7 +42,7 @@ COMMON = ROOT / "Dado" / "Tools" / "common"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
 PLUGINS_URL = f"{EXACT_ORIGIN}/wp-admin/plugins.php"
 PLUGIN_FILE = "frpdepot-automatic-catalogue-presentation/frpdepot-automatic-catalogue-presentation.php"
-PLUGIN_VERSION = "1.2.0"
+PLUGIN_VERSION = "1.2.1"
 PLUGIN_ROW_SELECTOR = f'tr[data-plugin="{PLUGIN_FILE}"]:not(.plugin-update-tr)'
 PLUGIN_UPDATE_SELECTOR = f'tr.plugin-update-tr[data-plugin="{PLUGIN_FILE}"]'
 ACTIVATE_SELECTOR = ".row-actions .activate a"

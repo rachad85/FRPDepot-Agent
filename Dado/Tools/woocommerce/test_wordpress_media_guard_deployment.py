@@ -129,6 +129,16 @@ def fixed_row(active: bool, version: str = tool.PLUGIN_VERSION):
 
 
 class ArtifactTests(unittest.TestCase):
+    def test_release_contract_is_exact_103_to_105(self):
+        self.assertEqual(tool.WITHDRAWN_PLUGIN_VERSION, "1.0.3")
+        self.assertEqual(tool.PLUGIN_VERSION, "1.0.5")
+        self.assertEqual(tool.TOOL_VERSION, "1.5.2")
+        self.assertEqual(tool.SCHEMA_VERSION, 9)
+        self.assertEqual(tool.ARTIFACT_PATH.name, "frpdepot-media-mutation-guard-1.0.5.zip")
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("v1.0.3-to-v1.0.4 update", source)
+        self.assertNotIn("exact v1.0.4 six-view Open Manway update", source)
+
     def test_pinned_artifact_is_exact_and_reproducible(self):
         value = tool.validate_artifact()
         self.assertEqual(value["sha256"], tool.ARTIFACT_SHA256)
@@ -142,6 +152,33 @@ class ArtifactTests(unittest.TestCase):
         }))
         with self.assertRaises(SystemExit):
             tool.parser().parse_args(["stage", "--action", "replace"])
+
+    def test_other_plugin_version_and_action_targets_are_refused(self):
+        valid = (
+            f"{tool.PLUGINS_URL}?action=activate&plugin="
+            "frpdepot-media-mutation-guard%2Ffrpdepot-media-mutation-guard.php"
+            "&plugin_status=all&paged=1&s=&_wpnonce=abcDEF1234"
+        )
+        tool.assert_state_action_url(valid, "activate")
+        with self.assertRaises(tool.DeploymentError):
+            tool.assert_state_action_url(
+                valid.replace(
+                    "frpdepot-media-mutation-guard%2Ffrpdepot-media-mutation-guard.php",
+                    "akismet%2Fakismet.php",
+                ),
+                "activate",
+            )
+        for version in ("1.0.1", "1.0.2.1", "1.0.4", "1.0.5"):
+            with self.subTest(version=version), self.assertRaises(tool.DeploymentError):
+                tool.validate_before(
+                    "replace_active", tool.project_row(True, True, version, False)
+                )
+        with self.assertRaises(tool.DeploymentError):
+            tool.validate_before(
+                "delete", tool.project_row(True, True, tool.PLUGIN_VERSION, False)
+            )
+        with self.assertRaises(tool.DeploymentError):
+            tool.assert_state_action_url(valid, "delete")
 
     def test_wordpress_action_ids_pin_the_live_name_slug_not_the_directory_slug(self):
         self.assertEqual(tool.ACTION_ID_SLUG, "frp-depot-media-mutation-guard")
@@ -213,6 +250,11 @@ class ProjectionTests(unittest.TestCase):
         with self.assertRaises(tool.DeploymentError):
             tool.validate_before("replace_active", tool.project_row(
                 True, False, tool.WITHDRAWN_PLUGIN_VERSION, False))
+        with self.assertRaises(tool.DeploymentError):
+            tool.validate_before("replace_active", tool.project_row(
+                True, True, tool.WITHDRAWN_PLUGIN_VERSION, True))
+        with self.assertRaises(tool.DeploymentError):
+            tool.validate_before("replace_active", tool.project_row(False, None, "", False))
 
     def test_guard_health_is_exact_and_js_clean(self):
         page = FakePage(fixed_row(True))
@@ -234,6 +276,21 @@ class ProjectionTests(unittest.TestCase):
         page.goto = goto_and_error
         with self.assertRaises(tool.IndeterminateError):
             tool.AdminPage(page).verify_guard_health()
+
+    def test_replacement_source_health_is_exact_103_and_inactive_state(self):
+        page = FakePage(fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION))
+        page.guard_version = f"Version {tool.WITHDRAWN_PLUGIN_VERSION}"
+        page.guard_status = "Guard inactive"
+        proof = tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
+        self.assertEqual(proof, {
+            "url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
+            "version": tool.WITHDRAWN_PLUGIN_VERSION,
+            "guard_active": False,
+            "javascript_errors": 0,
+        })
+        page.guard_status = "Guard active"
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
 
     def test_network_admin_and_other_admin_routes_are_refused(self):
         tool.assert_admin_url(tool.PLUGINS_URL, mode="plugins")
@@ -314,6 +371,35 @@ class PlanTests(unittest.TestCase):
         self.assertNotEqual(first_path, second_path)
         self.assertNotEqual(first["sha256"], second["sha256"])
         self.assertEqual(first["operation_sha256"], second["operation_sha256"])
+
+    def test_literal_replacement_release_is_exact_v103_to_v105(self):
+        self.assertEqual(tool.WITHDRAWN_PLUGIN_VERSION, "1.0.3")
+        self.assertEqual(tool.PLUGIN_VERSION, "1.0.5")
+        self.assertEqual(tool.TOOL_VERSION, "1.5.2")
+        self.assertEqual(tool.SCHEMA_VERSION, 9)
+        self.assertEqual(tool.ARTIFACT_SHA256,
+                         "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74")
+        self.assertEqual(tool.ARTIFACT_BYTES, 21035)
+
+    def test_obsolete_v104_plan_hash_refuses_before_artifact_registry_or_browser(self):
+        path, staged = tool.stage(
+            "replace_active",
+            tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
+            self.artifact,
+        )
+        old_hash = next(iter(tool.SUPERSEDED_PLAN_SHA256))
+        forged = dict(staged)
+        forged["sha256"] = old_hash
+        created = tool.datetime.fromisoformat(forged["created_utc"])
+        old_path = tool.plan_path(created, forged["action"], old_hash)
+        old_path.write_text(json.dumps(forged), encoding="ascii")
+        with mock.patch.object(tool, "digest_for", return_value=old_hash), \
+                mock.patch.object(tool, "validate_artifact") as artifact, \
+                mock.patch.object(tool, "admin_session") as browser:
+            with self.assertRaisesRegex(tool.DeploymentError, "permanently superseded"):
+                tool.load_plan(str(old_path))
+        artifact.assert_not_called()
+        browser.assert_not_called()
 
     def test_each_action_discloses_its_exact_write_sequence(self):
         cases = {

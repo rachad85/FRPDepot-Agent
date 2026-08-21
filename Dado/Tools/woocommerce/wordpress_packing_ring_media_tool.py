@@ -268,9 +268,10 @@ LOGIN_FORM_SELECTOR = "form#loginform"
 LIST_ROW_SELECTOR = "#the-list tr"
 LIST_COUNT_SELECTOR = ".displaying-num"
 # The parent column can contain a second post.php?...action=edit link. Reading
-# every link makes an attached media row look like two attachments. The title
-# cell is WordPress's own attachment-identity surface.
-ROW_LINK_SELECTOR = "td.title a[href]"
+# every link makes an attached media row look like two attachments. WordPress's
+# current media-list primary identity column is `column-title`; use that exact
+# column rather than the retired bare `title` class observed before 2026-08-20.
+ROW_LINK_SELECTOR = "td.column-title a[href]"
 ROW_FILENAME_SELECTOR = "p.filename"
 EMPTY_TABLE_CELL_SELECTOR = "td.colspanchange"
 ATTACHMENT_URL_SELECTOR = "input#attachment_url"

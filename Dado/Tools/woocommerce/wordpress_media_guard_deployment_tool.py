@@ -5,7 +5,7 @@ Closed scope:
 - install exactly the pinned plugin ZIP, inactive, only when absent;
 - activate exactly that installed version;
 - deactivate exactly that installed version as the fixed emergency path.
-- replace the exact active v1.0.1 guard once with the exact v1.0.2 pipe-gallery manifest update;
+- replace the exact active, healthy, inactive-state v1.0.3 guard once with exact v1.0.5;
 
 Every action uses an immutable authenticated 24-hour plan and a later exact
 APPROVED. There is no arbitrary replace, delete, arbitrary plugin, generic browser,
@@ -38,8 +38,8 @@ if str(ROOT) not in sys.path:
 from Dado.Tools.common.ui_lane_lock import ui_browser_lock
 
 TOOL_NAME = "wordpress_media_guard_deployment_tool"
-TOOL_VERSION = "1.2.0"
-SCHEMA_VERSION = 3
+TOOL_VERSION = "1.5.2"
+SCHEMA_VERSION = 9
 APPROVAL_WORD = "APPROVED"
 ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
@@ -49,20 +49,31 @@ GUARD_URL = f"{ORIGIN}/wp-admin/tools.php?page=frpd-media-mutation-guard"
 PLUGIN_NAME = "FRP Depot Media Mutation Guard"
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"
-WITHDRAWN_PLUGIN_VERSION = "1.0.1"
-PLUGIN_VERSION = "1.0.2"
-ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.2.zip"
-ARTIFACT_SHA256 = "e2808773c4c6d3ba062a5664eb46021afde3066430afe37b9d0933b5f9bdb047"
-ARTIFACT_BYTES = 17257
+WITHDRAWN_PLUGIN_VERSION = "1.0.3"
+PLUGIN_VERSION = "1.0.5"
+SUPERSEDED_PLAN_SHA256 = frozenset({
+    "31e5fd889d25c3dc9ee1dbb1f0f8e74e527808b5b24cb92e12aebddaaafa76ac",
+})
+SUPERSEDED_OPERATION_SHA256 = frozenset({
+    "3ed56d4c3db984f468b0fee0539c358a598a3c93361f491b0e9b961058490c3c",
+})
+ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.5.zip"
+ARTIFACT_SHA256 = "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74"
+ARTIFACT_BYTES = 21035
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/approved-media.json",
     f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php",
     f"{PLUGIN_SLUG}/readme.txt",
 )
 ARTIFACT_MEMBER_SHA256 = {
-    f"{PLUGIN_SLUG}/approved-media.json": "3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc",
-    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "ba728a27cb439e62be89fa7a4cb2619b34942498621bbd1f0f9f15c896bd93e0",
-    f"{PLUGIN_SLUG}/readme.txt": "5ee1a2fdcf62310c4edbaabc141693f4b84846993c47bebdc8e4744341b14c3d",
+    f"{PLUGIN_SLUG}/approved-media.json": "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565",
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "7d09ad8eb45e552e7dfb31ecf50b800ea50ea1c8074a8e1a899e375f47a2f887",
+    f"{PLUGIN_SLUG}/readme.txt": "4f7e96d3962458ca00cdc61db87c17ef6fb6bec31b78d59b5e0462a0a9c1ea6a",
+}
+ARTIFACT_MEMBER_BYTES = {
+    f"{PLUGIN_SLUG}/approved-media.json": 4475,
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": 86320,
+    f"{PLUGIN_SLUG}/readme.txt": 4429,
 }
 ACTIONS = frozenset({"install_inactive", "replace_active", "activate", "deactivate"})
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_media_guard_deployment_plans"
@@ -171,14 +182,15 @@ def validate_artifact_payload() -> tuple[dict[str, Any], bytes]:
     if members != tuple(sorted(ARTIFACT_MEMBERS)):
         raise DeploymentError("REFUSED: fixed plugin artifact member set changed.")
     member_hashes = {name: hashlib.sha256(payloads[name]).hexdigest() for name in members}
-    if member_hashes != ARTIFACT_MEMBER_SHA256:
+    member_bytes = {name: len(payloads[name]) for name in members}
+    if member_hashes != ARTIFACT_MEMBER_SHA256 or member_bytes != ARTIFACT_MEMBER_BYTES:
         raise DeploymentError("REFUSED: fixed plugin artifact member bytes changed.")
     php = payloads[f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"].decode("utf-8", errors="strict")
     if f"Plugin Name: {PLUGIN_NAME}" not in php or f"Version: {PLUGIN_VERSION}" not in php:
         raise DeploymentError("REFUSED: fixed plugin artifact identity/version changed.")
     artifact = {
         "path": str(path), "sha256": digest, "bytes": len(raw), "version": PLUGIN_VERSION,
-        "members": list(members), "member_sha256": member_hashes,
+        "members": list(members), "member_sha256": member_hashes, "member_bytes": member_bytes,
     }
     return artifact, raw
 
@@ -408,7 +420,7 @@ class AdminPage:
         if len(artifact_raw) != ARTIFACT_BYTES or hashlib.sha256(artifact_raw).hexdigest() != ARTIFACT_SHA256:
             raise DeploymentError("REFUSED: validated in-memory plugin artifact changed.")
         chooser.set_input_files({
-            "name": f"{PLUGIN_SLUG}-1.0.1.zip", "mimeType": "application/zip",
+            "name": f"{PLUGIN_SLUG}-{PLUGIN_VERSION}.zip", "mimeType": "application/zip",
             "buffer": artifact_raw,
         }, timeout=ACTION_TIMEOUT_MS)
         submit.click(timeout=ACTION_TIMEOUT_MS)
@@ -485,7 +497,7 @@ class AdminPage:
                 self.page.wait_for_timeout(POST_WRITE_READ_DELAY_MS)
         raise IndeterminateError("Fixed plugin did not read back in the exact expected state.")
 
-    def verify_guard_health(self, expected_version: str = PLUGIN_VERSION) -> dict[str, Any]:
+    def observe_guard_health(self) -> dict[str, Any]:
         errors: list[str] = []
         def on_console(message: Any) -> None:
             if str(getattr(message, "type", "")) == "error":
@@ -498,8 +510,31 @@ class AdminPage:
         self.page.wait_for_timeout(500)
         version = str(self.page.locator("#frpd-mg-version").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
         status = str(self.page.locator("#frpd-mg-status").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
-        if errors or version != f"Version {expected_version}" or status != "Guard inactive":
-            raise IndeterminateError("Active media guard plugin health page is not exact and clean.")
+        return {
+            "version_text": version,
+            "status_text": status,
+            "javascript_error_count": len(errors),
+            "javascript_error_kinds": sorted(set(errors)),
+        }
+
+    def verify_guard_health(self, expected_version: str = PLUGIN_VERSION) -> dict[str, Any]:
+        observed = self.observe_guard_health()
+        version = observed["version_text"]
+        status = observed["status_text"]
+        if (observed["javascript_error_count"]
+                or version != f"Version {expected_version}"
+                or status != "Guard inactive"):
+            diagnostic = {
+                "expected_version": expected_version,
+                "version_exact": version == f"Version {expected_version}",
+                "guard_inactive_exact": status == "Guard inactive",
+                "javascript_error_count": observed["javascript_error_count"],
+                "javascript_error_kinds": observed["javascript_error_kinds"],
+            }
+            raise IndeterminateError(
+                "Active media guard plugin health page is not exact and clean: "
+                + json.dumps(diagnostic, sort_keys=True, separators=(",", ":"))
+            )
         return {"url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
                 "version": expected_version, "guard_active": False, "javascript_errors": 0}
 
@@ -604,7 +639,9 @@ def operation_sha(action: str, artifact: dict[str, Any], before: dict[str, Any])
     return digest_for({
         "schema_version": SCHEMA_VERSION, "tool": TOOL_NAME, "action": action,
         "plugin_file": PLUGIN_FILE, "artifact_sha256": artifact["sha256"],
-        "artifact_member_sha256": artifact["member_sha256"], "before": before,
+        "artifact_bytes": artifact["bytes"],
+        "artifact_member_sha256": artifact["member_sha256"],
+        "artifact_member_bytes": artifact["member_bytes"], "before": before,
         "after_expected": expected_after(action),
     })
 
@@ -626,6 +663,8 @@ def result_path(operation: str) -> Path:
 
 
 def validate_before(action: str, before: dict[str, Any]) -> None:
+    if action not in ACTIONS:
+        raise DeploymentError("REFUSED: action is not fixed.")
     if set(before) != ROW_KEYS:
         raise DeploymentError("REFUSED: live plugin projection is invalid.")
     if action == "install_inactive" and before != project_row(False, None, "", False):
@@ -637,7 +676,8 @@ def validate_before(action: str, before: dict[str, Any]) -> None:
     if action == "replace_active" and before != project_row(
             True, True, WITHDRAWN_PLUGIN_VERSION, False):
         raise DeploymentError(
-            "REFUSED: replacement requires exact active v1.0.1 without an update marker."
+            f"REFUSED: replacement requires exact active v{WITHDRAWN_PLUGIN_VERSION} "
+            "without an update marker."
         )
 
 
@@ -658,8 +698,8 @@ def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tupl
             "activate": "one fixed plugin activation click; its hook creates and verifies one fixed InnoDB guard-state table",
             "deactivate": "one fixed plugin deactivation click",
         }[action]],
-        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.1 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it does not defend against direct database/filesystem mutation, malicious PHP, or a privileged administrator replacing or disabling it. A replacement plan authorizes the upload only; an exact overwrite control is discovered after that write and absence leaves the plan indeterminate with the temporary upload possibly present.",
-        "forbidden": ["replace outside exact v1.0.1-to-v1.0.2 update", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
+        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.3 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it does not defend against direct database/filesystem mutation, malicious PHP, or a privileged administrator replacing or disabling it. A replacement plan authorizes the upload only; an exact overwrite control is discovered after that write and absence leaves the plan indeterminate with the temporary upload possibly present.",
+        "forbidden": ["replace outside exact active healthy inactive-state v1.0.3-to-v1.0.5 update", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
                       "generic browser", "setting", "content", "user", "media", "product", "order",
                       "customer", "payment", "email", "Zoho", "Drive"],
     }
@@ -698,6 +738,10 @@ def load_plan(raw_path: str) -> tuple[Path, dict[str, Any]]:
     core = dict(plan); saved = str(core.pop("sha256", ""))
     if not secrets.compare_digest(saved, digest_for(core)):
         raise DeploymentError("REFUSED: plan hash failed.")
+    if saved in SUPERSEDED_PLAN_SHA256:
+        raise DeploymentError(
+            "REFUSED: obsolete v1.0.4 deployment plan is permanently superseded and cannot commit."
+        )
     if (plan["schema_version"] != SCHEMA_VERSION or plan["tool"] != TOOL_NAME
             or plan["tool_version"] != TOOL_VERSION or plan["origin"] != ORIGIN
             or plan["action"] not in ACTIONS or plan["plugin_name"] != PLUGIN_NAME
@@ -761,11 +805,31 @@ def command_stage(args: argparse.Namespace) -> None:
     })
 
 
+def command_diagnose_health(_args: argparse.Namespace) -> None:
+    artifact = validate_artifact()
+    with admin_session("WordPress media guard read-only health diagnosis") as admin:
+        admin.goto_plugins()
+        before = admin.read_row(allow_absent=True)
+        observed = admin.observe_guard_health()
+    print_json({
+        "status": "READ_ONLY_DIAGNOSTIC",
+        "plugin_row": before,
+        "health": observed,
+        "artifact": artifact,
+        "website_writes": 0,
+        "emails": 0,
+    })
+
+
 def command_commit(args: argparse.Namespace) -> None:
     require_approval(args.approval)
     path, plan = load_plan(args.plan)
     action = plan["action"]
     operation = plan["operation_sha256"]
+    if operation in SUPERSEDED_OPERATION_SHA256:
+        raise DeploymentError(
+            "REFUSED: obsolete v1.0.4 stable operation is permanently superseded and cannot commit."
+        )
     if attempt_path(operation).exists() or result_path(operation).exists():
         raise DeploymentError("REFUSED: stable operation is permanently replay-locked.")
     artifact_raw: bytes | None = None
@@ -856,6 +920,8 @@ def parser() -> argparse.ArgumentParser:
     commit_parser.add_argument("--plan", required=True)
     commit_parser.add_argument("--approval", required=True)
     commit_parser.set_defaults(func=command_commit)
+    diagnose_parser = sub.add_parser("diagnose-health")
+    diagnose_parser.set_defaults(func=command_diagnose_health)
     return result
 
 

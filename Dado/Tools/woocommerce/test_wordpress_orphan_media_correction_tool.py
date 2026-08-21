@@ -5,14 +5,15 @@ import ast
 import contextlib
 from datetime import timedelta
 import importlib.util
+import io
 import json
 from pathlib import Path
 import tempfile
 import unittest
 from unittest import mock
 
-MODULE_PATH = Path(__file__).with_name("wordpress_orphan_media_cleanup_tool.py")
-SPEC = importlib.util.spec_from_file_location("wordpress_orphan_media_cleanup_tool_under_test", MODULE_PATH)
+MODULE_PATH = Path(__file__).with_name("wordpress_orphan_media_correction_tool.py")
+SPEC = importlib.util.spec_from_file_location("wordpress_orphan_media_correction_tool_under_test", MODULE_PATH)
 assert SPEC and SPEC.loader
 m = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(m)
@@ -38,9 +39,9 @@ class FixedContractTests(unittest.TestCase):
         self.assertTrue(all(row["source_url"].endswith("-1.png")
                             for row in m.PROTECTED_SURVIVOR_GALLERY))
 
-    def test_v107_guard_contract_has_no_old_survivor_fixed_matches(self):
-        self.assertEqual(m.TOOL_VERSION, "1.0.7")
-        self.assertEqual(m.SCHEMA_VERSION, 3)
+    def test_successor_guard_contract_has_no_old_survivor_fixed_matches(self):
+        self.assertEqual(m.TOOL_VERSION, "1.0.0")
+        self.assertEqual(m.SCHEMA_VERSION, 1)
         manifest = json.loads(
             m.family_media.GUARD_RUNTIME_MANIFEST_PATH.read_text(encoding="utf-8")
         )
@@ -65,109 +66,37 @@ class FixedContractTests(unittest.TestCase):
             "877ff133b0e4fbf560b3be5877b755c72e5c33dc217c7e4affb23c1a314e2a26",
         )
         evidence = m.validate_fixed_contract()
-        self.assertEqual(evidence["result_file_sha256"], m.SOURCE_RESULT_SHA256)
-        self.assertEqual(evidence["status"], "INDETERMINATE_NO_RETRY")
-        self.assertFalse(evidence["product_may_have_changed"])
-        self.assertIsNone(evidence["gallery_payload"])
-        self.assertFalse(evidence["delete_performed"])
+        self.assertEqual(evidence["source_result_sha256"], m.SOURCE_RESULT_SHA256)
+        self.assertEqual(evidence["source_status"], "INDETERMINATE_NO_RETRY")
+        self.assertFalse(evidence["source_product_may_have_changed"])
+        self.assertIsNone(evidence["source_gallery_payload"])
+        self.assertFalse(evidence["source_delete_performed"])
+        self.assertEqual(evidence["predecessor_operation_sha256"],
+                         m.PREDECESSOR_OPERATION_SHA256)
+        self.assertEqual(evidence["predecessor_event_sha256"],
+                         m.PREDECESSOR_EVENT_SHA256)
 
-    @staticmethod
-    def _rest_media_response(attachment_id=5521):
-        spec = m.target_spec(attachment_id)
-        base = spec["source_url"].removesuffix(".png")
-        return {
-            "id": attachment_id,
-            "status": "inherit",
-            "type": "attachment",
-            "source_url": spec["source_url"],
-            "media_type": "image",
-            "mime_type": "image/png",
-            "post": None,
-            "media_details": {
-                "file": f"2026/08/{spec['filename']}",
-                "sizes": {
-                    "thumbnail": {"source_url": f"{base}-150x150.png", "width": 150, "height": 150},
-                    "medium": {"source_url": f"{base}-300x300.png", "width": 300, "height": 300},
-                },
-            },
-        }
+    def test_predecessor_state_must_be_exactly_one_permanent_event(self):
+        raw = m.PREDECESSOR_EVENT.read_bytes()
+        with tempfile.TemporaryDirectory() as temporary:
+            state = Path(temporary) / "old-state"
+            event = (state / "events" / m.PREDECESSOR_OPERATION_SHA256
+                     / "01-5521-attempted.json")
+            event.parent.mkdir(parents=True)
+            event.write_bytes(raw)
+            with mock.patch.object(m, "PREDECESSOR_STATE", state), \
+                    mock.patch.object(m, "PREDECESSOR_EVENT", event):
+                m.validate_fixed_contract()
+                extra = state / "attempts" / f"{m.PREDECESSOR_OPERATION_SHA256}.attempt.json"
+                extra.parent.mkdir(parents=True)
+                extra.write_text("{}", encoding="utf-8")
+                with self.assertRaises(m.CleanupError):
+                    m.validate_fixed_contract()
 
-    def test_rest_media_projection_is_exact_and_deterministic(self):
-        response = self._rest_media_response()
-        projection = m.normalize_rest_media_projection(5521, response)
-        self.assertEqual(projection["id"], 5521)
-        self.assertEqual(projection["filename"], m.target_spec(5521)["filename"])
-        self.assertEqual(projection["mime"], "image/png")
-        self.assertEqual(projection["type"], "image")
-        self.assertEqual(projection["subtype"], "png")
-        self.assertEqual(projection["uploaded_to"], 0)
-        self.assertEqual([row["name"] for row in projection["sizes"]], ["medium", "thumbnail"])
-
-    def test_rest_media_projection_rejects_identity_and_parent_drift(self):
-        mutations = {
-            "id": 5523,
-            "status": "private",
-            "type": "post",
-            "source_url": "https://frpdepots.com/wp-content/uploads/2026/08/other.png",
-            "media_type": "file",
-            "mime_type": "image/jpeg",
-            "post": 1397,
-        }
-        for key, value in mutations.items():
-            response = self._rest_media_response()
-            response[key] = value
-            with self.subTest(key=key), self.assertRaises(m.CleanupError):
-                m.normalize_rest_media_projection(5521, response)
-        response = self._rest_media_response()
-        response["media_details"]["file"] = "2026/08/other.png"
-        with self.assertRaises(m.CleanupError):
-            m.normalize_rest_media_projection(5521, response)
-
-    def test_rest_media_projection_rejects_incomplete_or_unsafe_sizes(self):
-        response = self._rest_media_response()
-        response["media_details"]["sizes"] = []
-        with self.assertRaises(m.CleanupError):
-            m.normalize_rest_media_projection(5521, response)
-        response = self._rest_media_response()
-        response["media_details"]["sizes"]["medium"]["width"] = True
-        with self.assertRaises(m.CleanupError):
-            m.normalize_rest_media_projection(5521, response)
-        response = self._rest_media_response()
-        response["media_details"]["sizes"]["medium"]["source_url"] = "https://example.com/x.png"
-        with self.assertRaises(Exception):
-            m.normalize_rest_media_projection(5521, response)
-
-    def test_media_projection_uses_only_authenticated_core_rest(self):
-        response = self._rest_media_response()
-
-        class Page:
-            script = ""
-            expected_id = None
-
-            def evaluate(self, script, expected_id):
-                self.script = script
-                self.expected_id = expected_id
-                return {"ok": True, "response": response}
-
-        page = Page()
-        admin = object.__new__(m.CleanupAdmin)
-        admin._page = page
-        projection = admin._media_model_projection(5521)
-        self.assertEqual(projection["id"], 5521)
-        self.assertEqual(page.expected_id, 5521)
-        self.assertIn("wp.apiFetch", page.script)
-        self.assertIn("/wp/v2/media/", page.script)
-        self.assertNotIn("wp.media", page.script)
-
-    def test_media_projection_refuses_unavailable_rest(self):
-        class Page:
-            def evaluate(self, _script, _expected_id):
-                return {"ok": False, "response": None}
-
-        admin = object.__new__(m.CleanupAdmin)
-        admin._page = Page()
-        with self.assertRaises(m.CleanupError):
-            admin._media_model_projection(5521)
+    def test_guard_identity_is_pinned_independently_of_imported_dependency(self):
+        with mock.patch.object(m.family_media, "GUARD_PLUGIN_VERSION", "1.0.6"), \
+                self.assertRaises(m.CleanupError):
+            m.validate_fixed_contract()
 
     def test_target_spec_rejects_every_other_id_and_non_int(self):
         for value in (0, 5522, 5528, "5521", True, None):
@@ -185,7 +114,7 @@ class FixedContractTests(unittest.TestCase):
         self.assertEqual(parser.parse_args(["stage"]).command, "stage")
         parsed = parser.parse_args(["commit", "--plan", "x", "--approval", "APPROVED"])
         self.assertEqual(parsed.command, "commit")
-        with self.assertRaises(SystemExit):
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
             parser.parse_args(["delete", "--id", "5521"])
 
     def test_source_has_no_generic_network_or_process_write_client(self):
@@ -200,6 +129,8 @@ class FixedContractTests(unittest.TestCase):
         self.assertNotIn("api_put", attrs)
         self.assertNotIn("api_post", attrs)
         self.assertNotIn("api_delete", attrs)
+        self.assertNotIn("fetch", attrs)
+        self.assertNotIn("upload_one", attrs)
 
     def test_docstring_discloses_non_atomic_no_retry(self):
         text = MODULE_PATH.read_text(encoding="utf-8")
@@ -212,6 +143,142 @@ class FixedContractTests(unittest.TestCase):
         self.assertFalse(hasattr(m.CleanupAdmin, "upload_one"))
         self.assertFalse(hasattr(m.CleanupAdmin, "complete_guard"))
         self.assertFalse(hasattr(m.CleanupAdmin, "acquire_prepared_guard"))
+
+    def test_correction_metadata_route_uses_only_attachment_edit_dom(self):
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        route = source.split("def _edit_dom_projection", 1)[1].split(
+            "    def delete_one", 1
+        )[0]
+        self.assertNotIn("wp.media", route)
+        self.assertNotIn("apiFetch", route)
+        self.assertNotIn("evaluate(", route)
+
+        admin = object.__new__(m.CleanupAdmin)
+        admin.read_attachment = mock.Mock(return_value={
+            "attachment_id": 5521,
+            "filename": m.TARGETS[0]["filename"],
+            "source_url": m.TARGETS[0]["source_url"],
+            "extension": ".png",
+            "filetype_matches_name": True,
+        })
+        admin._edit_identity = mock.Mock(return_value={
+            "post_id": "5521",
+            "post_type": "attachment",
+            "original_post_status": "inherit",
+            "post_parent": "0",
+        })
+        control = mock.Mock()
+        control.inner_text.return_value = "Delete Permanently"
+        admin._page = mock.Mock()
+        admin._page.url = "https://frpdepots.com/wp-admin/post.php?post=5521&action=edit"
+        admin._page.query_selector_all.return_value = [control]
+        admin._delete_control_exact = mock.Mock(return_value=True)
+        value = admin._edit_dom_projection(5521)
+        self.assertEqual(value["identity_route"], "canonical_attachment_edit_dom_only")
+        self.assertEqual(value["registered_urls"], [m.TARGETS[0]["source_url"]])
+        admin.read_attachment.assert_called_once_with(
+            5521, expected_basename=m.TARGETS[0]["filename"]
+        )
+
+    def test_edit_dom_projection_rejects_noncanonical_or_ambiguous_urls(self):
+        urls = [
+            "https://evil.example/wp-admin/post.php?post=5521&action=edit",
+            "https://frpdepots.com/wp-admin/post.php?post=5523&action=edit",
+            "https://frpdepots.com/wp-admin/post.php?post=5521&action=edit&extra=1",
+            "https://frpdepots.com/wp-admin/post.php?post=5521&post=5521&action=edit",
+            "https://frpdepots.com/wp-admin/post.php?post=5521&action=edit#fragment",
+            "https://frpdepots.com/wp-admin/edit.php?post=5521&action=edit",
+        ]
+        for url in urls:
+            admin = object.__new__(m.CleanupAdmin)
+            admin.read_attachment = mock.Mock(return_value={
+                "attachment_id": 5521,
+                "filename": m.TARGETS[0]["filename"],
+                "source_url": m.TARGETS[0]["source_url"],
+                "extension": ".png",
+                "filetype_matches_name": True,
+            })
+            admin._page = mock.Mock()
+            admin._page.url = url
+            with self.subTest(url=url), self.assertRaises(m.CleanupError):
+                admin._edit_dom_projection(5521)
+
+    def test_edit_identity_requires_one_exact_form_and_unattached_parent(self):
+        selectors = {
+            "form#post": [mock.Mock()],
+            'input#post_ID[name="post_ID"][type="hidden"]': [mock.Mock()],
+            'input#post_type[name="post_type"][type="hidden"]': [mock.Mock()],
+            'input#original_post_status[name="original_post_status"][type="hidden"]': [mock.Mock()],
+            'input#post_parent[name="post_parent"][type="hidden"]': [mock.Mock()],
+        }
+        values = ["5521", "attachment", "inherit", "0"]
+        for elements, value in zip(list(selectors.values())[1:], values):
+            elements[0].input_value.return_value = value
+        admin = object.__new__(m.CleanupAdmin)
+        admin._page = mock.Mock()
+        admin._page.query_selector_all.side_effect = lambda selector: selectors.get(selector, [])
+        self.assertEqual(admin._edit_identity(5521)["post_parent"], "0")
+        selectors['input#post_parent[name="post_parent"][type="hidden"]'][0].input_value.return_value = "1397"
+        with self.assertRaises(m.CleanupError):
+            admin._edit_identity(5521)
+        selectors["form#post"] = [mock.Mock(), mock.Mock()]
+        with self.assertRaises(m.CleanupError):
+            admin._edit_identity(5521)
+
+    def test_delete_adapter_records_event_before_click_and_cleans_listener(self):
+        admin = object.__new__(m.CleanupAdmin)
+        state = valid_before_state()
+        order = []
+        admin._navigate_edit = mock.Mock()
+        admin._assert_edit_route = mock.Mock()
+        admin.read_target = mock.Mock(return_value=state["attachments"][0])
+        admin._delete_control_exact = mock.Mock(return_value=True)
+        control = mock.Mock()
+        control.inner_text.return_value = "Delete Permanently"
+        control.click.side_effect = lambda **_kwargs: order.append("click")
+        admin._page = mock.Mock()
+        admin._page.query_selector_all.return_value = [control]
+        admin._page.url = "https://frpdepots.com/wp-admin/upload.php?deleted=1"
+        admin._page.is_visible.return_value = False
+
+        @contextlib.contextmanager
+        def navigation():
+            order.append("navigation_armed")
+            yield
+            order.append("navigation_complete")
+
+        admin._page.expect_navigation.side_effect = lambda **_kwargs: navigation()
+        result = admin.delete_one(
+            5521, lambda: order.append("durable_event"), eligibility_state=state,
+            expected_present_ids=m.TARGET_IDS,
+        )
+        self.assertLess(order.index("durable_event"), order.index("navigation_armed"))
+        self.assertLess(order.index("navigation_armed"), order.index("click"))
+        self.assertEqual(result["wordpress_deleted_marker"], 1)
+        admin._page.remove_listener.assert_called_once()
+
+    def test_delete_adapter_removes_dialog_listener_when_event_write_fails(self):
+        admin = object.__new__(m.CleanupAdmin)
+        state = valid_before_state()
+        admin._navigate_edit = mock.Mock()
+        admin._assert_edit_route = mock.Mock()
+        admin.read_target = mock.Mock(return_value=state["attachments"][0])
+        admin._delete_control_exact = mock.Mock(return_value=True)
+        control = mock.Mock()
+        control.inner_text.return_value = "Delete Permanently"
+        admin._page = mock.Mock()
+        admin._page.query_selector_all.return_value = [control]
+
+        def fail_event():
+            raise OSError("disk full")
+
+        with self.assertRaises(OSError):
+            admin.delete_one(
+                5521, fail_event, eligibility_state=state,
+                expected_present_ids=m.TARGET_IDS,
+            )
+        control.click.assert_not_called()
+        admin._page.remove_listener.assert_called_once()
 
     def test_sanitized_link_shape_identifies_absolute_and_root_relative_edit_links(self):
         absolute = (
@@ -319,6 +386,21 @@ class FixedContractTests(unittest.TestCase):
             "assert_landed",
             "read_proof",
         ])
+
+
+def product_fixture(product_id, images, *, variations=None, **overrides):
+    value = {
+        "id": product_id,
+        "status": "publish",
+        "images": images,
+        "variations": list(variations or []),
+        "description": "",
+        "short_description": "",
+        "downloads": [],
+        "meta_data": [],
+    }
+    value.update(overrides)
+    return value
 
 
 class ProjectionTests(unittest.TestCase):
@@ -443,11 +525,11 @@ class ProjectionTests(unittest.TestCase):
 
     def test_product_projection_accepts_no_references(self):
         products = [
-            {"id": 1455, "status": "publish", "images": [{"id": 100}, {"id": 101}]},
-            {"id": 1397, "status": "publish", "images": [
+            product_fixture(1455, [{"id": 100}, {"id": 101}]),
+            product_fixture(1397, [
                 {"id": row["attachment_id"], "src": row["source_url"]}
                 for row in m.PROTECTED_SURVIVOR_GALLERY
-            ]},
+            ]),
         ]
         with mock.patch.object(m, "strict_get_all", return_value=products):
             value = m.product_projection({"fake": True})
@@ -457,18 +539,48 @@ class ProjectionTests(unittest.TestCase):
                          list(m.PROTECTED_SURVIVOR_GALLERY))
 
     def test_product_projection_rejects_survivor_gallery_drift(self):
-        products = [{"id": 1397, "status": "publish", "images": [
+        products = [product_fixture(1397, [
             {"id": row["attachment_id"], "src": row["source_url"]}
             for row in m.PROTECTED_SURVIVOR_GALLERY[:-1]
-        ]}]
+        ])]
         with mock.patch.object(m, "strict_get_all", return_value=products), \
                 self.assertRaises(m.CleanupError):
             m.product_projection({"fake": True})
 
     def test_product_projection_rejects_any_target_reference(self):
-        products = [{"id": 1397, "status": "publish", "images": [{"id": 5521}]}]
+        products = [product_fixture(1397, [{"id": 5521}])]
         with mock.patch.object(m, "strict_get_all", return_value=products), self.assertRaises(m.CleanupError):
             m.product_projection({"fake": True})
+
+    def test_product_projection_rejects_omitted_fields_and_numeric_meta_references(self):
+        gallery = [
+            {"id": row["attachment_id"], "src": row["source_url"]}
+            for row in m.PROTECTED_SURVIVOR_GALLERY
+        ]
+        missing = product_fixture(1397, gallery)
+        missing.pop("meta_data")
+        numeric = product_fixture(1397, gallery, meta_data=[{"key": "old", "value": "5521"}])
+        for products in ([missing], [numeric]):
+            with self.subTest(products=products), \
+                    mock.patch.object(m, "strict_get_all", return_value=products), \
+                    self.assertRaises(m.CleanupError):
+                m.product_projection({"fake": True})
+
+    def test_strict_paginator_refuses_every_unallowlisted_route_or_parameter(self):
+        fields = "id,status,images,variations,description,short_description,downloads,meta_data"
+        cases = [
+            ("/orders", {"_fields": fields}, m.media_base.MAX_LIBRARY_ROWS),
+            ("/products/0/variations", {"_fields": "id,image,description,downloads,meta_data"},
+             m.media_base.MAX_LIBRARY_ROWS),
+            ("/products", {"_fields": "id"}, m.media_base.MAX_LIBRARY_ROWS),
+            ("/products", {"_fields": fields}, 10),
+        ]
+        for endpoint, params, maximum in cases:
+            with self.subTest(endpoint=endpoint, params=params), \
+                    mock.patch.object(m.wc, "api_get") as network, \
+                    self.assertRaises(m.CleanupError):
+                m.strict_get_all(endpoint, params, {"fake": True}, max_items=maximum)
+            network.assert_not_called()
 
     def test_strict_paginator_reconciles_headers_and_rows(self):
         pages = [
@@ -476,7 +588,11 @@ class ProjectionTests(unittest.TestCase):
             ([{"id": 3}], {"x-wp-total": "3", "x-wp-totalpages": "2"}),
         ]
         with mock.patch.object(m.wc, "api_get", side_effect=pages):
-            rows = m.strict_get_all("/products", {}, {"fake": True})
+            rows = m.strict_get_all(
+                "/products",
+                {"_fields": "id,status,images,variations,description,short_description,downloads,meta_data"},
+                {"fake": True}, max_items=m.media_base.MAX_LIBRARY_ROWS,
+            )
         self.assertEqual([row["id"] for row in rows], [1, 2, 3])
 
     def test_strict_paginator_rejects_malformed_or_drifting_totals(self):
@@ -489,12 +605,122 @@ class ProjectionTests(unittest.TestCase):
             with self.subTest(responses=responses), \
                     mock.patch.object(m.wc, "api_get", side_effect=responses), \
                     self.assertRaises(m.CleanupError):
-                m.strict_get_all("/products", {}, {"fake": True})
+                m.strict_get_all(
+                    "/products",
+                    {"_fields": "id,status,images,variations,description,short_description,downloads,meta_data"},
+                    {"fake": True}, max_items=m.media_base.MAX_LIBRARY_ROWS,
+                )
+
+def valid_before_state():
+    survivor = [{"id": 100, "filename": "survivor.png", "stem": "survivor"}]
+    library_rows = survivor + [
+        {"id": row["attachment_id"], "filename": row["filename"], "stem": "fixed"}
+        for row in m.TARGETS
+    ]
+    library = m.library_projection({
+        "rows": library_rows,
+        "total": len(library_rows),
+        "complete": True,
+        "pages": 1,
+        "unidentified": 0,
+    })
+    attachments = []
+    for row in m.TARGETS:
+        attachment_id = row["attachment_id"]
+        attachments.append({
+            "attachment_id": attachment_id,
+            "filename": row["filename"],
+            "source_url": row["source_url"],
+            "edit_identity": {
+                "post_id": str(attachment_id),
+                "post_type": "attachment",
+                "original_post_status": "inherit",
+                "post_parent": "0",
+            },
+            "identity_route": "canonical_attachment_edit_dom_only",
+            "source_provenance": "immutable_locked_upload_result",
+            "registered_urls": [row["source_url"]],
+            "delete_control_exact": True,
+        })
+    products = {
+        "products_checked": 10,
+        "variations_checked": 2,
+        "product_and_variation_galleries_sha256": "c" * 64,
+        "target_references": [],
+        "protected_survivor_gallery": list(m.PROTECTED_SURVIVOR_GALLERY),
+        "strict_totals_proven": True,
+    }
+    public_files = [
+        {"url": url, "state": "not_found", "http_status": 404}
+        for url in sorted(row["source_url"] for row in m.TARGETS)
+    ]
+    state = {
+        "guard": m.guard_projection(
+            ProjectionTests.guard(), expected_failure_ids=m.TARGET_IDS
+        ),
+        "library": library,
+        "attachments": attachments,
+        "products": products,
+        "public_files": public_files,
+    }
+    return m.assert_correction_eligible(state, m.TARGET_IDS)
+
+
+class EligibilityTests(unittest.TestCase):
+    def test_exact_fixed_state_passes(self):
+        state = valid_before_state()
+        self.assertIs(m.assert_correction_eligible(state, m.TARGET_IDS), state)
+
+    def test_every_material_boundary_fails_closed(self):
+        mutations = [
+            lambda state: state["guard"].__setitem__("complete", True),
+            lambda state: state["guard"]["failures"].__setitem__(
+                0, {"attachment_id": 5521, "reason": "wrong"}
+            ),
+            lambda state: state["library"]["target_rows"].pop(),
+            lambda state: state["attachments"][0].__setitem__(
+                "identity_route", "wp.media"
+            ),
+            lambda state: state["attachments"][0]["edit_identity"].__setitem__(
+                "post_id", "9999"
+            ),
+            lambda state: state["products"]["target_references"].append({"id": 5521}),
+            lambda state: state["products"].__setitem__(
+                "protected_survivor_gallery", []
+            ),
+            lambda state: state["public_files"][0].__setitem__("state", "present"),
+        ]
+        for mutate in mutations:
+            state = valid_before_state()
+            mutate(state)
+            with self.subTest(mutate=mutate), self.assertRaises(m.CleanupError):
+                m.assert_correction_eligible(state, m.TARGET_IDS)
+
+    def test_non_suffix_target_state_refuses(self):
+        state = valid_before_state()
+        with self.assertRaises(m.CleanupError):
+            m.assert_correction_eligible(state, (5521, 5525))
+
+    def test_stage_plan_cannot_bypass_eligibility(self):
+        source = m.validate_fixed_contract()
+        state = valid_before_state()
+        state["products"]["strict_totals_proven"] = False
+        with self.assertRaises(m.CleanupError):
+            m.stage_plan(source, state)
+
+    def test_predecessor_event_hash_is_mandatory(self):
+        with tempfile.TemporaryDirectory() as folder:
+            bad = Path(folder) / "attempt.json"
+            bad.write_text("{}", encoding="ascii")
+            with mock.patch.object(m, "PREDECESSOR_EVENT", bad), \
+                    self.assertRaises(m.CleanupError):
+                m.validate_fixed_contract()
 
 
 class PlanTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
         root = Path(self.temp.name)
         self.patches = [
             mock.patch.object(m, "PLAN_DIR", root / "plans"),
@@ -507,35 +733,16 @@ class PlanTests(unittest.TestCase):
         ]
         for patcher in self.patches:
             patcher.start()
+            self.addCleanup(patcher.stop)
         self.source = m.validate_fixed_contract()
-        self.before = {
-            "guard": {"complete": False, "failures": list(m.TARGET_IDS)},
-            "library": {
-                "total": 75, "rows_sha256": "a" * 64,
-                "survivor_rows_sha256": "b" * 64,
-                "target_rows": [{"id": row["attachment_id"], "filename": row["filename"]}
-                                for row in m.TARGETS],
-            },
-            "attachments": [
-                {"attachment_id": row["attachment_id"], "filename": row["filename"],
-                 "source_url": row["source_url"], "delete_control_exact": True}
-                for row in m.TARGETS
-            ],
-            "products": {"products_checked": 10, "product_galleries_sha256": "c" * 64,
-                         "target_references": []},
-        }
-
-    def tearDown(self):
-        for patcher in reversed(self.patches):
-            patcher.stop()
-        self.temp.cleanup()
+        self.before = valid_before_state()
 
     def test_stage_and_load_round_trip(self):
         path, plan = m.stage_plan(self.source, self.before)
         loaded_path, loaded = m.load_plan(str(path))
         self.assertEqual(loaded_path, path)
         self.assertEqual(loaded, plan)
-        self.assertEqual(plan["after_expected"]["library_total"], 71)
+        self.assertEqual(plan["after_expected"]["library_total"], 1)
         self.assertTrue((m.REGISTRY_DIR / f"{plan['sha256']}.json").is_file())
 
     def test_plan_is_24_hours_and_separately_approved(self):
@@ -550,6 +757,15 @@ class PlanTests(unittest.TestCase):
         data = json.loads(path.read_text(encoding="ascii"))
         data["targets"][0]["attachment_id"] = 9999
         path.write_text(json.dumps(data), encoding="ascii")
+        with self.assertRaises(m.CleanupError):
+            m.load_plan(str(path))
+
+    def test_authenticated_stage_registry_tamper_refuses(self):
+        path, plan = m.stage_plan(self.source, self.before)
+        registry_path = m.stage_registry_path(plan["sha256"])
+        registry = json.loads(registry_path.read_text(encoding="ascii"))
+        registry["nonce"] = "0" * 32
+        registry_path.write_text(json.dumps(registry), encoding="ascii")
         with self.assertRaises(m.CleanupError):
             m.load_plan(str(path))
 
@@ -573,13 +789,13 @@ class PlanTests(unittest.TestCase):
             m.operation_sha(self.source, changed),
         )
 
-    def test_schema_three_keeps_original_schema_one_operation_identity(self):
-        self.assertEqual(m.SCHEMA_VERSION, 3)
+    def test_plan_schema_change_keeps_successor_operation_identity(self):
+        self.assertEqual(m.SCHEMA_VERSION, 1)
         self.assertEqual(m.OPERATION_SCHEMA_VERSION, 1)
-        self.assertEqual(
-            m.operation_sha(self.source, self.before),
-            "7045aee2e8fb340ffee491c9dfd5413b50b6c30c6d26cc6ad2379d0a9eb27dae",
-        )
+        operation = m.operation_sha(self.source, self.before)
+        self.assertNotEqual(operation, m.PREDECESSOR_OPERATION_SHA256)
+        with mock.patch.object(m, "SCHEMA_VERSION", 99):
+            self.assertEqual(m.operation_sha(self.source, self.before), operation)
 
     def test_any_per_attachment_event_permanently_blocks_operation(self):
         operation = m.operation_sha(self.source, self.before)
@@ -603,6 +819,22 @@ class PlanTests(unittest.TestCase):
             m.command_stage(argparse.Namespace())
         browser.assert_not_called()
 
+    def test_stage_refuses_two_complete_reads_that_differ(self):
+        drift = json.loads(json.dumps(self.before))
+        drift["products"]["product_and_variation_galleries_sha256"] = "d" * 64
+
+        @contextlib.contextmanager
+        def session(_purpose):
+            yield object()
+
+        with mock.patch.object(m, "validate_fixed_contract", return_value=self.source), \
+                mock.patch.object(m, "admin_session", session), \
+                mock.patch.object(m.wc, "load_vault", return_value={}), \
+                mock.patch.object(m, "collect_before", side_effect=[self.before, drift]), \
+                self.assertRaises(m.CleanupError):
+            m.command_stage(argparse.Namespace())
+        self.assertFalse(m.PLAN_DIR.exists())
+
 
 class CommitFlowTests(PlanTests):
     class FakeAdmin:
@@ -613,7 +845,10 @@ class CommitFlowTests(PlanTests):
             self.fail_after = fail_after
             self.deleted = []
 
-        def delete_one(self, attachment_id, on_write_attempt):
+        def delete_one(self, attachment_id, on_write_attempt, *,
+                       eligibility_state, expected_present_ids):
+            m.assert_correction_eligible(eligibility_state, expected_present_ids)
+            self.owner.assertEqual(attachment_id, expected_present_ids[0])
             self.owner.assertTrue(m.attempt_path(self.owner.plan["operation_sha256"]).exists())
             on_write_attempt()
             if self.fail_after is not None and len(self.deleted) == self.fail_after:
@@ -634,17 +869,6 @@ class CommitFlowTests(PlanTests):
             return ProjectionTests.guard(failures=False)
 
     def _prepare_commit(self):
-        survivor = [{"id": 100, "filename": "survivor.png"}]
-        self.before["library"] = {
-            "total": 5,
-            "rows_sha256": m.digest_for(survivor + [
-                {"id": row["attachment_id"], "filename": row["filename"]}
-                for row in m.TARGETS
-            ]),
-            "survivor_rows_sha256": m.digest_for(survivor),
-            "target_rows": [{"id": row["attachment_id"], "filename": row["filename"]}
-                            for row in m.TARGETS],
-        }
         self.path, self.plan = m.stage_plan(self.source, self.before)
 
     def _run(self, admin, fresh):
@@ -665,20 +889,43 @@ class CommitFlowTests(PlanTests):
                 {"attachment_id": value, "reason": "unreadable_original"}
                 for value in remaining
             ]
+            library = m.library_projection({
+                "rows": rows,
+                "total": len(rows),
+                "complete": True,
+                "pages": 1,
+                "unidentified": 0,
+            }, expected_present_ids=remaining)
+            guard_projection = m.guard_projection(
+                guard, expected_failure_ids=remaining
+            )
+            attachments = [
+                row for row in self.before["attachments"]
+                if row["attachment_id"] in remaining
+            ]
+            eligibility_state = {
+                "guard": guard_projection,
+                "library": library,
+                "attachments": attachments,
+                "products": self.before["products"],
+                "public_files": self.before["public_files"],
+            }
+            m.assert_correction_eligible(eligibility_state, remaining)
             return {
                 "deleted_ids": list(deleted_ids), "remaining_ids": list(remaining),
-                "library": {
-                    "total": len(rows), "rows": rows,
-                    "rows_sha256": m.digest_for(rows),
-                    "survivor_rows_sha256": m.digest_for([{"id": 100, "filename": "survivor.png"}]),
-                },
-                "guard": m.guard_projection(guard, expected_failure_ids=remaining),
+                "library": library,
+                "guard": guard_projection,
                 "products": self.before["products"],
-                "authenticated_missing": [
-                    {"missing": True, "code": "rest_post_invalid_id", "status": 404}
-                    for _value in deleted_ids
+                "record_removal_proof": [
+                    {
+                        "attachment_id": value,
+                        "media_library_absent": True,
+                        "guard_failure_absent": True,
+                    }
+                    for value in deleted_ids
                 ],
-                "public_absent": [],
+                "public_absent": self.before["public_files"],
+                "eligibility_state": eligibility_state,
             }
 
         args = argparse.Namespace(plan=str(self.path), approval="APPROVED")
@@ -687,7 +934,8 @@ class CommitFlowTests(PlanTests):
                 mock.patch.object(m, "collect_before", return_value=fresh), \
                 mock.patch.object(m, "verify_after_step", side_effect=verify), \
                 mock.patch.object(m, "append_receipt"):
-            m.command_commit(args)
+            with contextlib.redirect_stdout(io.StringIO()):
+                m.command_commit(args)
 
     def test_lock_precedes_first_delete_and_success_is_replay_locked(self):
         self._prepare_commit()
@@ -702,7 +950,7 @@ class CommitFlowTests(PlanTests):
     def test_drift_refuses_before_attempt_lock(self):
         self._prepare_commit()
         fresh = json.loads(json.dumps(self.before))
-        fresh["products"]["product_galleries_sha256"] = "d" * 64
+        fresh["products"]["product_and_variation_galleries_sha256"] = "d" * 64
         admin = self.FakeAdmin(self, self.before)
         with self.assertRaises(m.CleanupError):
             self._run(admin, fresh)
@@ -727,6 +975,16 @@ class CommitFlowTests(PlanTests):
         with mock.patch.object(m, "admin_session") as session, self.assertRaises(m.CleanupError):
             m.command_commit(args)
         session.assert_not_called()
+        self.assertFalse(m.attempt_path(self.plan["operation_sha256"]).exists())
+
+    def test_browser_busy_refuses_before_attempt_lock(self):
+        self._prepare_commit()
+        args = argparse.Namespace(plan=str(self.path), approval="APPROVED")
+        with mock.patch.object(
+                m, "admin_session", side_effect=m.UiLaneBusy("browser busy")
+        ) as session, self.assertRaises(m.UiLaneBusy):
+            m.command_commit(args)
+        session.assert_called_once()
         self.assertFalse(m.attempt_path(self.plan["operation_sha256"]).exists())
 
 

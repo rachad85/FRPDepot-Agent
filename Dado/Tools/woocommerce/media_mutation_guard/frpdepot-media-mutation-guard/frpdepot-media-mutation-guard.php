@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Media Mutation Guard
  * Description: Fixed atomic snapshot and five-family media mutation guard for FRP Depot.
- * Version: 1.0.2
+ * Version: 1.0.5
  * Author: FRP Depot
  */
 
@@ -10,8 +10,19 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('FRPD_MG_VERSION', '1.0.2');
-define('FRPD_MG_MANIFEST_SHA256', '3d2ef8f82bd613f2cd15072389a68e14206a7ad03c76e54a5d889fcba4b66bbc');
+define('FRPD_MG_VERSION', '1.0.5');
+define('FRPD_MG_MANIFEST_SHA256', '23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565');
+define('FRPD_MG_STATE_SCHEMA', 2);
+define('FRPD_MG_REUSE_FAMILY', 'stub_flange');
+define('FRPD_MG_REUSE_PRODUCT_ID', 1368);
+define('FRPD_MG_REUSE_POSITION', 1);
+define('FRPD_MG_REUSE_ATTACHMENT_ID', 4849);
+define('FRPD_MG_REUSE_ACTUAL_FILENAME', '01_stub_flange_real_source_hero-1.png');
+define('FRPD_MG_REUSE_APPROVED_FILENAME', '01_authentic_source_hero.png');
+define('FRPD_MG_REUSE_BYTES', 895251);
+define('FRPD_MG_REUSE_SHA256', 'aa9c8da37cc4a1ee98b5f0b2c77dd5b369c327a583412938778210562936b3da');
+define('FRPD_MG_REUSE_CURRENT_THUMBNAIL_RAW', '4849');
+define('FRPD_MG_REUSE_CURRENT_GALLERY_RAW', '4850,4851,4852');
 define('FRPD_MG_OPTION', 'frpd_media_mutation_guard_v1');
 define('FRPD_MG_COOKIE', 'frpd_media_guard_owner');
 define('FRPD_MG_LOCK_NAME', 'frpd_media_mutation_guard_v1');
@@ -45,21 +56,56 @@ function frpd_mg_manifest() {
         'elbow_90' => 1423,
         'pipe' => 1455,
     );
+    $counts = array(
+        'stub_flange' => 6,
+        'open_manway' => 6,
+        'manway_cover' => 4,
+        'elbow_90' => 4,
+        'pipe' => 4,
+    );
     $actual_family_keys = is_array($value['families'] ?? null)
         ? array_keys($value['families']) : array();
     $expected_family_keys = array_keys($ids);
     sort($actual_family_keys, SORT_STRING);
     sort($expected_family_keys, SORT_STRING);
-    if (!is_array($value) || 1 !== ($value['schema'] ?? null)
+    $actual_root_keys = is_array($value) ? array_keys($value) : array();
+    $expected_root_keys = array('families', 'fixed_reuse', 'schema', 'source_manifest_sha256');
+    sort($actual_root_keys, SORT_STRING);
+    sort($expected_root_keys, SORT_STRING);
+    $fixed_reuse = array(
+        'family' => FRPD_MG_REUSE_FAMILY,
+        'product_id' => FRPD_MG_REUSE_PRODUCT_ID,
+        'position' => FRPD_MG_REUSE_POSITION,
+        'attachment_id' => FRPD_MG_REUSE_ATTACHMENT_ID,
+        'actual_filename' => FRPD_MG_REUSE_ACTUAL_FILENAME,
+        'approved_filename' => FRPD_MG_REUSE_APPROVED_FILENAME,
+        'bytes' => FRPD_MG_REUSE_BYTES,
+        'sha256' => FRPD_MG_REUSE_SHA256,
+        'must_be_current_product_hero' => true,
+        'required_current_raw_meta' => array(
+            '_product_image_gallery' => FRPD_MG_REUSE_CURRENT_GALLERY_RAW,
+            '_thumbnail_id' => FRPD_MG_REUSE_CURRENT_THUMBNAIL_RAW,
+        ),
+        'upload_positions' => array(2, 3, 4, 5, 6),
+    );
+    $actual_fixed_reuse = is_array($value['fixed_reuse'] ?? null)
+        ? $value['fixed_reuse'] : null;
+    if (is_array($actual_fixed_reuse)) {
+        ksort($actual_fixed_reuse, SORT_STRING);
+    }
+    ksort($fixed_reuse, SORT_STRING);
+    if (!is_array($value) || 2 !== ($value['schema'] ?? null)
+        || $actual_root_keys !== $expected_root_keys
         || !isset($value['families']) || !is_array($value['families'])
-        || $actual_family_keys !== $expected_family_keys) {
+        || $actual_family_keys !== $expected_family_keys
+        || $actual_fixed_reuse !== $fixed_reuse) {
         return new WP_Error('frpd_mg_manifest', 'The fixed media manifest is invalid.');
     }
     foreach ($ids as $family => $product_id) {
         $record = $value['families'][$family] ?? null;
         if (!is_array($record) || $product_id !== ($record['product_id'] ?? null)
             || !isset($record['images']) || !is_array($record['images'])
-            || 4 !== count($record['images'])) {
+            || $counts[$family] !== count($record['images'])) {
             return new WP_Error('frpd_mg_manifest', 'A fixed family manifest record is invalid.');
         }
         foreach ($record['images'] as $index => $image) {
@@ -73,6 +119,14 @@ function frpd_mg_manifest() {
                 return new WP_Error('frpd_mg_manifest', 'A fixed image manifest record is invalid.');
             }
         }
+    }
+    $reuse_image = $value['families'][FRPD_MG_REUSE_FAMILY]['images'][FRPD_MG_REUSE_POSITION - 1] ?? null;
+    if (!is_array($reuse_image)
+        || ($reuse_image['position'] ?? null) !== FRPD_MG_REUSE_POSITION
+        || ($reuse_image['filename'] ?? null) !== FRPD_MG_REUSE_APPROVED_FILENAME
+        || ($reuse_image['bytes'] ?? null) !== FRPD_MG_REUSE_BYTES
+        || ($reuse_image['sha256'] ?? null) !== FRPD_MG_REUSE_SHA256) {
+        return new WP_Error('frpd_mg_manifest', 'The fixed reused image record is invalid.');
     }
     $manifest = $value;
     return $manifest;
@@ -235,7 +289,8 @@ function frpd_mg_active_state() {
         'attachments' => $attachments,
     );
     $manifest = frpd_mg_manifest();
-    if (1 !== $state['schema'] || !is_array($reserved) || !is_array($attachments)
+    if (FRPD_MG_STATE_SCHEMA !== $state['schema'] || !is_array($reserved) || !is_array($attachments)
+        || !frpd_mg_state_bindings_are_valid($state['family'], $reserved, $attachments)
         || $state['state_version'] <= 0 || $state['expires'] <= 0
         || !hash_equals(FRPD_MG_MANIFEST_SHA256, $state['manifest_sha256'])
         || is_wp_error($manifest) || !isset($manifest['families'][$state['family']])
@@ -261,6 +316,221 @@ function frpd_mg_expected_images($family) {
         return new WP_Error('frpd_mg_family', 'The requested family is not fixed.');
     }
     return $manifest['families'][$family]['images'];
+}
+
+/** Return the one literal reuse contract only for Stub Flange; no generic reuse exists. */
+function frpd_mg_reuse_contract($family) {
+    if (FRPD_MG_REUSE_FAMILY !== $family) {
+        return null;
+    }
+    $manifest = frpd_mg_manifest();
+    if (is_wp_error($manifest) || !isset($manifest['fixed_reuse'])
+        || !is_array($manifest['fixed_reuse'])) {
+        return new WP_Error('frpd_mg_reuse', 'The fixed Stub Flange reuse contract is unavailable.');
+    }
+    return $manifest['fixed_reuse'];
+}
+
+/** Return the exact fixed Stub Flange pre-write raw metadata projection. */
+function frpd_mg_reuse_baseline_projection($family) {
+    $reuse = frpd_mg_reuse_contract($family);
+    if (is_wp_error($reuse) || !is_array($reuse)) {
+        return is_wp_error($reuse) ? $reuse : null;
+    }
+    $owned = frpd_mg_assert_lock_owned();
+    if (is_wp_error($owned)) {
+        return $owned;
+    }
+    $raw_meta = $reuse['required_current_raw_meta'] ?? null;
+    $thumbnail_raw = is_array($raw_meta) ? ($raw_meta['_thumbnail_id'] ?? null) : null;
+    $gallery_raw = is_array($raw_meta) ? ($raw_meta['_product_image_gallery'] ?? null) : null;
+    global $wpdb;
+    $wpdb->last_error = '';
+    $rows = $wpdb->get_results(
+        $wpdb->prepare(
+            "SELECT meta_key, meta_value FROM {$wpdb->postmeta} " .
+            "WHERE post_id = %d AND meta_key IN ('_thumbnail_id','_product_image_gallery') " .
+            'ORDER BY meta_id ASC',
+            $reuse['product_id']
+        ),
+        ARRAY_A
+    );
+    $owned = frpd_mg_assert_lock_owned();
+    if (is_wp_error($owned)) {
+        return $owned;
+    }
+    $found = array();
+    if (is_array($rows)) {
+        foreach ($rows as $row) {
+            $key = is_array($row) ? ($row['meta_key'] ?? null) : null;
+            $value = is_array($row) ? ($row['meta_value'] ?? null) : null;
+            if (!is_string($key) || !is_string($value) || isset($found[$key])) {
+                $found = array();
+                break;
+            }
+            $found[$key] = $value;
+        }
+    }
+    ksort($found, SORT_STRING);
+    if (!is_string($thumbnail_raw) || !is_string($gallery_raw)
+        || FRPD_MG_REUSE_CURRENT_THUMBNAIL_RAW !== $thumbnail_raw
+        || FRPD_MG_REUSE_CURRENT_GALLERY_RAW !== $gallery_raw
+        || '' !== trim((string) $wpdb->last_error)
+        || !is_array($rows) || 2 !== count($rows)
+        || $found !== array(
+            '_product_image_gallery' => $gallery_raw,
+            '_thumbnail_id' => $thumbnail_raw,
+        )
+        || 'product' !== get_post_type($reuse['product_id'])
+        || (int) get_post_thumbnail_id($reuse['product_id']) !== $reuse['attachment_id']) {
+        return new WP_Error(
+            'frpd_mg_reuse_baseline',
+            'The fixed Stub Flange raw featured/gallery metadata baseline changed.'
+        );
+    }
+    $ids = array((int) $thumbnail_raw);
+    foreach (explode(',', $gallery_raw) as $part) {
+        if (1 !== preg_match('/\A[1-9][0-9]*\z/D', $part)) {
+            return new WP_Error('frpd_mg_reuse_baseline', 'The fixed Stub Flange gallery baseline is invalid.');
+        }
+        $ids[] = (int) $part;
+    }
+    if ($ids !== array(4849, 4850, 4851, 4852)
+        || count(array_unique($ids)) !== count($ids)) {
+        return new WP_Error('frpd_mg_reuse_baseline', 'The fixed Stub Flange gallery baseline IDs changed.');
+    }
+    return array(
+        'product_id' => $reuse['product_id'],
+        'raw_meta' => array(
+            '_thumbnail_id' => $thumbnail_raw,
+            '_product_image_gallery' => $gallery_raw,
+        ),
+        'attachment_ids' => $ids,
+    );
+}
+
+/** Validate every durable upload/reuse binding in the schema-2 guard row. */
+function frpd_mg_state_bindings_are_valid($family, $reserved, $attachments) {
+    $expected = frpd_mg_expected_images($family);
+    if (is_wp_error($expected) || !is_array($reserved) || !is_array($attachments)
+        || array_values($reserved) !== $reserved
+        || count(array_unique($reserved)) !== count($reserved)) {
+        return false;
+    }
+    $filenames = array_column($expected, 'filename');
+    if ($reserved !== array_slice($filenames, 0, count($reserved))
+        || count($attachments) > count($reserved)
+        || count($reserved) - count($attachments) > 1
+        || array_keys($attachments) !== array_slice($reserved, 0, count($attachments))) {
+        return false;
+    }
+    $attachment_ids = array();
+    foreach ($attachments as $filename => $attachment_id) {
+        if (!is_string($filename) || !in_array($filename, $reserved, true)
+            || !is_int($attachment_id) || $attachment_id <= 0) {
+            return false;
+        }
+        $attachment_ids[] = $attachment_id;
+    }
+    if (count(array_unique($attachment_ids)) !== count($attachment_ids)) {
+        return false;
+    }
+    $reuse = frpd_mg_reuse_contract($family);
+    if (is_wp_error($reuse)) {
+        return false;
+    }
+    if (is_array($reuse)) {
+        return isset($reserved[0])
+            && $reserved[0] === $reuse['approved_filename']
+            && array_key_exists($reuse['approved_filename'], $attachments)
+            && $attachments[$reuse['approved_filename']] === $reuse['attachment_id']
+            && count($reuse['upload_positions'] ?? array()) === 5
+            && ($reuse['upload_positions'] ?? null) === array(2, 3, 4, 5, 6)
+            && !array_key_exists($reuse['actual_filename'], $attachments);
+    }
+    return true;
+}
+
+function frpd_mg_reserved_upload_count($state) {
+    if (!is_array($state) || !is_array($state['reserved'] ?? null)) {
+        return 0;
+    }
+    return count($state['reserved']) - (is_array(frpd_mg_reuse_contract($state['family'] ?? '')) ? 1 : 0);
+}
+
+/** Resolve and validate the exact final ordered reuse/upload attachment IDs. */
+function frpd_mg_final_attachment_ids($state) {
+    $expected = is_array($state) ? frpd_mg_expected_images($state['family'] ?? '')
+        : new WP_Error('frpd_mg_gallery_set', 'The fixed family state is unavailable.');
+    if (is_wp_error($expected)
+        || !frpd_mg_state_bindings_are_valid(
+            $state['family'] ?? '', $state['reserved'] ?? null, $state['attachments'] ?? null
+        )) {
+        return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment bindings are invalid.');
+    }
+    $filenames = array_column($expected, 'filename');
+    if (($state['reserved'] ?? null) !== $filenames
+        || array_keys($state['attachments']) !== $filenames
+        || count($state['attachments']) !== count($expected)) {
+        return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment set is incomplete.');
+    }
+    $ids = array_values($state['attachments']);
+    if (count(array_unique($ids)) !== count($ids)) {
+        return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment IDs are not unique.');
+    }
+    $reuse = frpd_mg_reuse_contract($state['family']);
+    if (is_wp_error($reuse)) {
+        return $reuse;
+    }
+    if (is_array($reuse)) {
+        $raw_meta = $reuse['required_current_raw_meta'];
+        $baseline_ids = array((int) $raw_meta['_thumbnail_id']);
+        foreach (explode(',', $raw_meta['_product_image_gallery']) as $part) {
+            $baseline_ids[] = (int) $part;
+        }
+        if (6 !== count($ids) || $ids[0] !== $reuse['attachment_id']
+            || 5 !== count(array_slice($ids, 1))
+            || array_intersect(array_slice($ids, 1), $baseline_ids)) {
+            return new WP_Error(
+                'frpd_mg_gallery_set',
+                'Stub Flange requires one reused hero binding and five distinct new attachment IDs.'
+            );
+        }
+    }
+    return $ids;
+}
+
+/** One shared pre-acquire predicate produces the only permitted initial bindings. */
+function frpd_mg_acquisition_bindings($family, $proof) {
+    $expected = frpd_mg_expected_images($family);
+    if (is_wp_error($expected) || !is_array($proof) || true !== ($proof['complete'] ?? false)
+        || !empty($proof['failures']) || !empty($proof['name_conflicts'])
+        || !is_array($proof['hash_conflicts'] ?? null)
+        || !is_array($proof['fixed_matches'] ?? null)) {
+        return new WP_Error('frpd_mg_acquisition', 'The complete pre-guard attachment proof is not eligible.');
+    }
+    $reuse = frpd_mg_reuse_contract($family);
+    if (is_wp_error($reuse)) {
+        return $reuse;
+    }
+    if (!is_array($reuse)) {
+        return empty($proof['hash_conflicts']) && empty($proof['fixed_matches'])
+            ? array('reserved' => array(), 'attachments' => array())
+            : new WP_Error('frpd_mg_acquisition', 'A non-reuse family has an existing fixed attachment.');
+    }
+    $wanted = array(array(
+        'attachment_id' => $reuse['attachment_id'],
+        'fixed_position' => $reuse['position'],
+    ));
+    $baseline = frpd_mg_reuse_baseline_projection($family);
+    if ($proof['hash_conflicts'] !== $wanted || $proof['fixed_matches'] !== $wanted
+        || is_wp_error($baseline) || !is_array($baseline)) {
+        return new WP_Error('frpd_mg_acquisition', 'The one fixed Stub Flange hero reuse is not exact and current.');
+    }
+    return array(
+        'reserved' => array($reuse['approved_filename']),
+        'attachments' => array($reuse['approved_filename'] => $reuse['attachment_id']),
+    );
 }
 
 function frpd_mg_fixed_image_lookup() {
@@ -349,9 +619,17 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     if ('' !== trim((string) $wpdb->last_error)) {
         return new WP_Error('frpd_mg_snapshot_query', 'Attachment enumeration could not be proven complete.');
     }
-    if (!is_array($ids) || count($ids) > FRPD_MG_MAX_ATTACHMENTS) {
-        return new WP_Error('frpd_mg_snapshot_bound', 'Attachment snapshot exceeded row bounds.');
+    if (!is_array($ids) || count($ids) > FRPD_MG_MAX_ATTACHMENTS
+        || count(array_unique(array_map('intval', $ids))) !== count($ids)) {
+        return new WP_Error('frpd_mg_snapshot_bound', 'Attachment snapshot exceeded row bounds or duplicated an ID.');
     }
+    $reuse = frpd_mg_reuse_contract($family);
+    if (is_wp_error($reuse)) {
+        return $reuse;
+    }
+    $reuse_hero_exact = is_array($reuse)
+        && 'product' === get_post_type($reuse['product_id'])
+        && (int) get_post_thumbnail_id($reuse['product_id']) === $reuse['attachment_id'];
     $rows = array();
     $failures = array();
     $name_conflicts = array();
@@ -407,9 +685,35 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
             'sha256' => $digest,
         );
         $rows[] = $row;
+        $reuse_exact = is_array($reuse)
+            && $attachment_id === $reuse['attachment_id']
+            && hash_equals($reuse['actual_filename'], $filename)
+            && (int) $size === $reuse['bytes']
+            && hash_equals($reuse['sha256'], $digest)
+            && true === $reuse['must_be_current_product_hero']
+            && $reuse_hero_exact;
+        if ($reuse_exact) {
+            $reuse_match = array(
+                'attachment_id' => $attachment_id,
+                'fixed_position' => $reuse['position'],
+            );
+            $hash_conflicts[] = $reuse_match;
+            $fixed_matches[] = $reuse_match;
+            continue;
+        }
+        $reuse_candidate_drift = is_array($reuse)
+            && ($attachment_id === $reuse['attachment_id']
+                || hash_equals(strtolower($reuse['actual_filename']), strtolower($filename)));
+        if ($reuse_candidate_drift) {
+            $name_conflicts[] = array(
+                'attachment_id' => $attachment_id,
+                'fixed_position' => $reuse['position'],
+            );
+        }
         $name_identity = $lookup['names'][strtolower($filename)]
             ?? $lookup['names'][$normalized_stem] ?? null;
-        if (is_array($name_identity) && $name_identity['family'] === $family) {
+        if (!$reuse_candidate_drift && is_array($name_identity)
+            && $name_identity['family'] === $family) {
             $name_conflicts[] = array(
                 'attachment_id' => $attachment_id,
                 'fixed_position' => $name_identity['position'],
@@ -422,7 +726,7 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
                 'fixed_position' => $hash_identity['position'],
             );
         }
-        if (is_array($name_identity) && is_array($hash_identity)
+        if (!$reuse_candidate_drift && is_array($name_identity) && is_array($hash_identity)
             && $name_identity === $hash_identity
             && $name_identity['family'] === $family) {
             foreach ($expected as $fixed_image) {
@@ -543,11 +847,18 @@ function frpd_mg_insert_state($family, $secret, $proof) {
     }
     global $wpdb;
     $manifest = frpd_mg_manifest();
+    $bindings = frpd_mg_acquisition_bindings($family, $proof);
     $session = function_exists('wp_get_session_token') ? (string) wp_get_session_token() : '';
     $user_id = (int) get_current_user_id();
-    if (is_wp_error($manifest) || '' === $session || $user_id <= 0) {
-        return new WP_Error('frpd_mg_owner', 'The guard owner session is unavailable.');
+    if (is_wp_error($manifest) || is_wp_error($bindings)
+        || !frpd_mg_state_bindings_are_valid(
+            $family, $bindings['reserved'] ?? null, $bindings['attachments'] ?? null
+        ) || '' === $session || $user_id <= 0) {
+        return is_wp_error($bindings) ? $bindings
+            : new WP_Error('frpd_mg_owner', 'The guard owner session or initial reuse binding is unavailable.');
     }
+    $reserved_json = wp_json_encode($bindings['reserved'], JSON_UNESCAPED_SLASHES);
+    $attachments_json = wp_json_encode($bindings['attachments'], JSON_UNESCAPED_SLASHES);
     $times = $wpdb->get_row(
         $wpdb->prepare(
             'SELECT UTC_TIMESTAMP(6) AS issued_utc, '
@@ -571,14 +882,15 @@ function frpd_mg_insert_state($family, $secret, $proof) {
         . 'owner_user_id,owner_session_sha256,owner_token_sha256,issued_utc,expires_utc,state_status,'
         . 'completed_utc,state_version,reserved_json,attachments_json';
     $written = $wpdb->query($wpdb->prepare(
-        "INSERT INTO `{$table}` ({$columns}) SELECT 1,1,%s,%d,%s,%s,%d,%d,%s,%s,%s,%s,'active',NULL,1,'[]','{}' "
+        "INSERT INTO `{$table}` ({$columns}) SELECT 1,%d,%s,%d,%s,%s,%d,%d,%s,%s,%s,%s,'active',NULL,1,%s,%s "
         . "FROM DUAL WHERE CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID() "
         . "ON DUPLICATE KEY UPDATE schema_version=VALUES(schema_version),family=VALUES(family),"
         . "product_id=VALUES(product_id),manifest_sha256=VALUES(manifest_sha256),snapshot_sha256=VALUES(snapshot_sha256),"
         . "snapshot_count=VALUES(snapshot_count),owner_user_id=VALUES(owner_user_id),"
         . "owner_session_sha256=VALUES(owner_session_sha256),owner_token_sha256=VALUES(owner_token_sha256),"
         . "issued_utc=VALUES(issued_utc),expires_utc=VALUES(expires_utc),state_status=VALUES(state_status),"
-        . "completed_utc=NULL,state_version=1,reserved_json='[]',attachments_json='{}'",
+        . "completed_utc=NULL,state_version=1,reserved_json=VALUES(reserved_json),attachments_json=VALUES(attachments_json)",
+        FRPD_MG_STATE_SCHEMA,
         $family,
         (int) $manifest['families'][$family]['product_id'],
         FRPD_MG_MANIFEST_SHA256,
@@ -589,6 +901,8 @@ function frpd_mg_insert_state($family, $secret, $proof) {
         hash('sha256', $secret),
         (string) $times['issued_utc'],
         (string) $times['expires_utc'],
+        (string) $reserved_json,
+        (string) $attachments_json,
         (int) $GLOBALS['frpd_mg_lock_connection_id'],
         FRPD_MG_LOCK_NAME
     ));
@@ -597,6 +911,8 @@ function frpd_mg_insert_state($family, $secret, $proof) {
     }
     $state = frpd_mg_active_state();
     if (!is_array($state) || $state['family'] !== $family
+        || $state['reserved'] !== $bindings['reserved']
+        || $state['attachments'] !== $bindings['attachments']
         || !hash_equals((string) $proof['snapshot_sha256'], $state['snapshot_sha256'])) {
         return new WP_Error('frpd_mg_state_verify', 'The media guard state could not be verified.');
     }
@@ -633,7 +949,8 @@ function frpd_mg_handle_acquire() {
     if (is_wp_error($proof)) {
         frpd_mg_fail($proof->get_error_message());
     }
-    if (!$proof['complete'] || $proof['name_conflicts'] || $proof['hash_conflicts']) {
+    $bindings = frpd_mg_acquisition_bindings($family, $proof);
+    if (is_wp_error($bindings)) {
         $proof['mode'] = 'guard_refused';
         frpd_mg_render_proof('FRP Depot Media Guard Refused', $proof, 409);
     }
@@ -681,7 +998,7 @@ function frpd_mg_handle_guarded_snapshot() {
         frpd_mg_fail($proof->get_error_message());
     }
     $proof['guard_expires_utc'] = gmdate('c', $state['expires']);
-    $proof['reserved_uploads'] = count($state['reserved']);
+    $proof['reserved_uploads'] = frpd_mg_reserved_upload_count($state);
     frpd_mg_render_proof('FRP Depot Guarded Media Snapshot', $proof);
 }
 add_action('admin_post_frpd_media_guard_guarded_snapshot', 'frpd_mg_handle_guarded_snapshot');
@@ -738,6 +1055,13 @@ function frpd_mg_rest_pre_insert_product_object($object, $request, $creating) {
     if ($object_id !== (int) $state['product_id']) {
         return $object;
     }
+    if (!frpd_mg_owner_matches($state)) {
+        return new WP_Error(
+            'frpd_mg_gallery_owner',
+            'The guarded product gallery request is not owned by this user, session, and token.',
+            array('status' => 403)
+        );
+    }
     $method = is_object($request) && method_exists($request, 'get_method')
         ? strtoupper((string) $request->get_method()) : '';
     $json = is_object($request) && method_exists($request, 'get_json_params')
@@ -751,32 +1075,35 @@ function frpd_mg_rest_pre_insert_product_object($object, $request, $creating) {
     $if_match = is_object($request) && method_exists($request, 'get_header')
         ? (string) $request->get_header('if-match') : '';
     $expected = frpd_mg_expected_images($state['family']);
+    $expected_count = is_array($expected) ? count($expected) : 0;
     if ($creating || 'PUT' !== $method || 'active' !== ($state['state_status'] ?? '')
         || !is_array($json) || array_keys($json) !== array('images')
         || !is_array($query) || array() !== $query
         || !is_array($body) || array() !== $body
         || !is_array($files) || array() !== $files
-        || is_wp_error($expected) || 4 !== count($expected)) {
+        || is_wp_error($expected) || $expected_count <= 0) {
         return new WP_Error('frpd_mg_gallery_request', 'FRP Depot media guard refused a non-fixed product mutation.', array('status' => 423));
     }
     $filenames = array_column($expected, 'filename');
-    if ($state['reserved'] !== $filenames || array_keys($state['attachments']) !== $filenames
-        || count(array_unique(array_values($state['attachments']))) !== 4
-        || !is_array($json['images']) || 4 !== count($json['images'])) {
-        return new WP_Error('frpd_mg_gallery_set', 'The four fixed upload identities are not exact.', array('status' => 423));
+    $ids = frpd_mg_final_attachment_ids($state);
+    if (is_wp_error($ids) || !is_array($json['images'])
+        || $expected_count !== count($json['images'])) {
+        return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment identities are not exact.', array('status' => 423));
     }
-    $ids = array();
     foreach ($json['images'] as $index => $image) {
-        $filename = $filenames[$index];
-        $id = (int) ($state['attachments'][$filename] ?? 0);
+        $id = $ids[$index];
         if (!is_array($image) || array_keys($image) !== array('id')
             || !is_int($image['id']) || $image['id'] !== $id || $id <= 0) {
             return new WP_Error('frpd_mg_gallery_payload', 'The product gallery payload is not the exact fixed ID sequence.', array('status' => 423));
         }
-        $ids[] = $id;
     }
     $current = frpd_mg_product_gallery_ids($object_id);
-    if (is_wp_error($current) || !hash_equals(frpd_mg_gallery_etag($current), $if_match)) {
+    $reuse = frpd_mg_reuse_contract($state['family']);
+    $baseline = is_array($reuse) ? frpd_mg_reuse_baseline_projection($state['family']) : null;
+    if (is_wp_error($reuse) || is_wp_error($current)
+        || (is_array($reuse) && (is_wp_error($baseline) || !is_array($baseline)
+            || $current !== $baseline['attachment_ids']))
+        || !hash_equals(frpd_mg_gallery_etag($current), $if_match)) {
         return new WP_Error('frpd_mg_gallery_precondition', 'The product gallery changed before the conditional update.', array('status' => 412));
     }
     global $wpdb;
@@ -856,9 +1183,11 @@ function frpd_mg_product_gallery_metadata_filter($check, $object_id, $meta_key, 
         return $check;
     }
     $ids = $GLOBALS['frpd_mg_allowed_gallery_ids'] ?? array();
+    $expected = frpd_mg_expected_images($state['family']);
+    $expected_count = is_array($expected) ? count($expected) : 0;
     $allowed = 'gallery' === ($state['state_status'] ?? '')
         && !empty($GLOBALS['frpd_mg_allowed_gallery_request']) && is_array($ids)
-        && 4 === count($ids)
+        && $expected_count > 0 && $expected_count === count($ids)
         && (int) $object_id === (int) ($GLOBALS['frpd_mg_allowed_gallery_product_id'] ?? 0)
         && (('_thumbnail_id' === $identity && (string) $meta_value === (string) $ids[0])
             || ('_product_image_gallery' === $identity
@@ -977,43 +1306,68 @@ function frpd_mg_completion_proof($state) {
     if (!frpd_mg_owner_matches($state) || 'gallery' !== ($state['state_status'] ?? '')) {
         return new WP_Error('frpd_mg_owner', 'The completion browser does not own the active guard.');
     }
-    $filenames = array_column($expected, 'filename');
-    if ($state['reserved'] !== $filenames || array_keys($state['attachments']) !== $filenames
-        || count(array_unique(array_values($state['attachments']))) !== 4) {
-        return new WP_Error('frpd_mg_completion_set', 'The four fixed upload identities are not exact.');
+    $expected_count = count($expected);
+    $ids = frpd_mg_final_attachment_ids($state);
+    if (is_wp_error($ids)) {
+        return new WP_Error('frpd_mg_completion_set', 'The fixed family attachment identities are not exact.');
     }
-    $snapshot = frpd_mg_snapshot($state['family'], 'completion_snapshot', true);
-    if (is_wp_error($snapshot) || !$snapshot['complete']
-        || (int) $snapshot['attachment_total'] !== (int) $state['snapshot_count'] + 4
-        || count($snapshot['name_conflicts']) !== 4 || count($snapshot['hash_conflicts']) !== 4
-        || count($snapshot['fixed_matches']) !== 4) {
-        return is_wp_error($snapshot) ? $snapshot
-            : new WP_Error('frpd_mg_completion_snapshot', 'The complete live attachment proof is not exact.');
+    $reuse = frpd_mg_reuse_contract($state['family']);
+    if (is_wp_error($reuse)) {
+        return $reuse;
     }
-    $by_position = array();
-    foreach ($snapshot['fixed_matches'] as $match) {
-        $position = (int) $match['fixed_position'];
-        if (isset($by_position[$position])) {
-            return new WP_Error('frpd_mg_completion_duplicate', 'A fixed attachment position is duplicated.');
-        }
-        $by_position[$position] = (int) $match['attachment_id'];
-    }
-    $ids = array();
+    $upload_count = $expected_count - (is_array($reuse) ? 1 : 0);
+    $expected_matches = array();
+    $expected_name_conflicts = array();
+    $expected_hash_conflicts = array();
     foreach ($expected as $image) {
         $position = (int) $image['position'];
         $filename = (string) $image['filename'];
         $id = (int) ($state['attachments'][$filename] ?? 0);
-        if ($id <= 0 || ($by_position[$position] ?? 0) !== $id) {
-            return new WP_Error('frpd_mg_completion_identity', 'A fixed attachment does not match its live bytes.');
+        if ($id <= 0 || (is_array($reuse) && $position === $reuse['position']
+            && $id !== $reuse['attachment_id'])) {
+            return new WP_Error('frpd_mg_completion_identity', 'A fixed attachment binding is invalid.');
         }
-        $ids[] = $id;
+        $match = array('attachment_id' => $id, 'fixed_position' => $position);
+        $expected_matches[] = $match;
+        $expected_hash_conflicts[] = $match;
+        if (!is_array($reuse) || $position !== $reuse['position']) {
+            $expected_name_conflicts[] = $match;
+        }
+    }
+    $sort_matches = static function (&$matches) {
+        usort($matches, static function ($left, $right) {
+            $position_order = ((int) ($left['fixed_position'] ?? 0))
+                <=> ((int) ($right['fixed_position'] ?? 0));
+            return 0 !== $position_order ? $position_order
+                : ((int) ($left['attachment_id'] ?? 0)) <=> ((int) ($right['attachment_id'] ?? 0));
+        });
+    };
+    $snapshot = frpd_mg_snapshot($state['family'], 'completion_snapshot', true);
+    if (is_wp_error($snapshot)) {
+        return $snapshot;
+    }
+    $actual_names = $snapshot['name_conflicts'];
+    $actual_hashes = $snapshot['hash_conflicts'];
+    $actual_matches = $snapshot['fixed_matches'];
+    $sort_matches($actual_names);
+    $sort_matches($actual_hashes);
+    $sort_matches($actual_matches);
+    $sort_matches($expected_name_conflicts);
+    $sort_matches($expected_hash_conflicts);
+    $sort_matches($expected_matches);
+    if (!$snapshot['complete'] || !empty($snapshot['failures'])
+        || (int) $snapshot['attachment_total'] !== (int) $state['snapshot_count'] + $upload_count
+        || $actual_names !== $expected_name_conflicts
+        || $actual_hashes !== $expected_hash_conflicts
+        || $actual_matches !== $expected_matches) {
+        return new WP_Error('frpd_mg_completion_snapshot', 'The complete live reuse/upload proof is not exact.');
     }
     $product_id = (int) $state['product_id'];
     $gallery = (string) get_post_meta($product_id, '_product_image_gallery', true);
     if ('product' !== get_post_type($product_id)
         || (int) get_post_thumbnail_id($product_id) !== $ids[0]
         || !hash_equals(implode(',', array_slice($ids, 1)), $gallery)) {
-        return new WP_Error('frpd_mg_completion_gallery', 'The fixed product gallery does not match the four verified attachments.');
+        return new WP_Error('frpd_mg_completion_gallery', 'The fixed product gallery does not match the verified family attachments.');
     }
     return array(
         'schema' => 2,
@@ -1033,17 +1387,9 @@ function frpd_mg_complete_state($state) {
     global $wpdb;
     $next = (int) $state['state_version'] + 1;
     $table = frpd_mg_table_name();
-    $expected = frpd_mg_expected_images($state['family']);
-    if (is_wp_error($expected) || count($expected) !== 4) {
+    $ids = frpd_mg_final_attachment_ids($state);
+    if (is_wp_error($ids) || count($ids) <= 0) {
         return new WP_Error('frpd_mg_completion_identity', 'The fixed completion identity is unavailable.');
-    }
-    $ids = array();
-    foreach ($expected as $image) {
-        $id = (int) ($state['attachments'][$image['filename']] ?? 0);
-        if ($id <= 0) {
-            return new WP_Error('frpd_mg_completion_identity', 'A fixed completion attachment is missing.');
-        }
-        $ids[] = $id;
     }
     $posts = $wpdb->posts;
     $postmeta = $wpdb->postmeta;
@@ -1109,6 +1455,9 @@ function frpd_mg_update_state($state, $reserved, $attachments) {
         return $owned;
     }
     global $wpdb;
+    if (!frpd_mg_state_bindings_are_valid($state['family'], array_values($reserved), $attachments)) {
+        return new WP_Error('frpd_mg_state_bindings', 'The media guard reuse/upload bindings are invalid.');
+    }
     $next_version = (int) $state['state_version'] + 1;
     $table = frpd_mg_table_name();
     $updated = $wpdb->query($wpdb->prepare(
@@ -1170,12 +1519,16 @@ function frpd_mg_upload_prefilter($file) {
     $image_info = is_file($tmp) ? @getimagesize($tmp) : false;
     $mime = is_array($image_info) ? (string) ($image_info['mime'] ?? '') : '';
     $image_type = is_array($image_info) ? (int) ($image_info[2] ?? 0) : 0;
+    $reuse = frpd_mg_reuse_contract($state['family']);
+    $reuse_position = is_array($reuse) ? (int) $reuse['position'] : 0;
     if (($file['error'] ?? null) !== UPLOAD_ERR_OK
         || $raw_filename !== $filename || sanitize_file_name($raw_filename) !== $raw_filename
         || !is_array($match) || false === $size || (int) $size !== $match['bytes']
         || !is_string($digest) || !hash_equals($match['sha256'], $digest)
         || "\x89PNG\r\n\x1a\n" !== $signature || IMAGETYPE_PNG !== $image_type
         || 'image/png' !== $mime
+        || is_wp_error($reuse) || (int) $match['position'] === $reuse_position
+        || count($state['reserved']) !== count($state['attachments'])
         || in_array($filename, $state['reserved'], true)) {
         $file['error'] = 'FRP Depot media guard refused a non-fixed or repeated upload.';
         return $file;
@@ -1509,7 +1862,7 @@ function frpd_mg_admin_page() {
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
         wp_nonce_field('frpd_mg_complete');
         echo '<input type="hidden" name="action" value="frpd_media_guard_complete">';
-        echo '<button type="submit" id="frpd-mg-complete">Verify four attachments and complete guard</button></form>';
+        echo '<button type="submit" id="frpd-mg-complete">Verify exact family attachments and complete guard</button></form>';
     }
     echo '</div>';
 }

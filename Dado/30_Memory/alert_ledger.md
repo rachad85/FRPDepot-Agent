@@ -115,8 +115,21 @@ Rules (mirrored in the sweep charter; Aze's proven pattern, adopted 2026-07-23):
 - 2026-08-18 PO5240 for Q 00034 — New Troy Dualam PO 5240 received from Jasminder Singh for quote QT-000034; approval requested to acknowledge and process.
 - 2026-08-19 New submission from Contact (SPARK LINE OILFIELD) — Hasham Abbas requested quotation for 6 items of PPR-lined Derakane 470 FRP filament-wound pipe (1", 3", 4", 6", 8", 12", 5000mm lengths, full vacuum/1035 kPa); requires green light to decline or route.
 - 2026-08-19 FRP Depot CAD Bank Account / Airwallex ticket 1616235 — Support (Jacob) needs business name, Global Account, and remittance documents to trace/return the two $3,234.71 accidental payments from Aug 12 & 18.
+- 2026-08-20 Spark Line Oilfield 792843 — New inbound after Rachad's USD 84,865 quote requests the drawing/datasheet and confirmation of pipe marking plus MTC delivery; technical package decision required.
+- 2026-08-20 Purchase Orders PO-00009 / PO-00010 labels — J-Rain asks for the D441 pipe/fitting labels and whether each item may carry only the QR label instead of both QR and text labels; production instruction required.
+- 2026-08-20 FRP Depot CAD Bank Account / Airwallex ticket 1616235 — New support update confirms the Aug 12 payment returned and asks whether the Aug 18 CAD 3,234.71 payment went to Global Account ending 245 or 279 so it can be traced.
+- 2026-08-20 Q26-1436 — Permatech has not replied to the additional project information after 134 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 Update — Northnet Media has not provided the requested FRP Depots progress update after 126 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 RE: PO5120 For SO-00032 — Troy Dualam has not confirmed the requested cancellation after 87 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 RE: Email Marketing — Northnet Media has not confirmed whether the FRP Depot email campaign launched after 81 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 RFQ — J-Rain has not replied to the B95 pipe, collar and flange RFQ after 20 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 Re: 24\" FRP Manways – Availability and Pricing — Calta has not provided its address and courier confirmation after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 Please migrate FRP Depot’s existing Google Analytics property — Northnet Media has not confirmed the GA4 property migration after 5 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 Re: New submission from Contact / NESI — Sina has not supplied the requested project drawings and specifications after 3 working days; chase draft prepared in the original Outlook thread.
+- 2026-08-20 QT-000033 / Les Plastiques P.V. — Zoho confirms the CAD 2,194.41 quote is accepted and Interac confirms the same amount deposited to Desjardins ending 1140; order processing and deposit reconciliation require verification.
 
 ## CLOSED
+- 2026-08-20 RE: 1\" Stub Flange D411 / SCT — Closed. Rachad replied that 20-inch stub flanges are currently out of stock; Bon acknowledged with “Thanks Rachad!” The earlier 1-inch quantity follow-up is also closed because SCT found and refurbished its own old stock. Do not surface either again unless SCT sends a genuinely new request.
 - 2026-07-23 Inbox monitoring failure — root cause fixed by backend the same evening (sweep charter now invokes the venv python by full path); verified by rerun.
 - 2026-07-23 Inbox monitoring failure (19:19 ET) — root cause fixed by backend: the wrapper now collects the triage data itself with no shell in the path, and reports collection failures deterministically without relying on the model; verified by rerun.
 - 2026-07-23 commande de bride Derakane 470 — Rachad confirmed Fibre Mauricie had already received and paid; Zoho shows SO-00046 invoiced and INV-000048 paid with CAD 0.00 balance.
