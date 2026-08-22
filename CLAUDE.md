@@ -886,3 +886,44 @@ Pre-change copy: `Dado\Temp\skills_mirror_bak_pre_drift_fix_20260812_175248`.
 Baby steps, numbered, one action per step with a CHECK. Buttons
 (.bat) over commands. One question at a time with a recommendation.
 Terse, worst-news-first. Never relitigate his decisions.
+
+2026-08-21 (Claude backend, TDI server): config.yaml `agent.max_turns` 60 -> 300 (live + the profile mirror here); per-platform `interim_assistant_messages: false` overrides removed so Dado's own progress lines reach Rachad — Rachad's ask after the cross-agent autonomy audit (details in C:/AgentTeam/CLAUDE.md 0.4). Hermes re-reads both per turn; no restart.
+
+## 2026-08-21 AUTONOMY PROGRAMME (Claude backend, TDI server; Rachad: "make Aze and Dado as flawless as Sary", then "Go on all of them") - commit a3900dd
+
+WHAT CHANGED, and why the old golden-rule-3 wording above (exact APPROVED, stage-then-commit, one attempt, permanent lock) no longer describes the tools:
+- HIS WORD IS THE AUTHORITY (the model Aze got on 2026-08-11 and Sary always had). A clear instruction from Rachad on Telegram, Discord or the dashboard chat
+  authorises the WHOLE job. Reversible writes (inventory items, categories/classification, prices, SKUs/names, draft estimates and their corrections, email-
+  template create, WooCommerce/WordPress content, catalogue publish) stage -> apply on that instruction; the tool captures the live state before writing, keeps
+  it next to the plan, writes one receipt per write, and carries a restore route where one exists (price `restore`, item `restore-name-sku` /
+  `restore-group-option-rename`, category and classification `restore-assign`, woocommerce_change `restore`, google_catalogue_publish `restore`).
+- MONEY / IRREVERSIBLE (invoices, sales orders, purchase orders, banking reconciliation, backing-ring stock, loans/investments workbooks, the one
+  email-template delete, the WordPress orphan-media and fixed-origin cleanups) keep the two-step: stage, then HIS OWN unambiguous go to THAT plan, sent
+  AFTER the plan was written - `--approval-message-utc` is now REQUIRED on every money commit and a go sent before the plan is refused. The exact word
+  APPROVED still works; it is no longer required ("yes go ahead" counts). Drafts-only, no keys, no Zoho deletes, the company walls: unchanged.
+- NO PERMANENT LOCKS. A failed commit leaves the plan `needs_restage`: re-read live, re-stage (diff shown), apply again under the same instruction.
+  Batches continue past a failed line (the SKU-pair coordinator still stops at a failed child so the two systems never diverge). The three spent
+  backing-ring plans from 08-11/12 stay spent (their historical lock records are read by the valuation tool).
+- Shared module Dado\Tools\common\owner_authority.py: Aze's affirmative detector copied VERBATIM and hash-pinned (no import across the company wall),
+  require_owner_go / require_owner_go_after_plan, lane check (relay lanes never authorise a write), capture/restore/receipt helpers, BatchProgress.
+  Tests: Zoho 1726 passed, common+watch+google+conduct 433 passed in this tree after the apply.
+- SOUL trimmed 67 KB -> 24.6 KB (LF; 24,985 CRLF): Hermes was cutting the MIDDLE out of it every turn (65,280-char cap). The tool-by-tool litany and the
+  STATUS ledger moved to DadoProfile\skills\operations\frp-commissioned-write-lifecycle\references\ (installed live too); dated incident narratives
+  cite Dado\30_Memory\conduct_reviews\<date>.md; the pre-trim text is DadoProfile\SOUL.md.bak_20260821_pre_autonomy_trim and the line-by-line map is
+  Dado\30_Memory\conduct_reviews\2026-08-21_soul_trim_report.md. Nothing he decided disappeared; five rules changed in meaning and are listed there.
+- LONG JOBS: Sary's in-turn pattern (background process / bounded polling, one-line progress notes, result on the ASKING lane); job_runner only for work
+  that must outlive a gateway restart, and its `_deliver` now honours the originating lane (telegram / discord / dashboard; default Telegram).
+- Habits added: never end a turn on a question (clarify with the recommended option first), ask the owning agent over the relay before asking Rachad a
+  domain fact, park deferred work in a one-shot cron job, "say what you are doing, then report", and "I ran out of steps" in the first line when cut off.
+- conduct_review.py may no longer edit the SOUL mirror (auto-fix = fit_profile.md and tool bugs only); its guard reverts ANY reviewer change to the SOUL,
+  on every exit path. dado_soul_sync.py is unchanged: mirror and live were written identically, so it is a no-op.
+- C:\FRPDepot\.hermes.md exists so Hermes loads it INSTEAD of this CLAUDE.md into Dado's prompt (first match wins; her prompt was 140K chars with the
+  middle of both files cut). This file stays the backend handoff.
+- Config (live + DadoProfile mirror): agent.max_turns 300; the per-platform interim_assistant_messages:false overrides removed (her progress lines reach
+  Rachad; tool dumps stay hidden).
+- The profile copies her cron jobs run (%LOCALAPPDATA%\hermes\profiles\dado\scripts\ job_runner.py, dado_inbox_reasoner.py, conduct_review.py,
+  conduct_collect.py) were updated from the repo the same night (backups *.bak_<stamp> beside them).
+NOT wired (left byte-identical, still exact APPROVED + no_retry locks): the WordPress/WooCommerce deployment and media fleet (plugin deployment, packing-
+ring / product-family media, media guard, hetron guide, fixed-origin and orphan-media cleanups, freight quote journey, derakane search migration, FNPT
+catalog cleanup / go-live, tax delivery, catalogue presentation deployment). Create-type paths (item/category/customer/invoice-draft/SO/PO create) have no
+restore route; the inverse is Zoho's own delete/void by Rachad, disclosed in each tool's output.
