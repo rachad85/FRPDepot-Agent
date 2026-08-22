@@ -703,6 +703,215 @@ verification fails, later deletions are not attempted, and the plan becomes
 replacement, attachment/product/plugin/setting/order/customer/payment or mail
 route, and no generic browser command.
 
+## Media Guard 1.0.7 + fixed Open Manway gallery recovery 2.1.0 (2026-08-22)
+
+**STATUS: BUILT AND TESTED ONLY.** Guard **1.0.5 remains the live plugin**. No
+deployment plan and no recovery plan exists from this build, nothing was staged,
+approved, uploaded, deployed or written, and no email was sent. Recovery 2.1.0
+**cannot stage against live 1.0.5**: it pins Guard 1.0.7 and refuses at `stage`,
+before creating any plan, when the live guard is not the pinned build. Deploying
+1.0.7 needs its own later immutable plan and Rachad's own later go.
+
+**GUARD 1.0.6 IS WITHDRAWN AND WAS NEVER DEPLOYED.** It was built on 2026-08-21
+under the same authority, then an independent verification proved it NOT READY.
+Its bytes are kept unchanged as rejected evidence
+(`media_mutation_guard/frpdepot-media-mutation-guard-1.0.6.zip`, 31,640 bytes,
+SHA-256 `6a753c570d167075b8fa0a66349ab0a812aa7e222a7aedb2f6d374b913a7010e`), it is
+classified `WITHDRAWN_NOT_DEPLOYED_NOT_STAGEABLE` in the plugin readme, both
+Python tools and their tests, and **both tools refuse it by hash**. No 1.0.6 plan
+was ever staged. The old build result
+`Dado\20_Working\frp_manway\open_manway_guard_106_recovery_v2_build_result.json`
+is left unedited as the record of what was rejected; the correction result is a
+new file beside it.
+
+### What the verification found, and what 1.0.7 changes
+
+The 1.0.6 build was internally coherent and its tests passed, but its **producer
+and its consumer disagreed**, and its tests could not see it:
+
+1. **Fatal: the proofs the plugin actually emitted could never be accepted.**
+   `frpd_mg_snapshot()` and `frpd_mg_completion_proof()` returned `schema => 2`
+   while the Python consumer pinned `3`. Two further shapes disagreed that nobody
+   had noticed at all: the plugin's own recovery projection published **nine**
+   keys against a five-key consumer, and its completion proof published
+   `attachment_identities` the consumer's closed schema rejected. The PHP suites
+   never called the completion path for Open Manway, and the Python tests
+   fabricated proofs instead of consuming real ones, so nothing failed.
+   **1.0.7 makes this executable.**
+   `media_mutation_guard/test_media_mutation_guard_recovery_lifecycle.php` drives
+   the REAL plugin through acquisition, guarded progress, five reserved uploads,
+   the owner-bound gallery commit, the completion proof and the terminal
+   `completed` transition against a library built to the real pinned totals (364
+   attachments before, 369 after, one private Hetron exception), and publishes
+   every proof it produced to
+   `media_mutation_guard/testdata/guard_107_proof_contract.json`. The Python suite
+   validates that file with the production validators. A producer/consumer drift
+   is now a failing test, not a claim.
+   Completion also validates its proof **before** the terminal state write, and a
+   `guard_completed` proof is only rendered once every closed schema and terminal
+   predicate has passed.
+2. **An expired unresolved row could be overwritten - a semantic retry.**
+   `frpd_mg_active_state()` collapsed every expired row to `null` before decoding
+   it, and acquisition then replaced it with an unconditional
+   `ON DUPLICATE KEY UPDATE`. A recovery that expired holding a reserved-but-unbound
+   upload could be silently reacquired. 1.0.7 splits the reader: `frpd_mg_exact_state()`
+   decodes and validates the row **whether or not it is expired**, and
+   `frpd_mg_active_state()` returns it only while it is live. Replacement is a
+   compare-and-swap keyed on the exact status, version and both durable JSON blobs
+   that were inspected, and only a **strict terminal safe state** may be replaced -
+   a completed row, or an `expired` row with no reservation and no binding beyond
+   its acquisition bindings. Everything else refuses and is preserved
+   byte-semantically. The automatic retire-to-expired write is gone. There is
+   deliberately **no** retry, reset, force-unlock, cleanup, deletion or reacquire
+   route anywhere: recovering a second incident needs its own commissioned path.
+3. **Attachment identity was incomplete.** 1.0.6 proved post type, non-trash
+   status, basename, bytes and hash. 1.0.7 proves one closed identity - exact
+   positive ID and fixed position, post type `attachment`, post status exactly
+   `inherit`, MIME exactly `image/png`, exactly one byte-exact `_wp_attached_file`
+   value, a byte-canonical contained regular non-link original, exact basename,
+   bytes and SHA-256, and the PNG signature with IHDR width, height, bit depth,
+   colour type and mode - for **every** fixed attachment, including 7609. The
+   complete snapshot records those identities and folds them into its digest, and
+   the completion proof re-validates all six.
+4. **The origin-only proof did not prove what it claimed.** 1.0.6 aggregated every
+   discovered path's owners into one de-duplicated list and then compared counts,
+   so "one unowned file plus one two-owner file" reported clean. Each discovered
+   relative path now carries its **own** exact owner ID list and is classified
+   alone; zero owners, more than one owner, more than one discovered copy of a
+   fixed basename, a wrong owner identity or a collation-ambiguous match all
+   refuse. Ownership is queried with an explicit `BINARY` comparison **plus** a
+   second probe that must find no collation-equal-but-byte-different row, so the
+   live case-insensitive `postmeta` collation cannot produce a false match.
+5. **The uploads root itself could be an alias.** Year and month directories were
+   checked; the root was simply `realpath()`ed. 1.0.7 requires the configured root
+   to equal its own canonical path and to be a readable non-link directory, using
+   the same predicate as every year and month directory.
+6. **The admin-post surface contradicted its own contract.** The documented
+   three-field form required a fourth caller-supplied `_wp_http_referer`. The form
+   no longer renders one, the handler refuses a body carrying one, and the raw
+   request body is parsed and compared to `$_POST` so a duplicate or reordered wire
+   field cannot hide. Query parameters, file fields, a non-form content type and a
+   `GET` are all refused.
+7. **A post-claim failure claimed the state was unchanged.** The REST filter
+   claims `active -> gallery` before WooCommerce runs the update, so a downstream
+   failure can leave the row in `gallery`. The failure proof now re-reads the state
+   and says so outright, records the observed status, version and dispatch status,
+   and never mentions rollback.
+
+### Guard 1.0.7 artifact
+
+`media_mutation_guard/frpdepot-media-mutation-guard-1.0.7.zip`, reproducible,
+built twice to independent paths and byte-identical. The immutable 1.0.5 source
+snapshot stays at `media_mutation_guard/released/1.0.5/`, byte-identical to the
+pinned 1.0.5 ZIP, and `wordpress_product_family_media_tool.py` still pins **that** -
+it drives the version that is actually live. The exact 1.0.7 byte counts and
+SHA-256 values are recorded in
+`Dado\20_Working\frp_manway\open_manway_guard_107_recovery_210_correction_result.json`
+and pinned in both Python tools.
+
+### Recovery tool 2.1.0 - the two production defects that mattered
+
+`wordpress_open_manway_gallery_recovery_tool.py` is tool version **2.1.0**, schema
+**3**; every 2.0.0 plan is permanently superseded by identity. Only `stage` and
+`commit --plan --approval` exist.
+
+- **It became permanently stuck after the first successful upload.** The predicate
+  compared the *evolving* live reconciliation to the *frozen* staged one, so the
+  moment upload 2 landed, upload 3 - and eventually the gallery commit and
+  completion - refused. Because that happens **after** the attempt lock, an
+  otherwise successful recovery would have ended `INDETERMINATE_NO_RETRY`. The
+  staged reconciliation is now the immutable **acquisition baseline**, and one
+  normalized progression model derived from the guard's **own durable record**
+  (immutable missing positions, immutable acquisition bindings, current
+  reservations, bound uploads, remaining positions, one optional unbound
+  reservation) says what live state must look like after N uploads. That model is
+  used at stage, at the fresh commit preflight and immediately before every side
+  effect. An attachment appearing at a future missing position that the guard
+  cannot account for, a disappeared binding, a substituted or duplicated ID, or a
+  journal that disagrees with the durable record are all external drift and refuse
+  **before** the next side effect. One reserved-but-unbound upload stops
+  everything. The gallery commit requires all six bindings and no unresolved
+  reservation.
+- **The product legitimately changes exactly once.** Before the gallery commit the
+  fresh product read must equal the staged baseline outright; after it, the gallery
+  IS the recovered six and WordPress has moved `date_modified_gmt`, while every
+  other field - the whole protected projection and its fingerprint - must still be
+  byte-identical. Comparing the post-commit product to the pre-commit baseline
+  outright is what made `complete_guard`, which runs after the write, refuse.
+
+**Two transports, named separately and truthfully.** The commission forbids
+Basic/generic WooCommerce for the **gallery write**, not for the commissioned
+read-only verification, and 2.0.0's plan claimed both at once: it pinned the
+authorization as `PUT /products/1397` and listed "no Basic credentials / no generic
+REST" as forbidden, while the module loaded the Woo vault and read the product with
+`wc.api_get()`. The plan now carries `read_transport` (read-only
+`woocommerce_common.api_get` GETs of `/products/1397`, for exact product identity,
+gallery order and the protected-field fingerprint) and `write_transport` (the
+owner-bound `admin-post` route, exactly three caller-supplied fields, product and
+attachment IDs derived server-side) as separate fields, and
+`assert_no_woocommerce_write_primitive()` **parses this module's own source** and
+refuses if any `api_request`/POST/PUT/PATCH/DELETE call site exists at all. A test
+plants a real write call into a copy of the source and proves the check fails on it.
+
+The `commit_recovery_gallery` browser adapter also gets its own form validator:
+this is the one guard form with **no** `_wp_http_referer`, and the shared 1.0.5
+validator would have rejected the one correct form.
+
+### Recovery suite 2.1.0
+
+Refreshed end to end: 139 tests, zero stale symbols, zero failures, zero errors,
+zero skips. The fake admin is now a small live world - reserving and binding an
+upload changes what every later read reports - so a frozen fake can no longer hide
+a progression defect. `wc.api_request` is mocked to **raise** if it is ever called.
+Ordering is asserted on runtime event sequences, not source-substring positions.
+`read_guarded_live_state` and every post-upload transition are exercised, including
+0-through-5 missing subsets and position 2 already live. The temporary receipt log
+is seeded with the **exact permanent prior line** rather than being emptied, and
+every prior artifact - plan, result, attempt, all four event-journal files and the
+receipt - is proven byte-identical across a stage, a successful mocked commit and
+each of nine failure branches.
+
+### Deployment tool 1.7.0 - the one new transition
+
+`wordpress_media_guard_deployment_tool.py` is tool version **1.7.0**, schema
+**11**, and permits exactly one new transition: replace an **exact installed,
+active, healthy, unchanged 1.0.5** with **exact 1.0.7**. The withdrawn 1.0.6
+artifact is refused by hash and by its embedded version string.
+
+One normalized `assert_deployment_eligibility()` governs stage, the fresh commit
+preflight, **and** `AdminPage.execute_replace()` immediately before the first
+upload form submission - 1.6.0 validated only at stage, re-implemented a subset
+inline at commit, and chose and submitted the artifact with nothing fresher than
+the preflight. Anything that drifts in between is now a **free** refusal with no
+file uploaded.
+
+Live pre-state health proves more than version text: the exact plugin row, active,
+no update marker, `Guard inactive`, the five fixed family sections, no capability
+projection (that absence is 1.0.5's expected fixed shape), no guarded-snapshot,
+completion or recovery-commit controls (their absence is the proof that no guard or
+recovery state is unresolved), and no JavaScript error. Each of the **three**
+post-replacement rounds proves the exact plugin row **and** the exact health
+together - version 1.0.7, active, no update marker, the exact capability with both
+schemas and the runtime-manifest digest, no unexpected state, no JavaScript error.
+1.6.0 verified health three times and read the row once afterwards, so no single
+round proved active-and-healthy at the same moment.
+
+One attempt, no retry, rollback, delete or cleanup. The existing emergency
+deactivation route is unchanged and was not widened. There is no arbitrary plugin,
+setting, content, media, product, user, order, customer, payment, mail or generic
+browser route.
+
+### The permanent prior incident is unchanged and unchangeable
+
+Plan `1c7865b0287b076fe83c179c2e44f33a3bcb2effb048e87374c32ad4781b19df`,
+operation `e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85`,
+result `INDETERMINATE_NO_RETRY` at `upload_2`. Attachment 7609 is verified at
+position 1; position 2 may have landed; positions 3-6 were never attempted; the
+product gallery PUT never happened. The plan, result, attempt, all four
+event-journal files and the exact receipt line are pinned by size and SHA-256 and
+are never opened for writing.
+
+
 ## Revoke access
 
 In WordPress, open **WooCommerce > Settings > Advanced > REST API**, locate the Dado

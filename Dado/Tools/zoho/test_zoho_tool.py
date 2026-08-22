@@ -105,6 +105,12 @@ class ZohoToolTests(unittest.TestCase):
                 # Rachad can review and send it himself. The exact-set assertion
                 # is EXTENDED, not relaxed, so any further scope still fails.
                 "ZohoBooks.purchaseorders.CREATE",
+                # Commissioned 2026-08-21 for zoho_j26_403_revision_tool.py
+                # only: the ONE fixed purchase_order_revision on PO-00010, which
+                # resends every original line untouched and appends exactly the
+                # two fixed non-catalog J26-403 lines. The exact-set assertion is
+                # EXTENDED, not relaxed, so any further scope still fails.
+                "ZohoBooks.purchaseorders.UPDATE",
                 "ZohoInventory.items.CREATE",
                 "ZohoInventory.items.UPDATE",
                 # Commissioned 2026-08-11 for zoho_backing_ring_stock_tool.py
@@ -132,11 +138,11 @@ class ZohoToolTests(unittest.TestCase):
             "ZohoInventory.salesorders.UPDATE",
             "ZohoInventory.salesorders.DELETE",
             "ZohoInventory.salesorders.ALL",
-            # The 2026-08-13 draft-PO commission gained CREATE and nothing else:
-            # a purchase order still cannot be updated, deleted, voided,
-            # cancelled, submitted, approved, received, billed, paid or mailed,
-            # and no Inventory purchase-order write scope exists at all.
-            "ZohoBooks.purchaseorders.UPDATE",
+            # The 2026-08-13 draft-PO commission gained CREATE and the
+            # 2026-08-21 J26-403 line-append commission gained UPDATE. Nothing
+            # else: a purchase order still cannot be deleted, voided, cancelled,
+            # submitted, approved, received, billed, paid or mailed, and no
+            # Inventory purchase-order write scope exists at all.
             "ZohoBooks.purchaseorders.DELETE",
             "ZohoBooks.purchaseorders.ALL",
             "ZohoInventory.purchaseorders.CREATE",
@@ -195,11 +201,14 @@ class ZohoToolTests(unittest.TestCase):
             if "sales-order" in lowered:
                 self.assertIn("sales-order delete", lowered)
                 self.assertNotIn("sales-order update", lowered)
-            # Since 2026-08-13 purchase-order CREATE is commissioned, so this
-            # line must name purchase-order UPDATE/DELETE as what stays absent
-            # and must never claim purchase-order writes are absent outright.
+            # Since 2026-08-13 purchase-order CREATE is commissioned and since
+            # 2026-08-21 so is purchase-order UPDATE, so only DELETE/ALL stay
+            # absent. A line still claiming purchase-order UPDATE is absent, or
+            # claiming purchase-order writes are absent outright, would be the
+            # same false comfort as a stale status line.
             if "purchase-order" in lowered:
-                self.assertIn("purchase-order update/delete", lowered)
+                self.assertIn("purchase-order delete/all", lowered)
+                self.assertNotIn("purchase-order update/delete", lowered)
                 self.assertNotIn("purchase-order create", lowered)
         self.assertIn("ZohoBooks.purchaseorders.CREATE", tool.SCOPES)
         purchase = [line for line in lines if "Books purchase-order writes:" in line]

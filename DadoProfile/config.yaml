@@ -34,7 +34,7 @@ agent:
   # so a runtime import copying this file over live would have silently
   # reverted the fix Rachad asked for.
   clarify_timeout: 0
-  max_turns: 60
+  max_turns: 300
   service_tier: normal
   verbose: false
   reasoning_effort: xhigh
@@ -155,11 +155,9 @@ display:
       tool_progress: false
       busy_ack_detail: false
       long_running_notifications: generic
-      interim_assistant_messages: false
       cleanup_progress: true
     discord:
       tool_progress: false
-      interim_assistant_messages: false
       busy_ack_detail: false
       long_running_notifications: generic
       cleanup_progress: true

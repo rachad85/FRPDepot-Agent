@@ -13,6 +13,10 @@ import unittest
 from unittest import mock
 
 MODULE_PATH = Path(__file__).with_name("wordpress_orphan_media_correction_tool.py")
+DOM_CONTRACT_FIXTURE = (
+    Path(__file__).with_name("testdata")
+    / "wordpress_7_0_3_attachment_dom_contract.json"
+)
 SPEC = importlib.util.spec_from_file_location("wordpress_orphan_media_correction_tool_under_test", MODULE_PATH)
 assert SPEC and SPEC.loader
 m = importlib.util.module_from_spec(SPEC)
@@ -40,8 +44,8 @@ class FixedContractTests(unittest.TestCase):
                             for row in m.PROTECTED_SURVIVOR_GALLERY))
 
     def test_successor_guard_contract_has_no_old_survivor_fixed_matches(self):
-        self.assertEqual(m.TOOL_VERSION, "1.0.0")
-        self.assertEqual(m.SCHEMA_VERSION, 1)
+        self.assertEqual(m.TOOL_VERSION, "1.0.1")
+        self.assertEqual(m.SCHEMA_VERSION, 2)
         manifest = json.loads(
             m.family_media.GUARD_RUNTIME_MANIFEST_PATH.read_text(encoding="utf-8")
         )
@@ -75,6 +79,80 @@ class FixedContractTests(unittest.TestCase):
                          m.PREDECESSOR_OPERATION_SHA256)
         self.assertEqual(evidence["predecessor_event_sha256"],
                          m.PREDECESSOR_EVENT_SHA256)
+
+    def test_attachment_dom_contract_has_pinned_wordpress_core_provenance(self):
+        fixture = json.loads(DOM_CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+        self.assertEqual(fixture["wordpress_version"], m.WORDPRESS_CORE_VERSION)
+        self.assertEqual(
+            fixture["sources"]["media_list"]["sha256"],
+            m.WORDPRESS_MEDIA_LIST_SOURCE_SHA256,
+        )
+        self.assertEqual(
+            fixture["sources"]["edit_form"]["sha256"],
+            m.WORDPRESS_EDIT_FORM_SOURCE_SHA256,
+        )
+        self.assertEqual(
+            fixture["sources"]["attachment_metadata"]["sha256"],
+            m.WORDPRESS_MEDIA_SOURCE_SHA256,
+        )
+        self.assertFalse(
+            fixture["attachment_edit"]["post_parent_hidden_field_exists"]
+        )
+        self.assertEqual(
+            fixture["attachment_edit"]["uploaded_to_box_count_when_unattached"], 0
+        )
+
+    def test_complete_library_parent_adapter_accepts_only_core_unattached_shape(self):
+        fixture = json.loads(DOM_CONTRACT_FIXTURE.read_text(encoding="utf-8"))
+        parent_fixture = fixture["unattached_parent_cell"]
+        admin = object.__new__(m.CleanupAdmin)
+        admin._sanitized_row_link_diagnostic = mock.Mock(return_value={"safe": True})
+        snapshot = {
+            "rows": [
+                {"id": row["attachment_id"], "filename": row["filename"]}
+                for row in m.TARGETS
+            ],
+            "total": 4,
+            "pages": 1,
+            "complete": True,
+            "unidentified": 0,
+        }
+        admin._reader = mock.Mock()
+        admin._reader.enumerate_library.return_value = snapshot
+        rows = {}
+        for attachment_id in m.TARGET_IDS:
+            control = mock.Mock()
+            control.inner_text.return_value = parent_fixture["attach_text"]
+            control.get_attribute.side_effect = lambda name, value=attachment_id: (
+                parent_fixture["onclick_template"].format(attachment_id=value)
+                if name == "onclick" else None
+            )
+            cell = mock.Mock()
+            cell.inner_text.return_value = parent_fixture["inner_text"]
+            cell.query_selector_all.side_effect = lambda selector, item=control: (
+                [item] if selector in {
+                    "a[href]", parent_fixture["attach_selector"],
+                } else []
+            )
+            row = mock.Mock()
+            row.query_selector_all.side_effect = lambda selector, item=cell: (
+                [item] if selector == parent_fixture["selector"] else []
+            )
+            rows[attachment_id] = row
+        admin._page = mock.Mock()
+        admin._page.query_selector_all.side_effect = lambda selector: [
+            row for attachment_id, row in rows.items()
+            if selector == f"{m.media_base.LIST_ROW_SELECTOR}#post-{attachment_id}"
+        ]
+        result = admin.enumerate_library()
+        self.assertEqual(result["target_parent_states"], exact_parent_states())
+        admin._reader._goto.assert_called_once_with(m.media_base.library_page_url(1))
+
+        rows[5521].query_selector_all("td.parent.column-parent")[0].inner_text.return_value = (
+            "Attached product"
+        )
+        with self.assertRaises(m.CleanupError):
+            admin.enumerate_library()
 
     def test_predecessor_state_must_be_exactly_one_permanent_event(self):
         raw = m.PREDECESSOR_EVENT.read_bytes()
@@ -165,7 +243,7 @@ class FixedContractTests(unittest.TestCase):
             "post_id": "5521",
             "post_type": "attachment",
             "original_post_status": "inherit",
-            "post_parent": "0",
+            "uploaded_to_box": "absent",
         })
         control = mock.Mock()
         control.inner_text.return_value = "Delete Permanently"
@@ -173,8 +251,13 @@ class FixedContractTests(unittest.TestCase):
         admin._page.url = "https://frpdepots.com/wp-admin/post.php?post=5521&action=edit"
         admin._page.query_selector_all.return_value = [control]
         admin._delete_control_exact = mock.Mock(return_value=True)
-        value = admin._edit_dom_projection(5521)
-        self.assertEqual(value["identity_route"], "canonical_attachment_edit_dom_only")
+        parent = {"id": 5521, "state": "unattached", "attach_control_exact": True}
+        value = admin._edit_dom_projection(5521, library_parent_state=parent)
+        self.assertEqual(
+            value["identity_route"],
+            "canonical_attachment_edit_dom_plus_complete_library_parent",
+        )
+        self.assertEqual(value["library_parent_state"], parent)
         self.assertEqual(value["registered_urls"], [m.TARGETS[0]["source_url"]])
         admin.read_attachment.assert_called_once_with(
             5521, expected_basename=m.TARGETS[0]["filename"]
@@ -201,29 +284,65 @@ class FixedContractTests(unittest.TestCase):
             admin._page = mock.Mock()
             admin._page.url = url
             with self.subTest(url=url), self.assertRaises(m.CleanupError):
-                admin._edit_dom_projection(5521)
+                admin._edit_dom_projection(
+                    5521,
+                    library_parent_state={
+                        "id": 5521, "state": "unattached",
+                        "attach_control_exact": True,
+                    },
+                )
 
-    def test_edit_identity_requires_one_exact_form_and_unattached_parent(self):
+    def test_edit_identity_requires_exact_form_and_no_uploaded_to_box(self):
         selectors = {
             "form#post": [mock.Mock()],
             'input#post_ID[name="post_ID"][type="hidden"]': [mock.Mock()],
             'input#post_type[name="post_type"][type="hidden"]': [mock.Mock()],
             'input#original_post_status[name="original_post_status"][type="hidden"]': [mock.Mock()],
-            'input#post_parent[name="post_parent"][type="hidden"]': [mock.Mock()],
+            ".misc-pub-uploadedto": [],
         }
-        values = ["5521", "attachment", "inherit", "0"]
+        values = ["5521", "attachment", "inherit"]
         for elements, value in zip(list(selectors.values())[1:], values):
             elements[0].input_value.return_value = value
         admin = object.__new__(m.CleanupAdmin)
         admin._page = mock.Mock()
         admin._page.query_selector_all.side_effect = lambda selector: selectors.get(selector, [])
-        self.assertEqual(admin._edit_identity(5521)["post_parent"], "0")
-        selectors['input#post_parent[name="post_parent"][type="hidden"]'][0].input_value.return_value = "1397"
+        self.assertEqual(admin._edit_identity(5521)["uploaded_to_box"], "absent")
+        selectors[".misc-pub-uploadedto"] = [mock.Mock()]
         with self.assertRaises(m.CleanupError):
             admin._edit_identity(5521)
+        selectors[".misc-pub-uploadedto"] = []
         selectors["form#post"] = [mock.Mock(), mock.Mock()]
         with self.assertRaises(m.CleanupError):
             admin._edit_identity(5521)
+
+    def test_edit_identity_failure_discloses_only_sanitized_field_shapes(self):
+        secret = "SENSITIVE_NONCE_VALUE_123"
+        post_id = mock.Mock()
+        post_id.input_value.return_value = "5521"
+        nonce = mock.Mock()
+        nonce.input_value.return_value = secret
+        nonce.get_attribute.side_effect = lambda name: {
+            "id": "_wpnonce", "name": "_wpnonce", "type": "hidden",
+        }.get(name)
+        selectors = {
+            "form#post": [mock.Mock()],
+            'input#post_ID[name="post_ID"][type="hidden"]': [post_id],
+            'input#post_type[name="post_type"][type="hidden"]': [],
+            'input#original_post_status[name="original_post_status"][type="hidden"]': [],
+            "form#post input": [nonce],
+            ".misc-pub-uploadedto": [],
+        }
+        admin = object.__new__(m.CleanupAdmin)
+        admin._page = mock.Mock()
+        admin._page.query_selector_all.side_effect = lambda selector: selectors.get(selector, [])
+        with self.assertRaises(m.CleanupError) as caught:
+            admin._edit_identity(5521)
+        rendered = str(caught.exception)
+        self.assertIn('\"post_type\":0', rendered)
+        self.assertIn('\"name\":\"_wpnonce\"', rendered)
+        self.assertIn('\"values_retained\":false', rendered)
+        self.assertNotIn(secret, rendered)
+        nonce.input_value.assert_not_called()
 
     def test_delete_adapter_records_event_before_click_and_cleans_listener(self):
         admin = object.__new__(m.CleanupAdmin)
@@ -490,6 +609,7 @@ class ProjectionTests(unittest.TestCase):
         value = m.library_projection({
             "rows": rows, "total": len(rows), "complete": True,
             "pages": 1, "unidentified": 0,
+            "target_parent_states": exact_parent_states(),
         })
         self.assertEqual(value["total"], 5)
         self.assertEqual(value["target_rows"], [
@@ -611,6 +731,13 @@ class ProjectionTests(unittest.TestCase):
                     {"fake": True}, max_items=m.media_base.MAX_LIBRARY_ROWS,
                 )
 
+def exact_parent_states(ids=m.TARGET_IDS):
+    return [
+        {"id": attachment_id, "state": "unattached", "attach_control_exact": True}
+        for attachment_id in ids
+    ]
+
+
 def valid_before_state():
     survivor = [{"id": 100, "filename": "survivor.png", "stem": "survivor"}]
     library_rows = survivor + [
@@ -623,6 +750,7 @@ def valid_before_state():
         "complete": True,
         "pages": 1,
         "unidentified": 0,
+        "target_parent_states": exact_parent_states(),
     })
     attachments = []
     for row in m.TARGETS:
@@ -635,9 +763,14 @@ def valid_before_state():
                 "post_id": str(attachment_id),
                 "post_type": "attachment",
                 "original_post_status": "inherit",
-                "post_parent": "0",
+                "uploaded_to_box": "absent",
             },
-            "identity_route": "canonical_attachment_edit_dom_only",
+            "library_parent_state": {
+                "id": attachment_id,
+                "state": "unattached",
+                "attach_control_exact": True,
+            },
+            "identity_route": "canonical_attachment_edit_dom_plus_complete_library_parent",
             "source_provenance": "immutable_locked_upload_result",
             "registered_urls": [row["source_url"]],
             "delete_control_exact": True,
@@ -790,7 +923,7 @@ class PlanTests(unittest.TestCase):
         )
 
     def test_plan_schema_change_keeps_successor_operation_identity(self):
-        self.assertEqual(m.SCHEMA_VERSION, 1)
+        self.assertEqual(m.SCHEMA_VERSION, 2)
         self.assertEqual(m.OPERATION_SCHEMA_VERSION, 1)
         operation = m.operation_sha(self.source, self.before)
         self.assertNotEqual(operation, m.PREDECESSOR_OPERATION_SHA256)
@@ -863,7 +996,10 @@ class CommitFlowTests(PlanTests):
 
         def enumerate_library(self):
             rows = [{"id": 100, "filename": "survivor.png"}]
-            return {"rows": rows, "total": 1, "complete": True}
+            return {
+                "rows": rows, "total": 1, "complete": True,
+                "pages": 1, "unidentified": 0, "target_parent_states": [],
+            }
 
         def atomic_snapshot(self, key):
             return ProjectionTests.guard(failures=False)
@@ -895,6 +1031,7 @@ class CommitFlowTests(PlanTests):
                 "complete": True,
                 "pages": 1,
                 "unidentified": 0,
+                "target_parent_states": exact_parent_states(remaining),
             }, expected_present_ids=remaining)
             guard_projection = m.guard_projection(
                 guard, expected_failure_ids=remaining

@@ -35,7 +35,7 @@ Six defects were found and every one of them is now an executable test:
    send it to `/wp-json/`. It would have received `frpd_mg_gallery_owner`/403
    AFTER the uploads and the permanent no-retry lock. There is NO
    `wc.api_request` call in this module any more. The gallery mutation happens
-   through Guard 1.0.6's one fixed authenticated `admin_post` form, submitted in
+   through Guard 1.0.7's one fixed authenticated `admin_post` form, submitted in
    the guard-owning browser, so the existing
    `woocommerce_rest_pre_insert_product_object` filter sees the real owner.
 2. ORIGIN-ONLY COLLISION ABSENCE IS NOW PROVEN BY THE GUARD. v1 declared the
@@ -58,8 +58,13 @@ Six defects were found and every one of them is now an executable test:
    ordering, the stage-time predicate use is actually observed, and the mocked
    transports no longer paper over an owner mismatch.
 
-*** GUARD 1.0.6 IS REQUIRED AND IS NOT LIVE YET. ***
-This tool pins Media Mutation Guard 1.0.6. The site still runs 1.0.5, which
+*** GUARD 1.0.7 IS REQUIRED AND IS NOT LIVE YET. ***
+This tool pins Media Mutation Guard 1.0.7. Guard 1.0.6 is WITHDRAWN: an
+independent review proved its producer emitted schema-2 proofs while its
+consumer pinned schema 3, so a real snapshot could not be accepted at all, and
+its acquisition could overwrite an expired-but-unresolved row. Its bytes are
+kept unchanged as rejected evidence and are refused here by hash. The site still
+runs 1.0.5, which
 cannot serve this recovery at all: its `frpd_mg_acquisition_bindings()` refuses
 any non-Stub-Flange family whose pre-guard proof reports a fixed match (7609 IS
 one), and its `frpd_mg_state_bindings_are_valid()` requires reserved uploads to
@@ -75,6 +80,7 @@ transport of any kind.
 from __future__ import annotations
 
 import argparse
+import ast
 import contextlib
 import copy
 from datetime import datetime, timedelta, timezone
@@ -98,8 +104,8 @@ import wordpress_product_family_media_tool as family_base  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Open Manway Gallery Recovery Tool"
-TOOL_VERSION = "2.0.0"
-SCHEMA_VERSION = 2
+TOOL_VERSION = "2.1.0"
+SCHEMA_VERSION = 3
 # Every v1 plan is permanently superseded. None was ever staged -- the v1 stage
 # path refused before writing one, and the plan folder has never existed -- so
 # this set is empty by fact, not by omission. `load_plan` additionally refuses
@@ -108,7 +114,7 @@ SCHEMA_VERSION = 2
 # disk is refused by identity as well.
 SUPERSEDED_PLAN_SHA256: frozenset[str] = frozenset()
 SUPERSEDED_OPERATION_SHA256: frozenset[str] = frozenset()
-SUPERSEDED_TOOL_VERSIONS = ("1.0.0",)
+SUPERSEDED_TOOL_VERSIONS = ("1.0.0", "2.0.0")
 ACTION = "recover_fixed_open_manway_gallery"
 APPROVAL_WORD = "APPROVED"
 PLAN_LIFETIME_HOURS = 24
@@ -242,24 +248,39 @@ POSITIONS = tuple(range(1, IMAGE_COUNT + 1))
 # Installed guard capability, derived from the pinned plugin source and recorded
 # so a future plugin change forces this to be re-derived rather than assumed.
 # --------------------------------------------------------------------------
-# *** THIS TOOL PINS GUARD 1.0.6, NOT THE 1.0.5 THE FAMILY TOOL DRIVES. ***
+# *** THIS TOOL PINS GUARD 1.0.7, NOT THE 1.0.5 THE FAMILY TOOL DRIVES. ***
 # `wordpress_product_family_media_tool` deliberately still pins the INSTALLED
 # 1.0.5 release snapshot, so its constants cannot be reused here. These are read
-# from the 1.0.6 build tree and are re-derived, never assumed.
-GUARD_PLUGIN_VERSION = "1.0.6"
+# from the 1.0.7 build tree and are re-derived, never assumed. Every proof shape
+# validated below is produced by the real plugin in
+# `media_mutation_guard/test_media_mutation_guard_recovery_lifecycle.php` and
+# published to `media_mutation_guard/testdata/guard_107_proof_contract.json`,
+# which the contract test in this tool's suite validates with these very
+# functions -- 1.0.6 shipped a consumer pinned to a schema its own producer never
+# emitted, and that is the drift this fixture makes executable.
+GUARD_PLUGIN_VERSION = "1.0.7"
 GUARD_STATE_SCHEMA = 3
 GUARD_PROOF_SCHEMA = 3
 GUARD_TTL_SECONDS = family_base.GUARD_TTL_SECONDS
 GUARD_DIR = THIS_DIR / "media_mutation_guard"
-GUARD_ZIP_PATH = GUARD_DIR / "frpdepot-media-mutation-guard-1.0.6.zip"
-GUARD_ZIP_SHA256 = "6a753c570d167075b8fa0a66349ab0a812aa7e222a7aedb2f6d374b913a7010e"
-GUARD_ZIP_BYTES = 31640
+GUARD_ZIP_PATH = GUARD_DIR / "frpdepot-media-mutation-guard-1.0.7.zip"
+GUARD_ZIP_SHA256 = "a1f6bf204e443dea9008699abcaf96e7da868a894a5f569215c572c9963ab2d1"
+GUARD_ZIP_BYTES = 35656
+# *** 1.0.6 IS WITHDRAWN. *** Its bytes are kept unchanged as rejected evidence and
+# are refused by identity here, so a 1.0.6 artifact found on disk can never be
+# validated, staged or deployed by this build.
+WITHDRAWN_GUARD_ARTIFACTS: dict[str, str] = {
+    "6a753c570d167075b8fa0a66349ab0a812aa7e222a7aedb2f6d374b913a7010e":
+        "WITHDRAWN_NOT_DEPLOYED_NOT_STAGEABLE",
+}
+WITHDRAWN_GUARD_PLUGIN_VERSIONS = ("1.0.6",)
+GUARD_PROOF_CONTRACT_PATH = GUARD_DIR / "testdata" / "guard_107_proof_contract.json"
 GUARD_PLUGIN_PHP_PATH = GUARD_DIR / "frpdepot-media-mutation-guard" / "frpdepot-media-mutation-guard.php"
-GUARD_PLUGIN_PHP_SHA256 = "ce8eee161f4d288393ad1e4014b29f043e367855fd031c69936e91e346328fb9"
-GUARD_PLUGIN_PHP_BYTES = 126655
+GUARD_PLUGIN_PHP_SHA256 = "87209d942828f2042c26225f48ebe18c91a336dbed1411a102290a3dbf1623bf"
+GUARD_PLUGIN_PHP_BYTES = 146101
 GUARD_RUNTIME_MANIFEST_PATH = GUARD_DIR / "frpdepot-media-mutation-guard" / "approved-media.json"
-GUARD_RUNTIME_MANIFEST_SHA256 = "180a76a2ea975fc02f18e69a00083ae9c185bacd84fa56071a23a8004352164e"
-GUARD_RUNTIME_MANIFEST_BYTES = 4950
+GUARD_RUNTIME_MANIFEST_SHA256 = "adb9b81f7a8e55205c7224af6005c0c386ec833eef36be7281dca96313e9d900"
+GUARD_RUNTIME_MANIFEST_BYTES = 5910
 GUARD_RECOVERY_CONTRACT = "open_manway_recovery"
 GUARD_CAPABILITY_SELECTOR = "script#frpd-mg-capability[type='application/json']"
 GUARD_ORIGIN_PROOF_SELECTOR = "#frpd-mg-origin-proof"
@@ -268,10 +289,117 @@ GUARD_RECOVERY_GALLERY_SELECTOR = "#frpd-mg-recovery-gallery"
 GUARD_RECOVERY_GALLERY_FORM_SELECTOR = "#frpd-mg-recovery-gallery-form"
 GUARD_RECOVERY_GALLERY_ACTION = "frpd_media_guard_recovery_gallery"
 GUARD_RECOVERY_IF_MATCH_SELECTOR = "#frpd-mg-recovery-if-match"
+
+# --------------------------------------------------------------------------
+# TWO TRANSPORTS, NAMED SEPARATELY AND HONESTLY.
+#
+# v2.0.0's plan pinned the authorization as `PUT /products/1397` and its
+# forbidden list said "no Basic WooCommerce credentials / no generic REST",
+# while the module in fact loaded the Woo vault and read the product with
+# `wc.api_get()`. Both statements cannot be true. The commission forbids
+# Basic/generic Woo for the GALLERY WRITE, not for the commissioned read-only
+# verification, so the two are now declared apart and the claim matches the code:
+# there is no write primitive of any kind reachable from this module, which
+# `assert_no_woocommerce_write_primitive()` proves against its own source.
+# --------------------------------------------------------------------------
+READ_TRANSPORT: dict[str, Any] = {
+    "kind": "woocommerce_rest_read_only",
+    "client": "woocommerce_common.api_get",
+    "method": "GET",
+    "routes": [f"/products/{PRODUCT_ID}"],
+    "purpose": "fresh exact product identity, gallery order and protected-field "
+               "fingerprint verification only",
+    "performs_writes": False,
+    "credential": "the commissioned WooCommerce vault, used for GET only; no write "
+                  "primitive is reachable from this module",
+}
+WRITE_TRANSPORT: dict[str, Any] = {
+    "kind": "guard_owned_admin_post_form",
+    "route": "/wp-admin/admin-post.php",
+    "action": GUARD_RECOVERY_GALLERY_ACTION,
+    "method": "POST",
+    "submitted_in": "the already-authenticated guard-owning WordPress browser",
+    "caller_supplied_fields": ["action", "_wpnonce", "if_match"],
+    "server_derived_fields": ["product_id", "attachment_ids"],
+    "server_side_effect": "one internal images-only WooCommerce product update inside "
+                          "the same authenticated request",
+    "forbidden": [
+        "woocommerce_common.api_request", "basic_woocommerce_credentials_for_the_write",
+        "consumer_key_write", "external_loopback_http", "generic_rest_write_route",
+        "browser_supplied_image_ids", "product_edit_form",
+    ],
+}
+# Any WooCommerce call that is not a read. None of these may appear in this module.
+FORBIDDEN_WRITE_PRIMITIVES = (
+    "api_request", "api_post", "api_put", "api_patch", "api_delete",
+    "requests.post", "requests.put", "requests.patch", "requests.delete",
+)
+
+
+def _called_names(tree: ast.AST) -> list[str]:
+    """Every callee this module actually invokes, as a dotted name."""
+    names: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        target = node.func
+        parts: list[str] = []
+        while isinstance(target, ast.Attribute):
+            parts.append(target.attr)
+            target = target.value
+        if isinstance(target, ast.Name):
+            parts.append(target.id)
+        if parts:
+            names.append(".".join(reversed(parts)))
+    return names
+
+
+_TRANSPORT_PROOF_CACHE: dict[str, dict[str, Any]] = {}
+
+
+def assert_no_woocommerce_write_primitive() -> dict[str, Any]:
+    """Prove from this module's own PARSED source that no Woo write primitive exists.
+
+    This walks real call sites, not text: the module names `wc.api_request` in its
+    docstring and in its forbidden list on purpose, and a substring scan would
+    either fire on that prose or have to be weakened until it proved nothing.
+    Read-only `api_get` calls are counted and reported rather than hidden, so the
+    plan can state what the read transport actually is.
+    """
+    try:
+        raw = Path(__file__).resolve().read_bytes()
+    except OSError as exc:  # pragma: no cover - unreadable own source
+        raise RecoveryError("REFUSED: this module's own source is unreadable.") from exc
+    digest = hashlib.sha256(raw).hexdigest()
+    cached = _TRANSPORT_PROOF_CACHE.get(digest)
+    if cached is not None:
+        return copy.deepcopy(cached)
+    try:
+        tree = ast.parse(raw.decode("utf-8"))
+    except (UnicodeDecodeError, SyntaxError) as exc:  # pragma: no cover
+        raise RecoveryError("REFUSED: this module's own source is unreadable.") from exc
+    called = _called_names(tree)
+    found = sorted({name for name in called
+                    if name.split(".")[-1] in FORBIDDEN_WRITE_PRIMITIVES})
+    if found:
+        raise RecoveryError(
+            "REFUSED: a WooCommerce write primitive is reachable from this module: "
+            f"{found}. The gallery write must only ever be the owner-bound admin-post form."
+        )
+    proof = {
+        "woocommerce_write_primitives_reachable": [],
+        "woocommerce_read_calls": sorted(
+            {name for name in called if name in ("wc.api_get", "api_get")}),
+        "read_transport": copy.deepcopy(READ_TRANSPORT),
+        "write_transport": copy.deepcopy(WRITE_TRANSPORT),
+    }
+    _TRANSPORT_PROOF_CACHE[digest] = copy.deepcopy(proof)
+    return proof
 GUARD_EXPECTED_CAPABILITY: dict[str, Any] = {
-    "schema": 3,
+    "schema": GUARD_PROOF_SCHEMA,
     "plugin_version": GUARD_PLUGIN_VERSION,
     "state_schema": GUARD_STATE_SCHEMA,
+    "proof_schema": GUARD_PROOF_SCHEMA,
     "manifest_sha256": GUARD_RUNTIME_MANIFEST_SHA256,
     "families": ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"],
     "fixed_reuse_family": "stub_flange",
@@ -623,7 +751,7 @@ def validate_local_images() -> list[dict[str, Any]]:
 # in a different month, and no public request can see a file whose attachment row
 # never landed -- which is exactly the state the ambiguous upload 2 could have
 # left behind. There is no HTTP client, URL builder or public probe left in this
-# module. Guard 1.0.6 enumerates its own uploads directory, bounded and fail
+# module. Guard 1.0.7 enumerates its own uploads directory, bounded and fail
 # closed, and this validates the proof it returns.
 # --------------------------------------------------------------------------
 ORIGIN_PROOF_KEYS = {
@@ -634,7 +762,11 @@ ORIGIN_FILE_KEYS = {
     "position", "basename", "discovered", "paths", "owner_attachment_ids",
     "bytes_and_hash_exact", "origin_only",
 }
-ORIGIN_PATH_KEYS = {"relative_path", "bytes", "sha256"}
+# Every discovered path carries its OWN classification and its OWN owner list.
+# 1.0.6 aggregated owners across paths before classifying, so "one unowned file
+# plus one two-owner file" reported clean.
+ORIGIN_PATH_KEYS = {"relative_path", "bytes", "sha256", "bytes_and_hash_exact",
+                    "owner_attachment_ids"}
 SAFE_RELATIVE_PATH = re.compile(r"\A(?:[0-9]{4}/[0-9]{2}/)?[^/\\:]+\Z")
 
 
@@ -680,29 +812,75 @@ def validate_origin_proof(proof: Any) -> dict[str, Any]:
                 raise RecoveryError("REFUSED: an origin-file owner attachment ID is invalid.")
         if len(set(row["owner_attachment_ids"])) != len(row["owner_attachment_ids"]):
             raise RecoveryError("REFUSED: an origin-file record repeats an owner attachment ID.")
+        seen_relative: set[str] = set()
+        aggregated: list[int] = []
         for entry in row["paths"]:
             if not isinstance(entry, dict) or set(entry) != ORIGIN_PATH_KEYS:
                 raise RecoveryError("REFUSED: an origin-file path record has the wrong schema.")
             relative = str(entry["relative_path"])
             if (not SAFE_RELATIVE_PATH.match(relative)
                     or Path(relative).name != fixed["filename"]
-                    or ".." in relative):
+                    or ".." in relative or relative in seen_relative):
                 raise RecoveryError(
-                    "REFUSED: the guard reported an unsafe or absolute origin path."
+                    "REFUSED: the guard reported an unsafe, absolute or repeated origin path."
                 )
-            if type(entry["bytes"]) is not int or entry["bytes"] < 0:
-                raise RecoveryError("REFUSED: an origin-file byte count is invalid.")
+            seen_relative.add(relative)
+            if (type(entry["bytes"]) is not int or entry["bytes"] < 0
+                    or type(entry["bytes_and_hash_exact"]) is not bool
+                    or not isinstance(entry["owner_attachment_ids"], list)):
+                raise RecoveryError("REFUSED: an origin-file path record is invalid.")
+            path_owners = entry["owner_attachment_ids"]
+            for owner in path_owners:
+                if type(owner) is not int or owner <= 0:
+                    raise RecoveryError("REFUSED: an origin path owner attachment ID is invalid.")
+            if len(set(path_owners)) != len(path_owners):
+                raise RecoveryError("REFUSED: an origin path repeats an owner attachment ID.")
+            aggregated.extend(path_owners)
             _hex64(entry["sha256"], "origin file digest")
-        expected_origin_only = (row["discovered"] > 0
-                                and len(row["owner_attachment_ids"]) != row["discovered"])
+            if (entry["bytes_and_hash_exact"]
+                    and (entry["bytes"] != fixed["bytes"] or entry["sha256"] != fixed["sha256"])):
+                raise RecoveryError(
+                    "REFUSED: an origin path claims exact approved bytes it does not carry."
+                )
+        if sorted(set(aggregated)) != sorted(row["owner_attachment_ids"]):
+            raise RecoveryError(
+                "REFUSED: an origin-file record's owner summary disagrees with its own "
+                "per-path owner lists."
+            )
+        # The blocker state is decided PER PATH, exactly as the plugin decides it:
+        # one discovered copy, owned by exactly one attachment, with exact bytes.
+        expected_origin_only = row["discovered"] > 0 and not (
+            row["discovered"] == 1
+            and len(row["paths"][0]["owner_attachment_ids"]) == 1
+            and row["paths"][0]["bytes_and_hash_exact"] is True
+        )
         if row["origin_only"] is not expected_origin_only:
             raise RecoveryError("REFUSED: an origin-file record misreports its own blocker state.")
+        if (row["discovered"] == 1 and not expected_origin_only
+                and row["bytes_and_hash_exact"] is not True):
+            raise RecoveryError(
+                "REFUSED: an origin-file record reports a clean fixed file without exact bytes."
+            )
     declared = proof["origin_only"]
     if not isinstance(declared, list):
         raise RecoveryError("REFUSED: origin-only blocker evidence is not a list.")
-    actual = [row["position"] for row in files if row["origin_only"]]
-    if sorted(int(row.get("position") or 0) for row in declared
-              if isinstance(row, dict)) != sorted(actual):
+    # Every PATH of an origin-only basename must be listed, not just the basename.
+    expected_declared = sorted(
+        (row["position"], entry["relative_path"], entry["bytes_and_hash_exact"],
+         tuple(entry["owner_attachment_ids"]))
+        for row in files if row["origin_only"] for entry in row["paths"]
+    )
+    declared_rows = []
+    for row in declared:
+        if (not isinstance(row, dict)
+                or set(row) != {"position", "relative_path", "bytes_and_hash_exact",
+                                "owner_attachment_ids"}
+                or not isinstance(row["owner_attachment_ids"], list)):
+            raise RecoveryError("REFUSED: an origin-only blocker record has the wrong schema.")
+        declared_rows.append((row["position"], row["relative_path"],
+                              row["bytes_and_hash_exact"],
+                              tuple(row["owner_attachment_ids"])))
+    if sorted(declared_rows) != expected_declared:
         raise RecoveryError("REFUSED: origin-only blocker evidence disagrees with its own records.")
     return copy.deepcopy(proof)
 
@@ -947,21 +1125,21 @@ def reuse_positions(reconciliation: list[dict[str, Any]]) -> list[int]:
 
 
 # --------------------------------------------------------------------------
-# Guard 1.0.6
+# Guard 1.0.7
 #
 # The family tool's validators are pinned to the INSTALLED 1.0.5 plugin, so they
-# cannot be reused to check a 1.0.6 proof. These are this tool's own, derived
-# from the 1.0.6 source and package it pins by hash.
+# cannot be reused to check a 1.0.7 proof. These are this tool's own, derived
+# from the 1.0.7 source and package it pins by hash.
 # --------------------------------------------------------------------------
 def validate_guard_package() -> dict[str, Any]:
-    """Pin the exact 1.0.6 ZIP, PHP source and runtime manifest by size and hash."""
+    """Pin the exact 1.0.7 ZIP, PHP source and runtime manifest by size and hash."""
     try:
         zip_raw = GUARD_ZIP_PATH.read_bytes()
         php_raw = GUARD_PLUGIN_PHP_PATH.read_bytes()
         manifest_raw = GUARD_RUNTIME_MANIFEST_PATH.read_bytes()
         manifest = json.loads(manifest_raw.decode("utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise RecoveryError("REFUSED: the pinned Guard 1.0.6 artifacts are unreadable.") from exc
+        raise RecoveryError("REFUSED: the pinned Guard 1.0.7 artifacts are unreadable.") from exc
     if (len(zip_raw) != GUARD_ZIP_BYTES or len(php_raw) != GUARD_PLUGIN_PHP_BYTES
             or len(manifest_raw) != GUARD_RUNTIME_MANIFEST_BYTES
             or not secrets.compare_digest(hashlib.sha256(zip_raw).hexdigest(), GUARD_ZIP_SHA256)
@@ -970,7 +1148,7 @@ def validate_guard_package() -> dict[str, Any]:
             or not secrets.compare_digest(hashlib.sha256(manifest_raw).hexdigest(),
                                           GUARD_RUNTIME_MANIFEST_SHA256)):
         raise RecoveryError(
-            "REFUSED: the Guard 1.0.6 package or source changed; this tool's recovery "
+            "REFUSED: the Guard 1.0.7 package or source changed; this tool's recovery "
             "capability must be re-derived from the new source before it may stage."
         )
     recovery = manifest.get("fixed_recovery")
@@ -987,7 +1165,7 @@ def validate_guard_package() -> dict[str, Any]:
             or recovery.get("prior_plan_sha256") != PRIOR_PLAN_SHA256
             or recovery.get("recoverable_positions") != [2, 3, 4, 5, 6]):
         raise RecoveryError(
-            "REFUSED: the Guard 1.0.6 runtime manifest does not carry the exact fixed "
+            "REFUSED: the Guard 1.0.7 runtime manifest does not carry the exact fixed "
             "Open Manway recovery contract."
         )
     # The Stub Flange reuse contract must survive untouched alongside it.
@@ -996,7 +1174,7 @@ def validate_guard_package() -> dict[str, Any]:
             or reuse.get("attachment_id") != 4849
             or reuse.get("upload_positions") != [2, 3, 4, 5, 6]):
         raise RecoveryError(
-            "REFUSED: Guard 1.0.6 does not preserve the separate fixed Stub Flange reuse contract."
+            "REFUSED: Guard 1.0.7 does not preserve the separate fixed Stub Flange reuse contract."
         )
     families = manifest.get("families")
     if (not isinstance(families, dict)
@@ -1005,7 +1183,7 @@ def validate_guard_package() -> dict[str, Any]:
             or families[FAMILY_KEY].get("product_id") != PRODUCT_ID
             or [row.get("filename") for row in families[FAMILY_KEY]["images"]]
                 != list(FIXED_FILENAMES)):
-        raise RecoveryError("REFUSED: Guard 1.0.6 family protections are not preserved exactly.")
+        raise RecoveryError("REFUSED: Guard 1.0.7 family protections are not preserved exactly.")
     return {
         "plugin_version": GUARD_PLUGIN_VERSION,
         "state_schema": GUARD_STATE_SCHEMA,
@@ -1040,7 +1218,7 @@ def validate_live_capability(value: Any) -> dict[str, Any]:
     """The LIVE guard page must publish exactly the pinned capability projection."""
     if value != GUARD_EXPECTED_CAPABILITY:
         raise RecoveryError(
-            "REFUSED: the live media guard does not publish the exact Guard 1.0.6 recovery "
+            "REFUSED: the live media guard does not publish the exact Guard 1.0.7 recovery "
             "capability this plan pins. Guard 1.0.5 is still installed, or the installed "
             "build is not the pinned one. NOTHING WAS STAGED. This tool will not deploy, "
             "replace, modify or work around a plugin."
@@ -1064,11 +1242,11 @@ def guard_contract() -> dict[str, Any]:
         "fixed_private_exception": copy.deepcopy(family_base.GUARD_PRIVATE_EXCEPTION),
         "image_count": IMAGE_COUNT,
         "deploys_or_modifies_a_plugin": False,
+        "read_transport": copy.deepcopy(READ_TRANSPORT),
+        "write_transport": copy.deepcopy(WRITE_TRANSPORT),
         "gallery_transport": "guard_owned_admin_post_form",
-        "gallery_transport_forbidden": [
-            "wc.api_request", "basic_woocommerce_credentials", "consumer_key",
-            "external_loopback_http", "generic_rest_route", "product_edit_form",
-        ],
+        "gallery_transport_forbidden": list(WRITE_TRANSPORT["forbidden"]),
+        "static_transport_proof": assert_no_woocommerce_write_primitive(),
         "flow": ["origin_proof", "atomic_snapshot", "acquire", "missing_uploads_only",
                  "guarded_snapshot", "owner_bound_admin_post_gallery_commit", "complete"],
     }
@@ -1120,12 +1298,12 @@ def require_guard_supports_recovery(reconciliation: list[dict[str, Any]],
 
 
 def validate_guard_snapshot_proof(value: Any, mode: str, guard_active: bool) -> dict[str, Any]:
-    """This tool's own 1.0.6 snapshot validator, with the closed recovery keys."""
+    """This tool's own 1.0.7 snapshot validator, with the closed recovery keys."""
     base_keys = {
         "schema", "plugin_version", "mode", "family", "generated_utc",
         "attachment_total", "hashed_total", "total_bytes", "snapshot_sha256",
         "complete", "failures", "private_exceptions", "name_conflicts", "hash_conflicts",
-        "fixed_matches", "guard_active",
+        "fixed_matches", "fixed_identities", "guard_active",
     }
     if mode in {"guard_acquired", "guarded_snapshot"}:
         base_keys |= {"guard_expires_utc", "reserved_uploads"}
@@ -1159,6 +1337,14 @@ def validate_guard_snapshot_proof(value: Any, mode: str, guard_active: bool) -> 
         private = family_base._guard_private_exception_rows(value["private_exceptions"])
         for field in ("name_conflicts", "hash_conflicts", "fixed_matches"):
             family_base._guard_match_rows(value[field], field.replace("_", "-"), FAMILY_KEY)
+    identities = validate_fixed_identities(value["fixed_identities"])
+    if ([{"attachment_id": row["attachment_id"], "fixed_position": row["position"]}
+         for row in identities]
+            != sorted(value["fixed_matches"], key=lambda row: row["fixed_position"])):
+        raise RecoveryError(
+            "REFUSED: the guard snapshot's complete fixed identities do not name exactly "
+            "its own fixed matches."
+        )
     if value["attachment_total"] != (
             value["hashed_total"] + len(private) + len(value["failures"])):
         raise RecoveryError("REFUSED: guard snapshot counters do not reconcile.")
@@ -1175,12 +1361,85 @@ def validate_guard_snapshot_proof(value: Any, mode: str, guard_active: bool) -> 
     return copy.deepcopy(value)
 
 
+# The complete per-attachment identity Guard 1.0.7 proves server-side. 1.0.6
+# proved only post type, non-trash status, basename, bytes and hash, so a JPEG,
+# a drafted attachment or a second owner of the same relative path all passed.
+FIXED_IDENTITY_KEYS = ("attachment_id", "position", "post_type", "post_status",
+                       "mime_type", "relative_path", "basename", "bytes", "sha256",
+                       "png_width", "png_height", "png_mode", "png_bit_depth",
+                       "png_color_type")
+
+
+def validate_fixed_identities(value: Any) -> list[dict[str, Any]]:
+    """Every fixed identity the guard publishes, checked field by field."""
+    if not isinstance(value, list) or len(value) > IMAGE_COUNT:
+        raise RecoveryError("REFUSED: the guard fixed-identity evidence is not a bounded list.")
+    seen_positions: set[int] = set()
+    seen_ids: set[int] = set()
+    seen_paths: set[str] = set()
+    for row in value:
+        if not isinstance(row, dict) or tuple(row) != FIXED_IDENTITY_KEYS:
+            raise RecoveryError(
+                "REFUSED: a guard fixed-identity record has the wrong closed shape or order."
+            )
+        position = row["position"]
+        if (type(position) is not int or position not in POSITIONS
+                or position in seen_positions):
+            raise RecoveryError("REFUSED: a guard fixed identity has an invalid fixed position.")
+        seen_positions.add(position)
+        fixed = FIXED_IMAGES[position - 1]
+        attachment_id = row["attachment_id"]
+        if (type(attachment_id) is not int or attachment_id <= 0
+                or attachment_id in seen_ids):
+            raise RecoveryError(
+                "REFUSED: a guard fixed identity has an invalid or duplicated attachment ID."
+            )
+        seen_ids.add(attachment_id)
+        if (row["post_type"] != "attachment" or row["post_status"] != "inherit"
+                or row["mime_type"] != "image/png"):
+            raise RecoveryError(
+                "REFUSED: a guard fixed identity is not an exact live PNG attachment "
+                "(post type `attachment`, status `inherit`, MIME `image/png`)."
+            )
+        relative = str(row["relative_path"])
+        if (not SAFE_RELATIVE_PATH.match(relative) or ".." in relative
+                or Path(relative).name != fixed["filename"]
+                or row["basename"] != fixed["filename"] or relative in seen_paths):
+            raise RecoveryError(
+                "REFUSED: a guard fixed identity does not own one safe, unique relative "
+                "path ending in its own fixed basename."
+            )
+        seen_paths.add(relative)
+        if row["bytes"] != fixed["bytes"] or row["sha256"] != fixed["sha256"]:
+            raise RecoveryError(
+                "REFUSED: a guard fixed identity does not carry the approved bytes and hash."
+            )
+        _hex64(row["sha256"], "guard fixed identity digest")
+        if (row["png_width"] != fixed["width"] or row["png_height"] != fixed["height"]
+                or row["png_mode"] != fixed["mode"] or row["png_bit_depth"] != 8
+                or row["png_color_type"] != 2):
+            raise RecoveryError(
+                "REFUSED: a guard fixed identity does not carry the approved PNG "
+                "dimensions, bit depth or colour mode."
+            )
+    return sorted(copy.deepcopy(value), key=lambda row: row["position"])
+
+
 RECOVERY_RECORD_KEYS = {"contract", "product_id", "prior_operation_sha256",
-                        "initial_attachments", "missing_positions"}
+                        "initial_attachments", "missing_positions",
+                        "current_reservations", "bound_uploads",
+                        "remaining_positions", "unbound_reservation"}
 
 
 def validate_guard_recovery_record(value: Any) -> dict[str, Any]:
-    """The durable recovery record the server reports back, checked exactly."""
+    """The durable recovery record the server reports back, checked exactly.
+
+    1.0.6's consumer pinned five keys while the plugin's own
+    `frpd_mg_recovery_projection()` published nine, so a real snapshot was
+    rejected outright. These are the nine the producer emits, and the four
+    progress fields are exactly what the one eligibility predicate needs to
+    describe expected progress WITHOUT reading caller data.
+    """
     if not isinstance(value, dict) or set(value) != RECOVERY_RECORD_KEYS:
         raise RecoveryError("REFUSED: the guard recovery record has the wrong closed schema.")
     if (value["contract"] != GUARD_RECOVERY_CONTRACT or value["product_id"] != PRODUCT_ID
@@ -1210,6 +1469,64 @@ def validate_guard_recovery_record(value: Any) -> dict[str, Any]:
             "REFUSED: the guard recovery record does not bind position 1 to the fixed "
             f"verified attachment {PRIOR_VERIFIED_UPLOAD['attachment_id']}."
         )
+    # --- durable PROGRESS, which is what the eligibility predicate reads ---
+    reservations = value["current_reservations"]
+    bound = value["bound_uploads"]
+    remaining = value["remaining_positions"]
+    unbound = value["unbound_reservation"]
+    # PHP encodes an EMPTY map as `[]`, not `{}`, so a guard that has bound nothing
+    # yet reports `bound_uploads: []`. That one boundary form is accepted; any other
+    # list is a schema error.
+    if bound == []:
+        bound = {}
+        value = dict(value, bound_uploads={})
+    if (not isinstance(reservations, list) or not isinstance(bound, dict)
+            or not isinstance(remaining, list)):
+        raise RecoveryError("REFUSED: the guard recovery progress fields are invalid.")
+    bound_positions = []
+    for filename, attachment_id in bound.items():
+        if (filename not in POSITION_BY_FILENAME or type(attachment_id) is not int
+                or attachment_id <= 0):
+            raise RecoveryError("REFUSED: a guard bound upload is not a fixed image.")
+        bound_positions.append(POSITION_BY_FILENAME[filename])
+    bound_positions.sort()
+    if bound_positions != missing[:len(bound_positions)]:
+        raise RecoveryError(
+            "REFUSED: the guard's bound uploads are not the leading ascending prefix of "
+            "its own immutable missing-position list."
+        )
+    bound_ids = list(bound.values())
+    if (len(set(bound_ids)) != len(bound_ids)
+            or set(bound_ids) & {int(row) for row in initial.values()}):
+        raise RecoveryError(
+            "REFUSED: a guard bound upload duplicates another binding's attachment ID."
+        )
+    if remaining != missing[len(bound_positions):]:
+        raise RecoveryError(
+            "REFUSED: the guard's remaining positions are not the unprocessed suffix of "
+            "its immutable missing-position list."
+        )
+    expected_reservations = [FIXED_IMAGES[position - 1]["filename"]
+                             for position in missing[:len(reservations)]]
+    if (reservations != expected_reservations
+            or not len(bound_positions) <= len(reservations) <= len(bound_positions) + 1):
+        raise RecoveryError(
+            "REFUSED: the guard reserves uploads out of missing order, or more than one "
+            "reservation is unbound."
+        )
+    if len(reservations) == len(bound_positions):
+        if unbound is not None:
+            raise RecoveryError(
+                "REFUSED: the guard reports an unbound reservation it does not hold."
+            )
+    else:
+        next_position = missing[len(bound_positions)]
+        if (not isinstance(unbound, dict) or set(unbound) != {"position", "filename"}
+                or unbound["position"] != next_position
+                or unbound["filename"] != FIXED_IMAGES[next_position - 1]["filename"]):
+            raise RecoveryError(
+                "REFUSED: the guard's one unbound reservation is not the next missing position."
+            )
     return copy.deepcopy(value)
 
 
@@ -1279,7 +1596,8 @@ def require_guarded_recovery_snapshot(proof: Any, baseline_total: int,
 
 def validate_guard_completion_proof(value: Any, attachment_ids: list[int]) -> dict[str, Any]:
     expected_keys = {"schema", "plugin_version", "mode", "family", "product_id",
-                     "attachment_ids", "attachment_total", "snapshot_sha256"}
+                     "attachment_ids", "attachment_identities", "attachment_total",
+                     "snapshot_sha256"}
     if (not isinstance(value, dict) or set(value) != expected_keys
             or value["schema"] != GUARD_PROOF_SCHEMA
             or value["plugin_version"] != GUARD_PLUGIN_VERSION
@@ -1292,6 +1610,14 @@ def validate_guard_completion_proof(value: Any, attachment_ids: list[int]) -> di
             or value["attachment_total"] < IMAGE_COUNT):
         raise RecoveryError("REFUSED: guard completion proof is not exact.")
     _hex64(value["snapshot_sha256"], "guard completion digest")
+    identities = validate_fixed_identities(value["attachment_identities"])
+    if (value["attachment_identities"] != identities
+            or [row["position"] for row in identities] != list(POSITIONS)
+            or [row["attachment_id"] for row in identities] != list(attachment_ids)):
+        raise RecoveryError(
+            "REFUSED: the completion proof does not carry one complete fixed identity for "
+            "each of the six committed positions, in order."
+        )
     return copy.deepcopy(value)
 
 
@@ -1391,6 +1717,75 @@ def final_attachment_ids_for(reconciliation: list[dict[str, Any]],
     return ids
 
 
+# --------------------------------------------------------------------------
+# THE ONE PROGRESSION MODEL
+#
+# v2.0.0 compared the EVOLVING live reconciliation to the FROZEN staged one, so
+# the first successful upload made every later check refuse -- after the
+# permanent attempt lock, which turned an ordinary success into
+# INDETERMINATE_NO_RETRY. The staged reconciliation is the immutable ACQUISITION
+# BASELINE; what live state should look like after N uploads is computed from the
+# guard's own durable record, never from anything the caller passes in.
+# --------------------------------------------------------------------------
+EMPTY_PROGRESS: dict[str, Any] = {
+    "initial_attachments": None, "missing_positions": None, "bound_uploads": {},
+    "completed_positions": [], "remaining_positions": None, "reserved_uploads": 0,
+    "unbound_reservation": None, "phase": "pre_acquisition",
+}
+
+
+def guard_progress(guard_owner: dict[str, Any] | None) -> dict[str, Any]:
+    """Normalize durable guard state into one phase/progress record."""
+    if guard_owner is None:
+        return copy.deepcopy(EMPTY_PROGRESS)
+    record = validate_guard_recovery_record(guard_owner.get("recovery"))
+    bound = {POSITION_BY_FILENAME[filename]: int(attachment_id)
+             for filename, attachment_id in record["bound_uploads"].items()}
+    completed = sorted(bound)
+    remaining = list(record["remaining_positions"])
+    unbound = record["unbound_reservation"]
+    if unbound is not None:
+        phase = "upload_in_flight"
+    elif remaining:
+        phase = "uploading"
+    else:
+        phase = "gallery_ready"
+    return {
+        "initial_attachments": dict(record["initial_attachments"]),
+        "missing_positions": list(record["missing_positions"]),
+        "bound_uploads": bound,
+        "completed_positions": completed,
+        "remaining_positions": remaining,
+        "reserved_uploads": len(record["current_reservations"]),
+        "unbound_reservation": copy.deepcopy(unbound),
+        "phase": phase,
+    }
+
+
+def reconciliation_projection(rows: list[dict[str, Any]]) -> list[tuple[Any, ...]]:
+    """Identity without the live source URL, which only the server can know."""
+    return [(row["position"], row["filename"], row["sha256"], row["bytes"],
+             row["disposition"], row["attachment_id"]) for row in rows]
+
+
+def expected_progressed_reconciliation(baseline: list[dict[str, Any]],
+                                       progress: dict[str, Any]) -> list[dict[str, Any]]:
+    """Exactly what live reconciliation must look like at this durable progress."""
+    rows = copy.deepcopy(baseline)
+    for row in rows:
+        landed = progress["bound_uploads"].get(row["position"])
+        if landed is None:
+            continue
+        if row["disposition"] != "upload_once":
+            raise RecoveryError(
+                f"REFUSED: the guard reports position {row['position']} as an upload it "
+                "bound, but the acquisition baseline reused an existing attachment there."
+            )
+        row["disposition"] = "reuse_existing"
+        row["attachment_id"] = landed
+    return rows
+
+
 def is_already_complete(product: dict[str, Any],
                         reconciliation: list[dict[str, Any]]) -> bool:
     if upload_positions(reconciliation):
@@ -1437,75 +1832,125 @@ def assert_recovery_eligibility(*, prior_evidence: dict[str, Any],
             "REFUSED: the pinned media guard capability changed after it was recorded."
         )
     require_complete_library_evidence(library)
+    # The product changes EXACTLY ONCE in this operation: at the one gallery
+    # commit. Before it, the fresh read must equal the staged baseline outright.
+    # After it, the gallery IS the recovered six and WordPress has moved
+    # `date_modified_gmt`; every other field, including the whole protected
+    # projection and its fingerprint, must still be byte-identical. Comparing the
+    # post-commit product to the pre-commit baseline outright is what made
+    # `complete_guard` -- a real state transition that runs after the write --
+    # refuse and turn a completed recovery into INDETERMINATE_NO_RETRY.
+    gallery_written = (final_attachment_ids is not None
+                       and current_gallery_ids(product) == list(final_attachment_ids))
     with closed_refusal():
-        family_base.assert_product_eligibility(FAMILY_KEY, product, expected_product)
+        family_base.assert_product_eligibility(
+            FAMILY_KEY, product, None if gallery_written else expected_product)
+    if gallery_written and expected_product is not None:
+        moved = ("before_gallery", "date_modified_gmt")
+        if ({field: value for field, value in product.items() if field not in moved}
+                != {field: value for field, value in expected_product.items()
+                    if field not in moved}):
+            raise RecoveryError(
+                "REFUSED: a product field other than the committed gallery and its "
+                "modification timestamp changed during this recovery."
+            )
     checked = validate_reconciliation(reconciliation)
     require_guard_supports_recovery(checked, capability)
-    if expected_reconciliation is not None:
-        if checked != validate_reconciliation(expected_reconciliation):
+    progress = guard_progress(guard_owner)
+    baseline = (validate_reconciliation(expected_reconciliation)
+                if expected_reconciliation is not None else None)
+    if baseline is not None:
+        expected_rows = expected_progressed_reconciliation(baseline, progress)
+        if reconciliation_projection(checked) != reconciliation_projection(expected_rows):
             raise RecoveryError(
-                "REFUSED: the live open-manway reconciliation changed after staging."
+                "REFUSED: live open-manway state is not the acquisition baseline advanced "
+                f"by exactly the {len(progress['bound_uploads'])} upload(s) the guard's own "
+                "durable record accounts for. Expected "
+                f"{reconciliation_projection(expected_rows)}, read "
+                f"{reconciliation_projection(checked)}. An unexplained attachment at a "
+                "future missing position, a disappeared binding or a substituted "
+                "attachment is external drift and never a permitted progression."
             )
     require_origin_proof_matches(origin_proof, checked)
 
     live_ids = current_gallery_ids(product)
     resolved_ids = [int(row["attachment_id"]) for row in checked
                     if row["disposition"] == "reuse_existing"]
-    missing = upload_positions(checked)
-    if not missing and live_ids == [int(row["attachment_id"]) for row in checked]:
+    # The IMMUTABLE missing list, not the shrinking live one: after N uploads the
+    # live reconciliation legitimately has fewer upload positions left.
+    immutable_missing = (upload_positions(baseline) if baseline is not None
+                         else upload_positions(checked))
+    if not immutable_missing:
+        raise RecoveryError(
+            "REFUSED: no approved asset is missing, so there is no recovery upload to make."
+        )
+    if (guard_owner is None and not upload_positions(checked)
+            and live_ids == [int(row["attachment_id"]) for row in checked]):
         raise RecoveryError(
             "REFUSED: product 1397 already carries the exact six recovered assets in order; "
             "there is nothing to recover."
         )
-    if not missing:
-        raise RecoveryError(
-            "REFUSED: no approved asset is missing, so there is no recovery upload to make."
-        )
-    conflicting = sorted(set(live_ids) & set(resolved_ids))
-    if conflicting:
-        raise RecoveryError(
-            "REFUSED: the current gallery already contains approved recovery attachments "
-            f"{conflicting} in a partial or conflicting order. Unrelated gallery drift is "
-            "acceptable; a partially applied recovery is not."
-        )
-    if guard_owner is not None:
+    if guard_owner is None:
+        # Before acquisition the gallery must not already hold any approved
+        # recovery attachment. Once this guard owns the operation its own bound
+        # uploads explain every one of them, and after the one gallery commit the
+        # live gallery IS the recovered set.
+        conflicting = sorted(set(live_ids) & set(resolved_ids))
+        if conflicting:
+            raise RecoveryError(
+                "REFUSED: the current gallery already contains approved recovery attachments "
+                f"{conflicting} in a partial or conflicting order. Unrelated gallery drift is "
+                "acceptable; a partially applied recovery is not."
+            )
+    else:
         # The owner snapshot must belong to THIS recovery, still be inside its
-        # completion margin, and its reserved-upload count must equal exactly the
-        # uploads already completed. v1's related validator never checked this,
-        # unlike the product-family one it was modelled on.
-        record = validate_guard_recovery_record(guard_owner.get("recovery"))
-        if record["missing_positions"] != missing:
-            raise RecoveryError(
-                "REFUSED: the live guard's immutable missing-position list disagrees with "
-                "the live reconciliation."
-            )
-        if record["initial_attachments"] != {
-                row["filename"]: int(row["attachment_id"]) for row in checked
-                if row["disposition"] == "reuse_existing"}:
-            raise RecoveryError(
-                "REFUSED: the live guard's immutable acquisition bindings disagree with the "
-                "live reconciliation."
-            )
+        # completion margin, and its durable progress must account for every
+        # upload this operation has completed.
+        if baseline is not None:
+            if progress["missing_positions"] != immutable_missing:
+                raise RecoveryError(
+                    "REFUSED: the live guard's immutable missing-position list disagrees "
+                    "with the acquisition baseline this plan was staged from."
+                )
+            if progress["initial_attachments"] != {
+                    row["filename"]: int(row["attachment_id"]) for row in baseline
+                    if row["disposition"] == "reuse_existing"}:
+                raise RecoveryError(
+                    "REFUSED: the live guard's immutable acquisition bindings disagree with "
+                    "the acquisition baseline this plan was staged from."
+                )
         completed = list(completed_upload_positions or [])
-        if completed != missing[:len(completed)]:
+        if completed != progress["completed_positions"]:
             raise RecoveryError(
-                "REFUSED: completed uploads are not the leading ascending prefix of the "
-                "immutable missing-position list."
+                f"REFUSED: this operation recorded uploads {completed} but the guard's own "
+                f"durable record binds {progress['completed_positions']}. The two must agree "
+                "exactly before any further side effect."
             )
-        if int(guard_owner.get("reserved_uploads", -1)) != len(completed):
+        if int(guard_owner.get("reserved_uploads", -1)) != progress["reserved_uploads"]:
             raise RecoveryError(
                 "REFUSED: the live guard reserves "
-                f"{guard_owner.get('reserved_uploads')} uploads but {len(completed)} have "
-                "completed; a reservation is unbound or an upload is unaccounted for."
+                f"{guard_owner.get('reserved_uploads')} uploads but its durable record holds "
+                f"{progress['reserved_uploads']}; a reservation is unaccounted for."
+            )
+        if progress["unbound_reservation"] is not None:
+            raise RecoveryError(
+                "REFUSED: the guard holds one reserved-but-unbound upload at position "
+                f"{progress['unbound_reservation']['position']}. That upload's outcome is "
+                "ambiguous; nothing further may be attempted."
             )
         require_guard_completion_margin(guard_owner)
         if next_upload_position is not None:
-            if (len(completed) >= len(missing)
-                    or next_upload_position != missing[len(completed)]):
+            if (not progress["remaining_positions"]
+                    or next_upload_position != progress["remaining_positions"][0]):
                 raise RecoveryError(
                     f"REFUSED: position {next_upload_position} is not the next permitted "
                     "upload derived from the immutable recovery state."
                 )
+        if final_attachment_ids is not None and progress["remaining_positions"]:
+            raise RecoveryError(
+                "REFUSED: a gallery payload requires all six bindings complete; positions "
+                f"{progress['remaining_positions']} are still unprocessed."
+            )
     if final_attachment_ids is not None:
         if (not isinstance(final_attachment_ids, list)
                 or len(final_attachment_ids) != IMAGE_COUNT
@@ -1551,9 +1996,12 @@ def risk_disclosure(reconciliation: list[dict[str, Any]]) -> str:
         "modified. GALLERY TRANSPORT: the gallery write is submitted through the guard's one fixed "
         "authenticated admin-post form in the guard-owning browser, carrying only the action, its "
         "nonce and this plan's non-secret If-Match gallery hash; product 1397 and the six ordered "
-        "IDs are derived by the server from its own durable state. No WooCommerce Basic-credential "
-        "request, consumer key, external loopback HTTP call, generic REST route or product edit "
-        "form is reachable. ORIGIN-FILE PROOF SCOPE: origin-only collision absence is proven by the "
+        "IDs are derived by the server from its own durable state. READ TRANSPORT: product "
+        "identity, gallery order and the protected-field fingerprint are verified with read-only "
+        "WooCommerce GETs through the commissioned vault. No WooCommerce write primitive of any "
+        "kind -- api_request, POST, PUT, PATCH, DELETE, consumer-key write, external loopback "
+        "HTTP call, generic REST write route or product edit form -- exists anywhere in this "
+        "module, which is proven against its own source before any plan loads. ORIGIN-FILE PROOF SCOPE: origin-only collision absence is proven by the "
         "guard plugin's own bounded enumeration of the WordPress uploads directory and its "
         "supported year/month directories, correlated to exact attachment ownership. An "
         "unprovable or incomplete enumeration is a FREE REFUSAL before any attempt lock, never an "
@@ -1582,8 +2030,9 @@ FORBIDDEN = [
     "shipping", "dimensions", "downloadable files", "status", "category",
     "attribute", "variation", "review", "customer", "order", "payment", "plugin",
     "theme", "setting", "user", "email", "Zoho", "Drive",
-    "wc.api_request gallery transport", "basic WooCommerce credentials",
-    "consumer key", "external loopback HTTP", "generic REST route",
+    "wc.api_request gallery transport",
+    "basic WooCommerce credentials for the gallery write",
+    "consumer-key write", "external loopback HTTP", "generic REST write route",
     "browser-supplied image IDs", "product edit form", "public URL origin probe",
 ]
 
@@ -1767,8 +2216,8 @@ def stage_one(local: list[dict[str, Any]], product: dict[str, Any],
         "family": FAMILY_KEY,
         "family_label": PRODUCT_LABEL,
         "product_id": PRODUCT_ID,
-        "method": "PUT",
-        "endpoint": f"/products/{PRODUCT_ID}",
+        "read_transport": copy.deepcopy(READ_TRANSPORT),
+        "write_transport": copy.deepcopy(WRITE_TRANSPORT),
         "created_utc": created.isoformat(),
         "expires_utc": (created + timedelta(hours=PLAN_LIFETIME_HOURS)).isoformat(),
         "nonce": secrets.token_hex(16),
@@ -1824,7 +2273,8 @@ def stage_one(local: list[dict[str, Any]], product: dict[str, Any],
 
 PLAN_KEYS = {
     "schema_version", "tool", "tool_version", "origin", "action", "family",
-    "family_label", "product_id", "method", "endpoint", "created_utc", "expires_utc",
+    "family_label", "product_id", "read_transport", "write_transport",
+    "created_utc", "expires_utc",
     "nonce", "operation_sha256", "superseded", "prior_evidence", "prior_guard_release",
     "files", "reconciliation", "reuse_positions", "upload_positions", "origin_proof",
     "product_before", "library_check", "guard_contract", "guard_stage_snapshot",
@@ -1859,8 +2309,16 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
             or plan.get("family_label") != PRODUCT_LABEL
             or plan.get("product_id") != PRODUCT_ID):
         raise RecoveryError("REFUSED: plan schema/tool/version/origin/action/identity is invalid.")
-    if plan.get("method") != "PUT" or plan.get("endpoint") != f"/products/{PRODUCT_ID}":
-        raise RecoveryError("REFUSED: plan method/endpoint is not the fixed images-only gallery route.")
+    if plan.get("read_transport") != READ_TRANSPORT:
+        raise RecoveryError(
+            "REFUSED: plan does not declare the exact read-only product verification transport."
+        )
+    if plan.get("write_transport") != WRITE_TRANSPORT:
+        raise RecoveryError(
+            "REFUSED: plan does not authorize exactly the owner-bound admin-post gallery "
+            "commit as its ONLY write transport."
+        )
+    assert_no_woocommerce_write_primitive()
     nonce = plan.get("nonce")
     if (not isinstance(nonce, str) or len(nonce) != 32
             or any(char not in "0123456789abcdef" for char in nonce)):
@@ -1894,7 +2352,7 @@ def load_plan(path: Path, *, authenticate_registry: bool = True) -> dict[str, An
         raise RecoveryError("REFUSED: plan does not carry the exact fixed guard contract.")
     if plan.get("guard_live_capability") != GUARD_EXPECTED_CAPABILITY:
         raise RecoveryError(
-            "REFUSED: plan does not carry the exact Guard 1.0.6 live capability projection."
+            "REFUSED: plan does not carry the exact Guard 1.0.7 live capability projection."
         )
     if (plan.get("risk") != risk_disclosure(reconciliation)
             or plan.get("writes_if_committed") != writes_if_committed(reconciliation)
@@ -1952,7 +2410,7 @@ def require_unattempted(operation_id: str) -> None:
 # Read-only browser session and the guarded side-effect adapter
 # --------------------------------------------------------------------------
 class RecoveryAdmin(family_base.ProductFamilyAdmin):
-    """The 1.0.5 reader, retargeted at Guard 1.0.6's version and its two new routes.
+    """The 1.0.5 reader, retargeted at Guard 1.0.7's version and its two new routes.
 
     The family tool deliberately still pins 1.0.5 because that is what is
     installed, so its version-sensitive methods are overridden here rather than
@@ -1988,7 +2446,7 @@ class RecoveryAdmin(family_base.ProductFamilyAdmin):
         if len(nodes) != 1:
             raise RecoveryError(
                 "REFUSED: the live media guard publishes no capability projection, so it is "
-                "not Guard 1.0.6. Nothing was written."
+                "not Guard 1.0.7. Nothing was written."
             )
         try:
             value = json.loads(str(nodes[0].text_content() or ""))
@@ -2063,12 +2521,31 @@ class RecoveryAdmin(family_base.ProductFamilyAdmin):
                 or if_match[0] != '"' or if_match[-1] != '"'):
             raise RecoveryError("REFUSED: the gallery precondition is not a quoted SHA-256.")
         _hex64(if_match[1:-1], "gallery precondition")
-        button, form = self._fixed_global_button(
-            GUARD_RECOVERY_GALLERY_SELECTOR, GUARD_RECOVERY_GALLERY_ACTION, "Guard active")
+        # *** THIS FORM IS THE ONLY ONE WITH NO `_wp_http_referer`. ***
+        # The family tool's shared validator requires that field because every OTHER
+        # guard form renders it. Guard 1.0.7 deliberately suppresses it here and its
+        # handler REFUSES a body carrying it, so the shared validator would have
+        # rejected the one correct form. This route gets its own exact validator.
+        self._guard_status("Guard active")
         forms = self._page.query_selector_all(GUARD_RECOVERY_GALLERY_FORM_SELECTOR)
+        buttons = self._page.query_selector_all(GUARD_RECOVERY_GALLERY_SELECTOR)
+        if len(forms) != 1 or len(buttons) != 1:
+            raise RecoveryError(
+                "REFUSED: the fixed recovery gallery form or button is missing or duplicated."
+            )
+        form = forms[0]
+        button = buttons[0]
+        if (str(form.get_attribute("method") or "").casefold() != "post"
+                or str(form.get_attribute("action") or "") != family_base.GUARD_POST_URL):
+            raise RecoveryError(
+                "REFUSED: the recovery gallery form method or destination is not exact."
+            )
         fields = form.query_selector_all("input[name],select[name],textarea[name]")
         names = sorted(str(node.get_attribute("name") or "") for node in fields)
-        if len(forms) != 1 or names != ["_wp_http_referer", "_wpnonce", "action", "if_match"]:
+        action_nodes = form.query_selector_all("input[type='hidden'][name='action']")
+        if (names != ["_wpnonce", "action", "if_match"] or len(action_nodes) != 1
+                or str(action_nodes[0].get_attribute("value") or "")
+                    != GUARD_RECOVERY_GALLERY_ACTION):
             raise RecoveryError(
                 "REFUSED: the fixed recovery gallery form is missing, duplicated, or exposes "
                 "a field beyond the action, its nonce and the If-Match hash."
@@ -2375,8 +2852,16 @@ def command_commit(args: argparse.Namespace) -> None:
     require_guard_supports_recovery(plan_reconciliation, capability)
 
     vault = wc.load_vault()
-    if vault.get("declared_permissions") != "read_write":
-        raise RecoveryError("REFUSED: WooCommerce vault is not declared read/write.")
+    # This module only ever GETs through this vault, so a narrower read-only
+    # credential is preferred and accepted the moment one exists. Today the tree
+    # publishes exactly one commissioned vault, and it declares read_write; the
+    # guarantee that matters is the static one above -- no write primitive is
+    # reachable from this module at all.
+    if vault.get("declared_permissions") not in ("read_only", "read_write"):
+        raise RecoveryError(
+            "REFUSED: the WooCommerce vault does not declare a permission this tool "
+            "recognises for its read-only product verification."
+        )
     if wc.normalize_site_url(str(vault.get("site_url") or "")) != EXACT_ORIGIN:
         raise RecoveryError("REFUSED: WooCommerce vault is not the exact FRP Depot origin.")
 

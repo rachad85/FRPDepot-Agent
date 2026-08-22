@@ -2,7 +2,7 @@
 /**
  * Plugin Name: FRP Depot Media Mutation Guard
  * Description: Fixed atomic snapshot and five-family media mutation guard for FRP Depot.
- * Version: 1.0.7
+ * Version: 1.0.5
  * Author: FRP Depot
  */
 
@@ -10,10 +10,9 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('FRPD_MG_VERSION', '1.0.7');
-define('FRPD_MG_MANIFEST_SHA256', 'adb9b81f7a8e55205c7224af6005c0c386ec833eef36be7281dca96313e9d900');
-define('FRPD_MG_STATE_SCHEMA', 3);
-define('FRPD_MG_PROOF_SCHEMA', 3);
+define('FRPD_MG_VERSION', '1.0.5');
+define('FRPD_MG_MANIFEST_SHA256', '23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565');
+define('FRPD_MG_STATE_SCHEMA', 2);
 define('FRPD_MG_REUSE_FAMILY', 'stub_flange');
 define('FRPD_MG_REUSE_PRODUCT_ID', 1368);
 define('FRPD_MG_REUSE_POSITION', 1);
@@ -24,24 +23,6 @@ define('FRPD_MG_REUSE_BYTES', 895251);
 define('FRPD_MG_REUSE_SHA256', 'aa9c8da37cc4a1ee98b5f0b2c77dd5b369c327a583412938778210562936b3da');
 define('FRPD_MG_REUSE_CURRENT_THUMBNAIL_RAW', '4849');
 define('FRPD_MG_REUSE_CURRENT_GALLERY_RAW', '4850,4851,4852');
-define('FRPD_MG_RECOVERY_CONTRACT', 'open_manway_recovery');
-define('FRPD_MG_FAMILY_CONTRACT', 'family');
-define('FRPD_MG_RECOVERY_FAMILY', 'open_manway');
-define('FRPD_MG_RECOVERY_PRODUCT_ID', 1397);
-define('FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256', 'e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85');
-define('FRPD_MG_RECOVERY_BASELINE_ATTACHMENT_TOTAL', 364);
-define('FRPD_MG_RECOVERY_FINAL_ATTACHMENT_TOTAL', 369);
-define('FRPD_MG_RECOVERY_PRIOR_PLAN_SHA256', '1c7865b0287b076fe83c179c2e44f33a3bcb2effb048e87374c32ad4781b19df');
-define('FRPD_MG_RECOVERY_POSITION', 1);
-define('FRPD_MG_RECOVERY_ATTACHMENT_ID', 7609);
-define('FRPD_MG_RECOVERY_FILENAME', '01_manway_premium_hero.png');
-define('FRPD_MG_RECOVERY_BYTES', 1750111);
-define('FRPD_MG_RECOVERY_SHA256', '472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd');
-define('FRPD_MG_RECOVERY_NONCE', 'frpd_mg_recovery_gallery');
-define('FRPD_MG_RECOVERY_ACTION', 'frpd_media_guard_recovery_gallery');
-define('FRPD_MG_RECOVERY_REST_ROUTE', '/wc/v3/products/1397');
-define('FRPD_MG_ORIGIN_MAX_DIRECTORIES', 512);
-define('FRPD_MG_ORIGIN_MAX_ENTRIES', 200000);
 define('FRPD_MG_OPTION', 'frpd_media_mutation_guard_v1');
 define('FRPD_MG_COOKIE', 'frpd_media_guard_owner');
 define('FRPD_MG_LOCK_NAME', 'frpd_media_mutation_guard_v1');
@@ -88,9 +69,7 @@ function frpd_mg_manifest() {
     sort($actual_family_keys, SORT_STRING);
     sort($expected_family_keys, SORT_STRING);
     $actual_root_keys = is_array($value) ? array_keys($value) : array();
-    $expected_root_keys = array(
-        'families', 'fixed_recovery', 'fixed_reuse', 'schema', 'source_manifest_sha256',
-    );
+    $expected_root_keys = array('families', 'fixed_reuse', 'schema', 'source_manifest_sha256');
     sort($actual_root_keys, SORT_STRING);
     sort($expected_root_keys, SORT_STRING);
     $fixed_reuse = array(
@@ -115,34 +94,11 @@ function frpd_mg_manifest() {
         ksort($actual_fixed_reuse, SORT_STRING);
     }
     ksort($fixed_reuse, SORT_STRING);
-    // The ONE literal Open Manway recovery contract. It is a closed record: no
-    // other family, product, attachment, filename or position can reach the
-    // recovery branch, and there is no generic recovery contract anywhere.
-    $fixed_recovery = array(
-        'contract' => FRPD_MG_RECOVERY_CONTRACT,
-        'family' => FRPD_MG_RECOVERY_FAMILY,
-        'product_id' => FRPD_MG_RECOVERY_PRODUCT_ID,
-        'prior_operation_sha256' => FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256,
-        'prior_plan_sha256' => FRPD_MG_RECOVERY_PRIOR_PLAN_SHA256,
-        'position' => FRPD_MG_RECOVERY_POSITION,
-        'attachment_id' => FRPD_MG_RECOVERY_ATTACHMENT_ID,
-        'filename' => FRPD_MG_RECOVERY_FILENAME,
-        'bytes' => FRPD_MG_RECOVERY_BYTES,
-        'sha256' => FRPD_MG_RECOVERY_SHA256,
-        'recoverable_positions' => array(2, 3, 4, 5, 6),
-    );
-    $actual_fixed_recovery = is_array($value['fixed_recovery'] ?? null)
-        ? $value['fixed_recovery'] : null;
-    if (is_array($actual_fixed_recovery)) {
-        ksort($actual_fixed_recovery, SORT_STRING);
-    }
-    ksort($fixed_recovery, SORT_STRING);
-    if (!is_array($value) || 3 !== ($value['schema'] ?? null)
+    if (!is_array($value) || 2 !== ($value['schema'] ?? null)
         || $actual_root_keys !== $expected_root_keys
         || !isset($value['families']) || !is_array($value['families'])
         || $actual_family_keys !== $expected_family_keys
-        || $actual_fixed_reuse !== $fixed_reuse
-        || $actual_fixed_recovery !== $fixed_recovery) {
+        || $actual_fixed_reuse !== $fixed_reuse) {
         return new WP_Error('frpd_mg_manifest', 'The fixed media manifest is invalid.');
     }
     foreach ($ids as $family => $product_id) {
@@ -153,34 +109,16 @@ function frpd_mg_manifest() {
             return new WP_Error('frpd_mg_manifest', 'A fixed family manifest record is invalid.');
         }
         foreach ($record['images'] as $index => $image) {
-            $image_keys = is_array($image) ? array_keys($image) : array();
-            sort($image_keys, SORT_STRING);
-            if (!is_array($image)
-                || $image_keys !== array('bytes', 'filename', 'height', 'mode', 'position', 'sha256', 'width')
-                || ($index + 1) !== ($image['position'] ?? null)
+            if (!is_array($image) || ($index + 1) !== ($image['position'] ?? null)
                 || !is_string($image['filename'] ?? null)
                 || basename($image['filename']) !== $image['filename']
                 || '.png' !== strtolower(substr($image['filename'], -4))
                 || !is_int($image['bytes'] ?? null) || $image['bytes'] <= 0
-                || !is_int($image['width'] ?? null) || $image['width'] <= 0
-                || !is_int($image['height'] ?? null) || $image['height'] <= 0
-                || !in_array($image['mode'] ?? null, array('RGB', 'RGBA'), true)
                 || !is_string($image['sha256'] ?? null)
                 || 1 !== preg_match('/\A[a-f0-9]{64}\z/', $image['sha256'])) {
                 return new WP_Error('frpd_mg_manifest', 'A fixed image manifest record is invalid.');
             }
         }
-    }
-    $recovery_image = $value['families'][FRPD_MG_RECOVERY_FAMILY]['images'][FRPD_MG_RECOVERY_POSITION - 1] ?? null;
-    if (!is_array($recovery_image)
-        || ($recovery_image['position'] ?? null) !== FRPD_MG_RECOVERY_POSITION
-        || ($recovery_image['filename'] ?? null) !== FRPD_MG_RECOVERY_FILENAME
-        || ($recovery_image['bytes'] ?? null) !== FRPD_MG_RECOVERY_BYTES
-        || ($recovery_image['sha256'] ?? null) !== FRPD_MG_RECOVERY_SHA256
-        || FRPD_MG_RECOVERY_PRODUCT_ID
-            !== ($value['families'][FRPD_MG_RECOVERY_FAMILY]['product_id'] ?? null)
-        || 6 !== count($value['families'][FRPD_MG_RECOVERY_FAMILY]['images'])) {
-        return new WP_Error('frpd_mg_manifest', 'The fixed recovery image record is invalid.');
     }
     $reuse_image = $value['families'][FRPD_MG_REUSE_FAMILY]['images'][FRPD_MG_REUSE_POSITION - 1] ?? null;
     if (!is_array($reuse_image)
@@ -300,14 +238,8 @@ function frpd_mg_refuse_active_deactivation() {
 }
 register_deactivation_hook(__FILE__, 'frpd_mg_refuse_active_deactivation');
 
-/**
- * Return the one durable guard row regardless of expiry, or null only when absent.
- *
- * Acquisition must inspect an expired active/gallery row rather than treating it
- * as absent.  This exact reader is therefore the authority for replacement and
- * never retires, clears, or hides unresolved evidence.
- */
-function frpd_mg_exact_state() {
+/** Return an active, directly-read guard row, null when absent/expired, or WP_Error. */
+function frpd_mg_active_state() {
     $owned = frpd_mg_assert_lock_owned();
     if (is_wp_error($owned)) {
         return $owned;
@@ -335,13 +267,11 @@ function frpd_mg_exact_state() {
         || (int) ($row['lock_owner_id'] ?? 0) !== (int) $GLOBALS['frpd_mg_lock_connection_id']) {
         return new WP_Error('frpd_mg_lock_owner', 'The state read did not retain advisory-lock ownership.');
     }
-    if (empty($row['guard_id'])) {
+    if (empty($row['guard_id']) || '1' !== (string) ($row['is_active'] ?? '0')) {
         return null;
     }
-    $record = json_decode((string) ($row['reserved_json'] ?? ''), true);
+    $reserved = json_decode((string) ($row['reserved_json'] ?? ''), true);
     $attachments = json_decode((string) ($row['attachments_json'] ?? ''), true);
-    $reserved = is_array($record) && is_array($record['reserved'] ?? null)
-        ? $record['reserved'] : null;
     $state = array(
         'schema' => (int) ($row['schema_version'] ?? 0),
         'family' => (string) ($row['family'] ?? ''),
@@ -353,19 +283,14 @@ function frpd_mg_exact_state() {
         'owner_session_sha256' => (string) ($row['owner_session_sha256'] ?? ''),
         'owner_hash' => (string) ($row['owner_token_sha256'] ?? ''),
         'expires' => (int) ($row['expires_epoch'] ?? 0),
-        'is_active' => '1' === (string) ($row['is_active'] ?? '0'),
         'state_status' => (string) ($row['state_status'] ?? ''),
         'state_version' => (int) ($row['state_version'] ?? 0),
-        'record' => $record,
-        'contract' => is_array($record) ? ($record['contract'] ?? null) : null,
         'reserved' => $reserved,
         'attachments' => $attachments,
     );
     $manifest = frpd_mg_manifest();
-    if (FRPD_MG_STATE_SCHEMA !== $state['schema'] || !is_array($record) || !is_array($reserved)
-        || !is_array($attachments)
-        || !frpd_mg_state_record_is_valid($state['family'], $record, $attachments)
-        || !in_array($state['state_status'], array('active', 'gallery', 'completed', 'expired'), true)
+    if (FRPD_MG_STATE_SCHEMA !== $state['schema'] || !is_array($reserved) || !is_array($attachments)
+        || !frpd_mg_state_bindings_are_valid($state['family'], $reserved, $attachments)
         || $state['state_version'] <= 0 || $state['expires'] <= 0
         || !hash_equals(FRPD_MG_MANIFEST_SHA256, $state['manifest_sha256'])
         || is_wp_error($manifest) || !isset($manifest['families'][$state['family']])
@@ -373,31 +298,6 @@ function frpd_mg_exact_state() {
         return new WP_Error('frpd_mg_state_invalid', 'The uncached media guard state is invalid.');
     }
     return $state;
-}
-
-/** Return only a currently active row; expired durable evidence remains untouched. */
-function frpd_mg_active_state() {
-    $state = frpd_mg_exact_state();
-    if (is_wp_error($state) || !is_array($state)) {
-        return $state;
-    }
-    return $state['is_active'] ? $state : null;
-}
-
-/** A terminal row is replaceable only when it cannot contain partial recovery progress. */
-function frpd_mg_terminal_state_is_replaceable($state) {
-    if (!is_array($state)) {
-        return false;
-    }
-    if ('completed' === ($state['state_status'] ?? '')) {
-        $ids = frpd_mg_final_attachment_ids($state);
-        return !is_wp_error($ids)
-            && count($state['record']['reserved']) === count($state['record']['missing_positions'])
-            && count($state['attachments']) === count(frpd_mg_expected_images($state['family']));
-    }
-    return 'expired' === ($state['state_status'] ?? '')
-        && array() === ($state['record']['reserved'] ?? null)
-        && ($state['attachments'] ?? null) === ($state['record']['initial_attachments'] ?? null);
 }
 
 function frpd_mg_owner_matches($state) {
@@ -509,122 +409,24 @@ function frpd_mg_reuse_baseline_projection($family) {
     );
 }
 
-/** Return the ONE literal Open Manway recovery contract, or null for every other family. */
-function frpd_mg_recovery_contract($family) {
-    if (FRPD_MG_RECOVERY_FAMILY !== $family) {
-        return null;
-    }
-    $manifest = frpd_mg_manifest();
-    if (is_wp_error($manifest) || !isset($manifest['fixed_recovery'])
-        || !is_array($manifest['fixed_recovery'])
-        || FRPD_MG_RECOVERY_CONTRACT !== ($manifest['fixed_recovery']['contract'] ?? null)) {
-        return new WP_Error('frpd_mg_recovery', 'The fixed Open Manway recovery contract is unavailable.');
-    }
-    return $manifest['fixed_recovery'];
-}
-
-/** Order match rows by fixed position, then attachment ID, so comparisons are stable. */
-function frpd_mg_sorted_match_rows($rows) {
-    if (!is_array($rows)) {
-        return null;
-    }
-    $sorted = array();
-    foreach ($rows as $row) {
-        if (!is_array($row) || array('attachment_id', 'fixed_position') !== array_keys($row)
-            || !is_int($row['attachment_id']) || $row['attachment_id'] <= 0
-            || !is_int($row['fixed_position']) || $row['fixed_position'] <= 0) {
-            return null;
-        }
-        $sorted[] = array(
-            'attachment_id' => $row['attachment_id'],
-            'fixed_position' => $row['fixed_position'],
-        );
-    }
-    usort($sorted, static function ($left, $right) {
-        $order = $left['fixed_position'] <=> $right['fixed_position'];
-        return 0 !== $order ? $order : ($left['attachment_id'] <=> $right['attachment_id']);
-    });
-    return $sorted;
-}
-
-/**
- * Validate the whole schema-3 durable state record.
- *
- * The record is the IMMUTABLE part of an acquisition (which contract, which
- * positions were already bound live, and which positions may still be uploaded)
- * plus the one append-only `reserved` list. Every later decision -- including
- * which upload is permitted next -- is derived from this row and never from a
- * caller. `missing_positions` and `initial_attachments` are written once at
- * acquisition and are never rewritten by any route in this plugin.
- */
-function frpd_mg_state_record_is_valid($family, $record, $attachments) {
+/** Validate every durable upload/reuse binding in the schema-2 guard row. */
+function frpd_mg_state_bindings_are_valid($family, $reserved, $attachments) {
     $expected = frpd_mg_expected_images($family);
-    if (is_wp_error($expected) || !is_array($record) || !is_array($attachments)) {
-        return false;
-    }
-    $keys = array_keys($record);
-    sort($keys, SORT_STRING);
-    if ($keys !== array('contract', 'initial_attachments', 'missing_positions', 'reserved')) {
-        return false;
-    }
-    $contract = $record['contract'];
-    $initial = $record['initial_attachments'];
-    $missing = $record['missing_positions'];
-    $reserved = $record['reserved'];
-    if (!is_string($contract) || !is_array($initial) || !is_array($missing) || !is_array($reserved)
-        || array_values($missing) !== $missing || array_values($reserved) !== $reserved
+    if (is_wp_error($expected) || !is_array($reserved) || !is_array($attachments)
+        || array_values($reserved) !== $reserved
         || count(array_unique($reserved)) !== count($reserved)) {
         return false;
     }
     $filenames = array_column($expected, 'filename');
-    $count = count($filenames);
-    $previous = 0;
-    foreach ($missing as $position) {
-        if (!is_int($position) || $position <= $previous || $position > $count) {
-            return false;
-        }
-        $previous = $position;
-    }
-    $bound_positions = array();
-    $previous = 0;
-    foreach ($initial as $filename => $attachment_id) {
-        if (!is_string($filename) || !is_int($attachment_id) || $attachment_id <= 0) {
-            return false;
-        }
-        $index = array_search($filename, $filenames, true);
-        if (false === $index || ($index + 1) <= $previous) {
-            return false;
-        }
-        $previous = $index + 1;
-        $bound_positions[] = $index + 1;
-    }
-    $union = array_merge($bound_positions, $missing);
-    sort($union, SORT_NUMERIC);
-    if ($union !== range(1, $count) || count(array_unique($union)) !== $count) {
-        return false;
-    }
-    $missing_names = array();
-    foreach ($missing as $position) {
-        $missing_names[] = $filenames[$position - 1];
-    }
-    if ($reserved !== array_slice($missing_names, 0, count($reserved))) {
-        return false;
-    }
-    $bound_uploads = array();
-    foreach ($reserved as $filename) {
-        if (array_key_exists($filename, $attachments)) {
-            $bound_uploads[] = $filename;
-        }
-    }
-    // At most ONE reserved upload may be unbound, and only the newest one.
-    if ($bound_uploads !== array_slice($reserved, 0, count($bound_uploads))
-        || count($reserved) - count($bound_uploads) > 1
-        || array_keys($attachments) !== array_merge(array_keys($initial), $bound_uploads)) {
+    if ($reserved !== array_slice($filenames, 0, count($reserved))
+        || count($attachments) > count($reserved)
+        || count($reserved) - count($attachments) > 1
+        || array_keys($attachments) !== array_slice($reserved, 0, count($attachments))) {
         return false;
     }
     $attachment_ids = array();
     foreach ($attachments as $filename => $attachment_id) {
-        if (!is_string($filename) || !in_array($filename, $filenames, true)
+        if (!is_string($filename) || !in_array($filename, $reserved, true)
             || !is_int($attachment_id) || $attachment_id <= 0) {
             return false;
         }
@@ -634,99 +436,26 @@ function frpd_mg_state_record_is_valid($family, $record, $attachments) {
         return false;
     }
     $reuse = frpd_mg_reuse_contract($family);
-    $recovery = frpd_mg_recovery_contract($family);
-    if (is_wp_error($reuse) || is_wp_error($recovery)) {
-        return false;
-    }
-    if (FRPD_MG_RECOVERY_CONTRACT === $contract) {
-        // The recovery branch is reachable ONLY for the one literal contract.
-        return is_array($recovery) && !is_array($reuse)
-            && FRPD_MG_RECOVERY_FAMILY === $family
-            && FRPD_MG_RECOVERY_PRODUCT_ID === (int) $recovery['product_id']
-            && array_key_exists(FRPD_MG_RECOVERY_FILENAME, $initial)
-            && FRPD_MG_RECOVERY_ATTACHMENT_ID === $initial[FRPD_MG_RECOVERY_FILENAME]
-            && !in_array(FRPD_MG_RECOVERY_POSITION, $missing, true)
-            && array() === array_diff($missing, $recovery['recoverable_positions'])
-            && array() !== $missing;
-    }
-    if (FRPD_MG_FAMILY_CONTRACT !== $contract) {
+    if (is_wp_error($reuse)) {
         return false;
     }
     if (is_array($reuse)) {
-        return $initial === array($reuse['approved_filename'] => $reuse['attachment_id'])
+        return isset($reserved[0])
+            && $reserved[0] === $reuse['approved_filename']
+            && array_key_exists($reuse['approved_filename'], $attachments)
+            && $attachments[$reuse['approved_filename']] === $reuse['attachment_id']
+            && count($reuse['upload_positions'] ?? array()) === 5
             && ($reuse['upload_positions'] ?? null) === array(2, 3, 4, 5, 6)
-            && $missing === $reuse['upload_positions']
             && !array_key_exists($reuse['actual_filename'], $attachments);
     }
-    return array() === $initial && $missing === range(1, $count);
-}
-
-/** Kept so every existing caller validates the whole schema-3 record. */
-function frpd_mg_state_bindings_are_valid($family, $record, $attachments) {
-    return frpd_mg_state_record_is_valid($family, $record, $attachments);
+    return true;
 }
 
 function frpd_mg_reserved_upload_count($state) {
-    if (!is_array($state) || !is_array($state['record'] ?? null)
-        || !is_array($state['record']['reserved'] ?? null)) {
+    if (!is_array($state) || !is_array($state['reserved'] ?? null)) {
         return 0;
     }
-    return count($state['record']['reserved']);
-}
-
-/** Publish a secret-free, exact projection of durable recovery progress. */
-function frpd_mg_recovery_projection($state) {
-    if (!is_array($state)
-        || FRPD_MG_RECOVERY_CONTRACT !== ($state['record']['contract'] ?? '')
-        || !frpd_mg_state_record_is_valid(
-            $state['family'] ?? '', $state['record'] ?? null, $state['attachments'] ?? null
-        )) {
-        return null;
-    }
-    $record = $state['record'];
-    $bound_uploads = array_diff_key($state['attachments'], $record['initial_attachments']);
-    $bound_count = count($bound_uploads);
-    $unbound = null;
-    if (count($record['reserved']) === $bound_count + 1) {
-        $unbound = array(
-            'position' => $record['missing_positions'][$bound_count],
-            'filename' => $record['reserved'][$bound_count],
-        );
-    }
-    return array(
-        'contract' => FRPD_MG_RECOVERY_CONTRACT,
-        'product_id' => FRPD_MG_RECOVERY_PRODUCT_ID,
-        'prior_operation_sha256' => FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256,
-        'initial_attachments' => $record['initial_attachments'],
-        'missing_positions' => $record['missing_positions'],
-        'current_reservations' => $record['reserved'],
-        'bound_uploads' => $bound_uploads,
-        'remaining_positions' => array_slice($record['missing_positions'], $bound_count),
-        'unbound_reservation' => $unbound,
-    );
-}
-
-/** Return the exact filename this guard may reserve next, or null when none remains. */
-function frpd_mg_next_reserved_filename($state) {
-    if (!is_array($state) || !is_array($state['record'] ?? null)) {
-        return null;
-    }
-    $expected = frpd_mg_expected_images($state['family'] ?? '');
-    if (is_wp_error($expected)
-        || !frpd_mg_state_record_is_valid(
-            $state['family'], $state['record'], $state['attachments'] ?? null)) {
-        return null;
-    }
-    $filenames = array_column($expected, 'filename');
-    $record = $state['record'];
-    // A reserved-but-unbound upload blocks every further reservation.
-    if (count($record['reserved'])
-        !== count($state['attachments']) - count($record['initial_attachments'])) {
-        return null;
-    }
-    $index = count($record['reserved']);
-    return isset($record['missing_positions'][$index])
-        ? $filenames[$record['missing_positions'][$index] - 1] : null;
+    return count($state['reserved']) - (is_array(frpd_mg_reuse_contract($state['family'] ?? '')) ? 1 : 0);
 }
 
 /** Resolve and validate the exact final ordered reuse/upload attachment IDs. */
@@ -734,39 +463,20 @@ function frpd_mg_final_attachment_ids($state) {
     $expected = is_array($state) ? frpd_mg_expected_images($state['family'] ?? '')
         : new WP_Error('frpd_mg_gallery_set', 'The fixed family state is unavailable.');
     if (is_wp_error($expected)
-        || !frpd_mg_state_record_is_valid(
-            $state['family'] ?? '', $state['record'] ?? null, $state['attachments'] ?? null
+        || !frpd_mg_state_bindings_are_valid(
+            $state['family'] ?? '', $state['reserved'] ?? null, $state['attachments'] ?? null
         )) {
         return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment bindings are invalid.');
     }
     $filenames = array_column($expected, 'filename');
-    $attachments = $state['attachments'];
-    if (count($attachments) !== count($filenames)) {
+    if (($state['reserved'] ?? null) !== $filenames
+        || array_keys($state['attachments']) !== $filenames
+        || count($state['attachments']) !== count($expected)) {
         return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment set is incomplete.');
     }
-    $ids = array();
-    foreach ($filenames as $filename) {
-        if (!array_key_exists($filename, $attachments)) {
-            return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment set is incomplete.');
-        }
-        $ids[] = (int) $attachments[$filename];
-    }
+    $ids = array_values($state['attachments']);
     if (count(array_unique($ids)) !== count($ids)) {
         return new WP_Error('frpd_mg_gallery_set', 'The fixed family attachment IDs are not unique.');
-    }
-    $recovery = frpd_mg_recovery_contract($state['family']);
-    if (is_wp_error($recovery)) {
-        return $recovery;
-    }
-    if (FRPD_MG_RECOVERY_CONTRACT === ($state['record']['contract'] ?? '')) {
-        if (!is_array($recovery) || 6 !== count($ids)
-            || $ids[FRPD_MG_RECOVERY_POSITION - 1] !== FRPD_MG_RECOVERY_ATTACHMENT_ID) {
-            return new WP_Error(
-                'frpd_mg_gallery_set',
-                'Open Manway recovery requires the fixed verified attachment at position 1.'
-            );
-        }
-        return $ids;
     }
     $reuse = frpd_mg_reuse_contract($state['family']);
     if (is_wp_error($reuse)) {
@@ -790,364 +500,22 @@ function frpd_mg_final_attachment_ids($state) {
     return $ids;
 }
 
-/** Pure path-identity predicate used for root/year/month alias regression tests. */
-function frpd_mg_path_identity_is_exact($raw, $canonical, $is_link, $is_directory, $is_readable) {
-    $normalize = static function ($path) {
-        return rtrim(str_replace('\\', '/', (string) $path), '/');
-    };
-    return is_string($raw) && '' !== $raw && is_string($canonical) && '' !== $canonical
-        && true !== (bool) $is_link && true === (bool) $is_directory
-        && true === (bool) $is_readable && $normalize($raw) === $normalize($canonical);
-}
-
-/** Return one raw/canonical uploads root; configured aliases are never trusted. */
-function frpd_mg_uploads_root_identity() {
-    $uploads = wp_upload_dir();
-    $raw = is_array($uploads) ? (string) ($uploads['basedir'] ?? '') : '';
-    $canonical = '' !== $raw ? realpath($raw) : false;
-    if (false === $canonical || !frpd_mg_path_identity_is_exact(
-        $raw, $canonical, is_link($raw), is_dir($raw), is_readable($raw)
-    )) {
-        return new WP_Error(
-            'frpd_mg_uploads_root',
-            'The configured uploads root is unreadable, aliased, or not byte-canonical.'
-        );
-    }
-    return array('raw' => $raw, 'canonical' => $canonical);
-}
-
-/** Query byte-exact `_wp_attached_file` owners and reject collation aliases. */
-function frpd_mg_attached_file_owner_ids_exact($relative_path) {
-    global $wpdb;
-    $relative_path = (string) $relative_path;
-    $wpdb->last_error = '';
-    $rows = $wpdb->get_col($wpdb->prepare(
-        "SELECT post_id FROM {$wpdb->postmeta} WHERE BINARY meta_key = BINARY %s "
-        . 'AND BINARY meta_value = BINARY %s ORDER BY post_id ASC',
-        '_wp_attached_file', $relative_path
-    ));
-    $aliases = $wpdb->get_col($wpdb->prepare(
-        "SELECT post_id FROM {$wpdb->postmeta} WHERE meta_key = %s AND meta_value = %s "
-        . 'AND (BINARY meta_key <> BINARY %s OR BINARY meta_value <> BINARY %s) '
-        . 'ORDER BY post_id ASC',
-        '_wp_attached_file', $relative_path, '_wp_attached_file', $relative_path
-    ));
-    if ('' !== trim((string) $wpdb->last_error) || !is_array($rows) || !is_array($aliases)
-        || !empty($aliases)) {
-        return new WP_Error(
-            'frpd_mg_attached_file_collation',
-            'Attachment file ownership is unreadable or ambiguous under the live metadata collation.'
-        );
-    }
-    $owners = array_map('intval', $rows);
-    if (count(array_unique($owners)) !== count($owners)
-        || (!empty($owners) && min($owners) <= 0)) {
-        return new WP_Error('frpd_mg_attached_file_owner', 'Attachment file ownership is duplicated or invalid.');
-    }
-    return $owners;
-}
-
-/** Prove one attachment's post/meta/path/PNG identity against a fixed image. */
-function frpd_mg_attachment_file_identity($attachment_id, $image, $require_unique_owner = true) {
-    $attachment_id = (int) $attachment_id;
-    $post = $attachment_id > 0 ? get_post($attachment_id) : null;
-    $meta_values = $attachment_id > 0
-        ? get_post_meta($attachment_id, '_wp_attached_file', false) : null;
-    if (!is_array($image) || !is_object($post)
-        || 'attachment' !== ($post->post_type ?? null)
-        || 'inherit' !== get_post_status($post)
-        || 'image/png' !== get_post_mime_type($post)
-        || !is_array($meta_values) || 1 !== count($meta_values)
-        || !is_string($meta_values[0])) {
-        return new WP_Error(
-            'frpd_mg_recovery_identity',
-            'A fixed Open Manway attachment post, status, MIME, or attached-file metadata is not exact.'
-        );
-    }
-    $relative = $meta_values[0];
-    $segments = explode('/', $relative);
-    if ('' === $relative || str_contains($relative, '\\') || str_starts_with($relative, '/')
-        || preg_match('/\A[A-Za-z]:/', $relative)
-        || in_array('', $segments, true) || in_array('.', $segments, true)
-        || in_array('..', $segments, true)
-        || !hash_equals((string) $image['filename'], basename($relative))) {
-        return new WP_Error('frpd_mg_recovery_identity', 'A fixed attachment relative path is unsafe or has the wrong basename.');
-    }
-    $root = frpd_mg_uploads_root_identity();
-    if (is_wp_error($root)) {
-        return $root;
-    }
-    $candidate = $root['canonical'] . DIRECTORY_SEPARATOR
-        . str_replace('/', DIRECTORY_SEPARATOR, $relative);
-    $canonical = realpath($candidate);
-    $normalize = static function ($path) {
-        return str_replace('\\', '/', (string) $path);
-    };
-    $attached = get_attached_file($attachment_id, true);
-    if (false === $canonical || !is_file($candidate) || !is_readable($candidate)
-        || is_link($candidate)
-        || $normalize($candidate) !== $normalize($canonical)
-        || !str_starts_with($normalize($canonical), $normalize($root['canonical']) . '/')
-        || !is_string($attached) || $normalize($attached) !== $normalize($canonical)) {
-        return new WP_Error(
-            'frpd_mg_recovery_identity',
-            'A fixed attachment original file is missing, unreadable, aliased, or outside uploads.'
-        );
-    }
-    $owners = frpd_mg_attached_file_owner_ids_exact($relative);
-    if (is_wp_error($owners)
-        || ($require_unique_owner && $owners !== array($attachment_id))) {
-        return is_wp_error($owners) ? $owners : new WP_Error(
-            'frpd_mg_recovery_identity',
-            'A fixed attachment relative path does not have exactly one byte-exact owner.'
-        );
-    }
-    $size = filesize($canonical);
-    $digest = hash_file('sha256', $canonical);
-    $header = @file_get_contents($canonical, false, null, 0, 26);
-    $signature = is_string($header) && strlen($header) >= 26
-        && "\x89PNG\r\n\x1a\n" === substr($header, 0, 8);
-    $png = $signature ? unpack('Nwidth/Nheight/Cbit_depth/Ccolor_type', substr($header, 16, 10)) : false;
-    $modes = array(0 => 'L', 2 => 'RGB', 3 => 'P', 4 => 'LA', 6 => 'RGBA');
-    $mode = is_array($png) ? ($modes[(int) ($png['color_type'] ?? -1)] ?? '') : '';
-    $dimensions = function_exists('getimagesize') ? @getimagesize($canonical) : false;
-    if (false === $size || !is_string($digest) || !$signature || !is_array($png)
-        || (int) $size !== (int) $image['bytes']
-        || !hash_equals((string) $image['sha256'], $digest)
-        || (int) ($png['width'] ?? 0) !== (int) $image['width']
-        || (int) ($png['height'] ?? 0) !== (int) $image['height']
-        || !hash_equals((string) $image['mode'], $mode)
-        || !is_array($dimensions)
-        || (int) ($dimensions[0] ?? 0) !== (int) $image['width']
-        || (int) ($dimensions[1] ?? 0) !== (int) $image['height']
-        || 'image/png' !== (string) ($dimensions['mime'] ?? '')) {
-        return new WP_Error(
-            'frpd_mg_recovery_identity',
-            'A fixed attachment is not the approved PNG bytes, dimensions, or color mode.'
-        );
-    }
-    // ONE closed identity shape, in ONE key order, for every consumer. The
-    // completion proof re-validates this exact key list, so a producer that
-    // returned a different set silently made completion unreachable.
-    return array(
-        'attachment_id' => $attachment_id,
-        'position' => (int) $image['position'],
-        'post_type' => 'attachment',
-        'post_status' => 'inherit',
-        'mime_type' => 'image/png',
-        'relative_path' => $relative,
-        'basename' => (string) $image['filename'],
-        'bytes' => (int) $size,
-        'sha256' => $digest,
-        'png_width' => (int) $png['width'],
-        'png_height' => (int) $png['height'],
-        'png_mode' => $mode,
-        'png_bit_depth' => (int) $png['bit_depth'],
-        'png_color_type' => (int) $png['color_type'],
-    );
-}
-
-/** Freshly prove one already-live fixed attachment's complete identity. */
-function frpd_mg_recovery_attachment_identity($position, $attachment_id, $expected) {
-    $image = $expected[$position - 1] ?? null;
-    $identity = frpd_mg_attachment_file_identity($attachment_id, $image, true);
-    if (is_wp_error($identity)) {
-        return $identity;
-    }
-    if ((int) $position !== (int) $identity['position']) {
-        return new WP_Error(
-            'frpd_mg_recovery_identity',
-            'A fixed attachment identity does not carry its own fixed position.'
-        );
-    }
-    return $identity;
-}
-
-/**
- * The one literal Open Manway recovery acquisition.
- *
- * Nothing generic exists here: the family, product, prior operation, position-1
- * attachment identity and the six fixed basenames are all compiled in. Position 1
- * binds to exactly attachment 7609; positions 2-6 bind to zero or one live
- * attachment each, proved by complete server-side hash evidence plus the
- * origin-only filesystem proof; every remaining position becomes an immutable
- * missing-position entry that may be uploaded once, in ascending order.
- */
-function frpd_mg_recovery_acquisition_bindings($family, $proof, $origin, $recovery, $expected) {
-    $filenames = array_column($expected, 'filename');
-    $count = count($filenames);
-    $matches = frpd_mg_sorted_match_rows($proof['fixed_matches']);
-    $hashes = frpd_mg_sorted_match_rows($proof['hash_conflicts']);
-    $names = frpd_mg_sorted_match_rows($proof['name_conflicts']);
-    if (null === $matches || null === $hashes || null === $names
-        || $matches !== $hashes || $matches !== $names || array() === $matches) {
-        return new WP_Error(
-            'frpd_mg_recovery_acquisition',
-            'The Open Manway recovery proof does not name exactly one safe attachment per matched position.'
-        );
-    }
-    $bound = array();
-    foreach ($matches as $row) {
-        $position = (int) $row['fixed_position'];
-        $attachment_id = (int) $row['attachment_id'];
-        if ($position < 1 || $position > $count || isset($bound[$position])
-            || in_array($attachment_id, $bound, true)) {
-            return new WP_Error(
-                'frpd_mg_recovery_acquisition',
-                'The Open Manway recovery proof is ambiguous about a fixed position or attachment.'
-            );
-        }
-        $bound[$position] = $attachment_id;
-    }
-    if (!isset($bound[FRPD_MG_RECOVERY_POSITION])
-        || FRPD_MG_RECOVERY_ATTACHMENT_ID !== $bound[FRPD_MG_RECOVERY_POSITION]) {
-        return new WP_Error(
-            'frpd_mg_recovery_acquisition',
-            'Open Manway recovery requires the exact verified prior attachment at position 1.'
-        );
-    }
-    foreach (array_keys($bound) as $position) {
-        if (FRPD_MG_RECOVERY_POSITION !== $position
-            && !in_array($position, $recovery['recoverable_positions'], true)) {
-            return new WP_Error(
-                'frpd_mg_recovery_acquisition',
-                'An Open Manway recovery binding is outside the fixed recoverable positions.'
-            );
-        }
-    }
-    $identities = array();
-    foreach ($bound as $position => $attachment_id) {
-        $identity = frpd_mg_recovery_attachment_identity($position, $attachment_id, $expected);
-        if (is_wp_error($identity)) {
-            return $identity;
-        }
-        $identities[$position] = $identity;
-    }
-    // A null origin means "compute it here"; ANY other unusable value is a refusal.
-    // It is never silently replaced with a fresh proof.
-    $origin = null === $origin ? frpd_mg_origin_only_file_proof() : $origin;
-    if (is_wp_error($origin)) {
-        return $origin;
-    }
-    if (!is_array($origin) || true !== ($origin['complete'] ?? false) || !empty($origin['origin_only'])
-        || !is_array($origin['files'] ?? null) || $count !== count($origin['files'])) {
-        return new WP_Error(
-            'frpd_mg_recovery_acquisition',
-            'The bounded origin-only fixed-file proof is incomplete or found an unowned fixed file.'
-        );
-    }
-    foreach ($origin['files'] as $index => $file) {
-        $position = $index + 1;
-        $owners = is_array($file) && is_array($file['owner_attachment_ids'] ?? null)
-            ? $file['owner_attachment_ids'] : null;
-        $paths = is_array($file) && is_array($file['paths'] ?? null)
-            ? $file['paths'] : null;
-        if (!is_array($file) || $position !== ($file['position'] ?? null)
-            || !hash_equals($filenames[$index], (string) ($file['basename'] ?? ''))
-            || null === $owners || null === $paths
-            || (int) ($file['discovered'] ?? -1) !== count($paths)) {
-            return new WP_Error(
-                'frpd_mg_recovery_acquisition',
-                'The origin-only fixed-file proof does not describe the six fixed basenames in order.'
-            );
-        }
-        if (isset($bound[$position])) {
-            $path = 1 === count($paths) && is_array($paths[0]) ? $paths[0] : null;
-            if (1 !== count($owners) || $bound[$position] !== (int) $owners[0]
-                || 1 !== count($paths) || !is_array($path)
-                || true !== ($file['bytes_and_hash_exact'] ?? null)
-                || true !== ($path['bytes_and_hash_exact'] ?? null)
-                || ($path['owner_attachment_ids'] ?? null) !== array($bound[$position])
-                || !hash_equals((string) ($identities[$position]['relative_path'] ?? ''),
-                    (string) ($path['relative_path'] ?? ''))) {
-                return new WP_Error(
-                    'frpd_mg_recovery_acquisition',
-                    'A bound Open Manway position does not own exactly one exact fixed origin file.'
-                );
-            }
-            continue;
-        }
-        if (array() !== $paths || array() !== $owners) {
-            return new WP_Error(
-                'frpd_mg_recovery_acquisition',
-                'A missing Open Manway position already has a fixed origin file or attachment.'
-            );
-        }
-    }
-    if ('product' !== get_post_type(FRPD_MG_RECOVERY_PRODUCT_ID)) {
-        return new WP_Error(
-            'frpd_mg_recovery_acquisition',
-            'The fixed Open Manway recovery product is unavailable.'
-        );
-    }
-    ksort($bound, SORT_NUMERIC);
-    $initial = array();
-    foreach ($bound as $position => $attachment_id) {
-        $initial[$filenames[$position - 1]] = $attachment_id;
-    }
-    $missing = array();
-    foreach (range(1, $count) as $position) {
-        if (!isset($bound[$position])) {
-            $missing[] = $position;
-        }
-    }
-    if (array() === $missing) {
-        return new WP_Error(
-            'frpd_mg_recovery_acquisition',
-            'Every fixed Open Manway image is already live; there is nothing to recover.'
-        );
-    }
-    return array(
-        'record' => array(
-            'contract' => FRPD_MG_RECOVERY_CONTRACT,
-            'initial_attachments' => $initial,
-            'missing_positions' => $missing,
-            'reserved' => array(),
-        ),
-        'attachments' => $initial,
-        'identities' => $identities,
-        'origin_proof' => $origin,
-    );
-}
-
 /** One shared pre-acquire predicate produces the only permitted initial bindings. */
-function frpd_mg_acquisition_bindings($family, $proof, $origin = null) {
+function frpd_mg_acquisition_bindings($family, $proof) {
     $expected = frpd_mg_expected_images($family);
     if (is_wp_error($expected) || !is_array($proof) || true !== ($proof['complete'] ?? false)
-        || !empty($proof['failures'])
-        || !is_array($proof['name_conflicts'] ?? null)
+        || !empty($proof['failures']) || !empty($proof['name_conflicts'])
         || !is_array($proof['hash_conflicts'] ?? null)
         || !is_array($proof['fixed_matches'] ?? null)) {
         return new WP_Error('frpd_mg_acquisition', 'The complete pre-guard attachment proof is not eligible.');
     }
     $reuse = frpd_mg_reuse_contract($family);
-    $recovery = frpd_mg_recovery_contract($family);
     if (is_wp_error($reuse)) {
         return $reuse;
     }
-    if (is_wp_error($recovery)) {
-        return $recovery;
-    }
-    if (is_array($recovery)
-        && (!empty($proof['fixed_matches']) || !empty($proof['hash_conflicts'])
-            || !empty($proof['name_conflicts']))) {
-        return frpd_mg_recovery_acquisition_bindings($family, $proof, $origin, $recovery, $expected);
-    }
-    if (!empty($proof['name_conflicts'])) {
-        return new WP_Error('frpd_mg_acquisition', 'The complete pre-guard attachment proof is not eligible.');
-    }
-    $count = count($expected);
     if (!is_array($reuse)) {
         return empty($proof['hash_conflicts']) && empty($proof['fixed_matches'])
-            ? array(
-                'record' => array(
-                    'contract' => FRPD_MG_FAMILY_CONTRACT,
-                    'initial_attachments' => array(),
-                    'missing_positions' => range(1, $count),
-                    'reserved' => array(),
-                ),
-                'attachments' => array(),
-            )
+            ? array('reserved' => array(), 'attachments' => array())
             : new WP_Error('frpd_mg_acquisition', 'A non-reuse family has an existing fixed attachment.');
     }
     $wanted = array(array(
@@ -1160,12 +528,7 @@ function frpd_mg_acquisition_bindings($family, $proof, $origin = null) {
         return new WP_Error('frpd_mg_acquisition', 'The one fixed Stub Flange hero reuse is not exact and current.');
     }
     return array(
-        'record' => array(
-            'contract' => FRPD_MG_FAMILY_CONTRACT,
-            'initial_attachments' => array($reuse['approved_filename'] => $reuse['attachment_id']),
-            'missing_positions' => $reuse['upload_positions'],
-            'reserved' => array(),
-        ),
+        'reserved' => array($reuse['approved_filename']),
         'attachments' => array($reuse['approved_filename'] => $reuse['attachment_id']),
     );
 }
@@ -1237,242 +600,6 @@ function frpd_mg_private_attachment_projection($attachment_id) {
     );
 }
 
-/**
- * Bounded, fail-closed proof about the SIX fixed Open Manway basenames on disk.
- *
- * This exists because a WordPress attachment row is not the only thing that can
- * occupy a filename: an upload that moved its file and then failed before its
- * post row landed leaves an ORIGIN-ONLY file, and a later upload of the same
- * approved bytes would silently be stored as `<name>-1.png`. The 1.0.5 snapshot
- * enumerates attachment rows only and therefore cannot see that class at all.
- *
- * It is deliberately NOT a search: there is no caller-supplied path, glob,
- * pattern or basename anywhere. Only `wp_upload_dir()`'s base directory and the
- * `YYYY/MM` organisation directories underneath it are inspected, only the six
- * compiled-in basenames are considered, and only SAFE RELATIVE paths, byte/hash
- * classification and owning attachment IDs are reported -- never an absolute
- * server path. Anything that cannot be proven (unreadable directory, bound
- * exceeded, alias/symlink, non-regular file, unreadable original, ambiguous
- * ownership) makes the whole proof INCOMPLETE, and an incomplete proof refuses
- * acquisition before any durable state exists.
- *
- * An origin-only file is reported as a BLOCKER. This plugin never deletes,
- * renames, adopts or otherwise touches it.
- */
-function frpd_mg_origin_only_file_proof() {
-    $expected = frpd_mg_expected_images(FRPD_MG_RECOVERY_FAMILY);
-    if (is_wp_error($expected)) {
-        return $expected;
-    }
-    $root = frpd_mg_uploads_root_identity();
-    if (is_wp_error($root)) {
-        return $root;
-    }
-    $base_real = rtrim((string) $root['canonical'], DIRECTORY_SEPARATOR);
-    $directories = array('' => $base_real);
-    $entries_seen = 0;
-    $years = @scandir($base_real);
-    if (false === $years) {
-        return new WP_Error(
-            'frpd_mg_origin_proof',
-            'The WordPress uploads directory could not be enumerated, so origin-only '
-            . 'fixed-file absence is unproven.'
-        );
-    }
-    foreach ($years as $year) {
-        $entries_seen++;
-        if ($entries_seen > FRPD_MG_ORIGIN_MAX_ENTRIES) {
-            return new WP_Error(
-                'frpd_mg_origin_proof',
-                'The uploads directory exceeded the fixed enumeration bound, so origin-only '
-                . 'fixed-file absence is unproven.'
-            );
-        }
-        if (1 !== preg_match('/\A[0-9]{4}\z/', (string) $year)) {
-            continue;
-        }
-        $year_path = $base_real . DIRECTORY_SEPARATOR . $year;
-        $year_real = realpath($year_path);
-        if (false === $year_real || !frpd_mg_path_identity_is_exact(
-            $year_path, $year_real, is_link($year_path), is_dir($year_path), is_readable($year_path)
-        )) {
-            return new WP_Error(
-                'frpd_mg_origin_proof',
-                'An uploads year directory is aliased or unreadable, so origin-only '
-                . 'fixed-file absence is unproven.'
-            );
-        }
-        $months = @scandir($year_real);
-        if (false === $months) {
-            return new WP_Error(
-                'frpd_mg_origin_proof',
-                'An uploads year directory could not be enumerated, so origin-only '
-                . 'fixed-file absence is unproven.'
-            );
-        }
-        foreach ($months as $month) {
-            $entries_seen++;
-            if ($entries_seen > FRPD_MG_ORIGIN_MAX_ENTRIES) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'The uploads directory exceeded the fixed enumeration bound, so origin-only '
-                    . 'fixed-file absence is unproven.'
-                );
-            }
-            if (1 !== preg_match('/\A[0-9]{2}\z/', (string) $month)) {
-                continue;
-            }
-            $month_path = $year_real . DIRECTORY_SEPARATOR . $month;
-            $month_real = realpath($month_path);
-            if (false === $month_real || !frpd_mg_path_identity_is_exact(
-                $month_path, $month_real, is_link($month_path), is_dir($month_path), is_readable($month_path)
-            )) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'An uploads month directory is aliased or unreadable, so origin-only '
-                    . 'fixed-file absence is unproven.'
-                );
-            }
-            $directories[$year . '/' . $month] = $month_real;
-            if (count($directories) > FRPD_MG_ORIGIN_MAX_DIRECTORIES) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'The uploads directory exceeded the fixed directory bound, so origin-only '
-                    . 'fixed-file absence is unproven.'
-                );
-            }
-        }
-    }
-    ksort($directories, SORT_STRING);
-    $files = array();
-    foreach ($expected as $image) {
-        $basename = (string) $image['filename'];
-        $discovered = array();
-        $exact = true;
-        foreach ($directories as $relative_dir => $absolute_dir) {
-            $candidate = $absolute_dir . DIRECTORY_SEPARATOR . $basename;
-            if (!file_exists($candidate)) {
-                continue;
-            }
-            $candidate_real = realpath($candidate);
-            if (false === $candidate_real || is_link($candidate) || !is_file($candidate_real)
-                || $candidate_real !== $candidate
-                || !str_starts_with($candidate_real, $base_real . DIRECTORY_SEPARATOR)
-                || !is_readable($candidate_real)) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'A fixed Open Manway basename resolves to an aliased or unreadable object, so '
-                    . 'origin-only fixed-file absence is unproven.'
-                );
-            }
-            $size = filesize($candidate_real);
-            $digest = hash_file('sha256', $candidate_real);
-            if (false === $size || !is_string($digest) || 64 !== strlen($digest)) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'A fixed Open Manway basename could not be hashed, so origin-only fixed-file '
-                    . 'absence is unproven.'
-                );
-            }
-            $relative = ('' === $relative_dir ? '' : $relative_dir . '/') . $basename;
-            $path_exact = (int) $size === (int) $image['bytes']
-                && hash_equals((string) $image['sha256'], $digest);
-            $exact = $exact && $path_exact;
-            $owned = frpd_mg_attached_file_owners($relative, $path_exact ? $image : null);
-            if (is_wp_error($owned)) {
-                return $owned;
-            }
-            $discovered[] = array(
-                'relative_path' => $relative,
-                'bytes' => (int) $size,
-                'sha256' => $digest,
-                'bytes_and_hash_exact' => $path_exact,
-                'owner_attachment_ids' => array_values(array_map('intval', $owned)),
-            );
-        }
-        $owners = array();
-        foreach ($discovered as $path) {
-            foreach ($path['owner_attachment_ids'] as $attachment_id) {
-                $owners[] = (int) $attachment_id;
-            }
-        }
-        sort($owners, SORT_NUMERIC);
-        $owners = array_values(array_unique($owners));
-        $files[] = array(
-            'position' => (int) $image['position'],
-            'basename' => $basename,
-            'discovered' => count($discovered),
-            'paths' => $discovered,
-            'owner_attachment_ids' => $owners,
-            'bytes_and_hash_exact' => 0 === count($discovered) ? false : $exact,
-            'origin_only' => 0 < count($discovered) && (1 !== count($discovered)
-                || 1 !== count($discovered[0]['owner_attachment_ids'])
-                || true !== $discovered[0]['bytes_and_hash_exact']),
-        );
-    }
-    $origin_only = array();
-    foreach ($files as $file) {
-        foreach ($file['paths'] as $path) {
-            if (!$file['origin_only'] && 1 === count($file['paths'])
-                && 1 === count($path['owner_attachment_ids'])
-                && true === $path['bytes_and_hash_exact']) {
-                continue;
-            }
-            $origin_only[] = array(
-                'position' => $file['position'],
-                'relative_path' => $path['relative_path'],
-                'bytes_and_hash_exact' => $path['bytes_and_hash_exact'],
-                'owner_attachment_ids' => $path['owner_attachment_ids'],
-            );
-        }
-    }
-    return array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
-        'plugin_version' => FRPD_MG_VERSION,
-        'mode' => 'origin_only_file_proof',
-        'family' => FRPD_MG_RECOVERY_FAMILY,
-        'generated_utc' => gmdate('c'),
-        'directories_scanned' => count($directories),
-        'yearmonth_supported' => true,
-        'complete' => true,
-        'files' => $files,
-        'origin_only' => $origin_only,
-    );
-}
-
-/** Resolve and validate every attachment that byte-exactly owns one fixed path. */
-function frpd_mg_attached_file_owners($relative_path, $image = null) {
-    $owners = frpd_mg_attached_file_owner_ids_exact($relative_path);
-    if (is_wp_error($owners)) {
-        return $owners;
-    }
-    foreach ($owners as $attachment_id) {
-        if (is_array($image)) {
-            $identity = frpd_mg_attachment_file_identity($attachment_id, $image, false);
-            if (is_wp_error($identity)
-                || !hash_equals((string) $relative_path, (string) ($identity['relative_path'] ?? ''))) {
-                return is_wp_error($identity) ? $identity : new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'A fixed attachment does not own its reported byte-exact relative path.'
-                );
-            }
-        } else {
-            $post = get_post($attachment_id);
-            $values = get_post_meta($attachment_id, '_wp_attached_file', false);
-            if (!is_object($post) || 'attachment' !== ($post->post_type ?? null)
-                || 'inherit' !== get_post_status($post)
-                || 'image/png' !== get_post_mime_type($post)
-                || !is_array($values) || $values !== array((string) $relative_path)) {
-                return new WP_Error(
-                    'frpd_mg_origin_proof',
-                    'A fixed path owner is not an exact live attachment record.'
-                );
-            }
-        }
-    }
-    return $owners;
-}
-
 /** Build a complete, bounded original-file snapshot while the advisory lock is held. */
 function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     if (empty($GLOBALS['frpd_mg_lock_held'])) {
@@ -1508,7 +635,6 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     $name_conflicts = array();
     $hash_conflicts = array();
     $fixed_matches = array();
-    $fixed_identities = array();
     $private_exceptions = array();
     $total_bytes = 0;
     foreach ($ids as $raw_id) {
@@ -1606,19 +732,6 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
             foreach ($expected as $fixed_image) {
                 if ($fixed_image['position'] === $name_identity['position']
                     && hash_equals($fixed_image['filename'], $filename)) {
-                    if (FRPD_MG_RECOVERY_FAMILY === $family) {
-                        $identity = frpd_mg_recovery_attachment_identity(
-                            (int) $name_identity['position'], $attachment_id, $expected
-                        );
-                        if (is_wp_error($identity)) {
-                            $failures[] = array(
-                                'attachment_id' => $attachment_id,
-                                'reason' => 'fixed_attachment_identity_failed',
-                            );
-                            break;
-                        }
-                        $fixed_identities[] = $identity;
-                    }
                     $fixed_matches[] = array(
                         'attachment_id' => $attachment_id,
                         'fixed_position' => $name_identity['position'],
@@ -1631,15 +744,11 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
     $complete = count($failures) === 0
         && count($rows) + count($private_exceptions) === count($ids);
     $canonical = wp_json_encode(
-        array(
-            'readable_attachments' => $rows,
-            'private_exceptions' => $private_exceptions,
-            'fixed_identities' => $fixed_identities,
-        ),
+        array('readable_attachments' => $rows, 'private_exceptions' => $private_exceptions),
         JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
     );
     return array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
+        'schema' => 2,
         'plugin_version' => FRPD_MG_VERSION,
         'mode' => $mode,
         'family' => $family,
@@ -1654,7 +763,6 @@ function frpd_mg_snapshot($family, $mode, $guard_active = false) {
         'name_conflicts' => $name_conflicts,
         'hash_conflicts' => $hash_conflicts,
         'fixed_matches' => $fixed_matches,
-        'fixed_identities' => $fixed_identities,
         'guard_active' => (bool) $guard_active,
     );
 }
@@ -1711,25 +819,45 @@ function frpd_mg_handle_snapshot() {
 }
 add_action('admin_post_frpd_media_guard_snapshot', 'frpd_mg_handle_snapshot');
 
-function frpd_mg_insert_state($family, $secret, $proof, $bindings = null) {
+function frpd_mg_clear_expired_state_under_lock() {
+    $owned = frpd_mg_assert_lock_owned();
+    if (is_wp_error($owned)) {
+        return $owned;
+    }
+    global $wpdb;
+    $table = frpd_mg_table_name();
+    $retired = $wpdb->query($wpdb->prepare(
+        "UPDATE `{$table}` SET state_status = 'expired', completed_utc = UTC_TIMESTAMP(6), "
+        . "state_version = state_version + 1 WHERE guard_id = 1 "
+        . "AND state_status IN ('active','gallery') "
+        . "AND expires_utc <= UTC_TIMESTAMP(6) AND CONNECTION_ID() = %d "
+        . "AND IS_USED_LOCK(%s) = CONNECTION_ID()",
+        (int) $GLOBALS['frpd_mg_lock_connection_id'],
+        FRPD_MG_LOCK_NAME
+    ));
+    return false === $retired
+        ? new WP_Error('frpd_mg_state_retire', 'Expired guard state could not be retired.')
+        : true;
+}
+
+function frpd_mg_insert_state($family, $secret, $proof) {
     $owned = frpd_mg_assert_lock_owned();
     if (is_wp_error($owned)) {
         return $owned;
     }
     global $wpdb;
     $manifest = frpd_mg_manifest();
-    $bindings = is_array($bindings) ? $bindings
-        : frpd_mg_acquisition_bindings($family, $proof);
+    $bindings = frpd_mg_acquisition_bindings($family, $proof);
     $session = function_exists('wp_get_session_token') ? (string) wp_get_session_token() : '';
     $user_id = (int) get_current_user_id();
     if (is_wp_error($manifest) || is_wp_error($bindings)
-        || !frpd_mg_state_record_is_valid(
-            $family, $bindings['record'] ?? null, $bindings['attachments'] ?? null
+        || !frpd_mg_state_bindings_are_valid(
+            $family, $bindings['reserved'] ?? null, $bindings['attachments'] ?? null
         ) || '' === $session || $user_id <= 0) {
         return is_wp_error($bindings) ? $bindings
             : new WP_Error('frpd_mg_owner', 'The guard owner session or initial reuse binding is unavailable.');
     }
-    $reserved_json = wp_json_encode($bindings['record'], JSON_UNESCAPED_SLASHES);
+    $reserved_json = wp_json_encode($bindings['reserved'], JSON_UNESCAPED_SLASHES);
     $attachments_json = wp_json_encode($bindings['attachments'], JSON_UNESCAPED_SLASHES);
     $times = $wpdb->get_row(
         $wpdb->prepare(
@@ -1750,65 +878,40 @@ function frpd_mg_insert_state($family, $secret, $proof, $bindings = null) {
         return new WP_Error('frpd_mg_db_time', 'Database UTC guard time is unavailable.');
     }
     $table = frpd_mg_table_name();
-    $existing = frpd_mg_exact_state();
-    if (is_wp_error($existing)) {
-        return $existing;
-    }
-    if (is_array($existing) && !frpd_mg_terminal_state_is_replaceable($existing)) {
-        return new WP_Error(
-            'frpd_mg_state_unresolved',
-            'An earlier media guard row contains unresolved state and cannot be replaced.'
-        );
-    }
-    $owner_session_sha256 = hash('sha256', $session);
-    $owner_token_sha256 = hash('sha256', $secret);
-    if (is_array($existing)) {
-        // Compare-and-swap only the exact terminal row inspected above.  A concurrent
-        // state change produces zero affected rows and never overwrites evidence.
-        $previous_record_json = wp_json_encode($existing['record'], JSON_UNESCAPED_SLASHES);
-        $previous_attachments_json = wp_json_encode($existing['attachments'], JSON_UNESCAPED_SLASHES);
-        $written = $wpdb->query($wpdb->prepare(
-            "UPDATE `{$table}` SET schema_version=%d,family=%s,product_id=%d,manifest_sha256=%s,"
-            . "snapshot_sha256=%s,snapshot_count=%d,owner_user_id=%d,owner_session_sha256=%s,"
-            . "owner_token_sha256=%s,issued_utc=%s,expires_utc=%s,state_status='active',"
-            . "completed_utc=NULL,state_version=1,reserved_json=%s,attachments_json=%s "
-            . "WHERE guard_id=1 AND state_status=%s AND state_version=%d "
-            . "AND BINARY reserved_json=BINARY %s AND BINARY attachments_json=BINARY %s "
-            . "AND CONNECTION_ID()=%d AND IS_USED_LOCK(%s)=CONNECTION_ID()",
-            FRPD_MG_STATE_SCHEMA, $family, (int) $manifest['families'][$family]['product_id'],
-            FRPD_MG_MANIFEST_SHA256, (string) $proof['snapshot_sha256'],
-            (int) $proof['attachment_total'], $user_id, $owner_session_sha256,
-            $owner_token_sha256, (string) $times['issued_utc'], (string) $times['expires_utc'],
-            (string) $reserved_json, (string) $attachments_json,
-            (string) $existing['state_status'], (int) $existing['state_version'],
-            (string) $previous_record_json, (string) $previous_attachments_json,
-            (int) $GLOBALS['frpd_mg_lock_connection_id'], FRPD_MG_LOCK_NAME
-        ));
-    } else {
-        $columns = 'guard_id,schema_version,family,product_id,manifest_sha256,snapshot_sha256,snapshot_count,'
-            . 'owner_user_id,owner_session_sha256,owner_token_sha256,issued_utc,expires_utc,state_status,'
-            . 'completed_utc,state_version,reserved_json,attachments_json';
-        $written = $wpdb->query($wpdb->prepare(
-            "INSERT INTO `{$table}` ({$columns}) SELECT 1,%d,%s,%d,%s,%s,%d,%d,%s,%s,%s,%s,'active',NULL,1,%s,%s "
-            . "FROM DUAL WHERE CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID()",
-            FRPD_MG_STATE_SCHEMA, $family,
-            (int) $manifest['families'][$family]['product_id'], FRPD_MG_MANIFEST_SHA256,
-            (string) $proof['snapshot_sha256'], (int) $proof['attachment_total'], $user_id,
-            $owner_session_sha256, $owner_token_sha256,
-            (string) $times['issued_utc'], (string) $times['expires_utc'],
-            (string) $reserved_json, (string) $attachments_json,
-            (int) $GLOBALS['frpd_mg_lock_connection_id'], FRPD_MG_LOCK_NAME
-        ));
-    }
-    if (1 !== (int) $written) {
-        return new WP_Error(
-            'frpd_mg_state_insert',
-            'The media guard state could not be created without replacing unresolved evidence.'
-        );
+    $columns = 'guard_id,schema_version,family,product_id,manifest_sha256,snapshot_sha256,snapshot_count,'
+        . 'owner_user_id,owner_session_sha256,owner_token_sha256,issued_utc,expires_utc,state_status,'
+        . 'completed_utc,state_version,reserved_json,attachments_json';
+    $written = $wpdb->query($wpdb->prepare(
+        "INSERT INTO `{$table}` ({$columns}) SELECT 1,%d,%s,%d,%s,%s,%d,%d,%s,%s,%s,%s,'active',NULL,1,%s,%s "
+        . "FROM DUAL WHERE CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID() "
+        . "ON DUPLICATE KEY UPDATE schema_version=VALUES(schema_version),family=VALUES(family),"
+        . "product_id=VALUES(product_id),manifest_sha256=VALUES(manifest_sha256),snapshot_sha256=VALUES(snapshot_sha256),"
+        . "snapshot_count=VALUES(snapshot_count),owner_user_id=VALUES(owner_user_id),"
+        . "owner_session_sha256=VALUES(owner_session_sha256),owner_token_sha256=VALUES(owner_token_sha256),"
+        . "issued_utc=VALUES(issued_utc),expires_utc=VALUES(expires_utc),state_status=VALUES(state_status),"
+        . "completed_utc=NULL,state_version=1,reserved_json=VALUES(reserved_json),attachments_json=VALUES(attachments_json)",
+        FRPD_MG_STATE_SCHEMA,
+        $family,
+        (int) $manifest['families'][$family]['product_id'],
+        FRPD_MG_MANIFEST_SHA256,
+        (string) $proof['snapshot_sha256'],
+        (int) $proof['attachment_total'],
+        $user_id,
+        hash('sha256', $session),
+        hash('sha256', $secret),
+        (string) $times['issued_utc'],
+        (string) $times['expires_utc'],
+        (string) $reserved_json,
+        (string) $attachments_json,
+        (int) $GLOBALS['frpd_mg_lock_connection_id'],
+        FRPD_MG_LOCK_NAME
+    ));
+    if ((int) $written <= 0) {
+        return new WP_Error('frpd_mg_state_insert', 'The media guard state could not be created.');
     }
     $state = frpd_mg_active_state();
     if (!is_array($state) || $state['family'] !== $family
-        || $state['record'] !== $bindings['record']
+        || $state['reserved'] !== $bindings['reserved']
         || $state['attachments'] !== $bindings['attachments']
         || !hash_equals((string) $proof['snapshot_sha256'], $state['snapshot_sha256'])) {
         return new WP_Error('frpd_mg_state_verify', 'The media guard state could not be verified.');
@@ -1824,15 +927,16 @@ function frpd_mg_handle_acquire() {
     if (is_wp_error($locked)) {
         frpd_mg_fail($locked->get_error_message(), 423);
     }
-    $existing = frpd_mg_exact_state();
+    $cleared = frpd_mg_clear_expired_state_under_lock();
+    if (is_wp_error($cleared)) {
+        frpd_mg_fail($cleared->get_error_message(), 500);
+    }
+    $existing = frpd_mg_active_state();
     if (is_wp_error($existing)) {
         frpd_mg_fail($existing->get_error_message(), 500);
     }
-    if (is_array($existing) && !frpd_mg_terminal_state_is_replaceable($existing)) {
-        frpd_mg_fail(
-            'An earlier media guard row contains unresolved active, gallery, reserved, or partial evidence.',
-            423
-        );
+    if (is_array($existing)) {
+        frpd_mg_fail('A media guard is already active.', 423);
     }
     $thumbnail_identity = frpd_mg_gallery_meta_key_identity('_thumbnail_id');
     $gallery_identity = frpd_mg_gallery_meta_key_identity('_product_image_gallery');
@@ -1845,16 +949,7 @@ function frpd_mg_handle_acquire() {
     if (is_wp_error($proof)) {
         frpd_mg_fail($proof->get_error_message());
     }
-    // The recovery family is the ONLY family whose acquisition consults the
-    // filesystem. An unprovable origin proof refuses BEFORE any durable row exists.
-    $origin = null;
-    if (is_array(frpd_mg_recovery_contract($family))) {
-        $origin = frpd_mg_origin_only_file_proof();
-        if (is_wp_error($origin)) {
-            frpd_mg_fail($origin->get_error_message(), 409);
-        }
-    }
-    $bindings = frpd_mg_acquisition_bindings($family, $proof, $origin);
+    $bindings = frpd_mg_acquisition_bindings($family, $proof);
     if (is_wp_error($bindings)) {
         $proof['mode'] = 'guard_refused';
         frpd_mg_render_proof('FRP Depot Media Guard Refused', $proof, 409);
@@ -1864,7 +959,7 @@ function frpd_mg_handle_acquire() {
     } catch (Exception $exception) {
         frpd_mg_fail('Secure guard ownership could not be created.', 500);
     }
-    $state = frpd_mg_insert_state($family, $secret, $proof, $bindings);
+    $state = frpd_mg_insert_state($family, $secret, $proof);
     if (is_wp_error($state)) {
         frpd_mg_fail($state->get_error_message(), 500);
     }
@@ -1880,10 +975,6 @@ function frpd_mg_handle_acquire() {
     $proof['guard_active'] = true;
     $proof['guard_expires_utc'] = gmdate('c', $state['expires']);
     $proof['reserved_uploads'] = 0;
-    if (is_array($origin)) {
-        $proof['recovery'] = frpd_mg_recovery_projection($state);
-        $proof['origin_only_proof'] = $origin;
-    }
     frpd_mg_render_proof('FRP Depot Media Guard Acquired', $proof);
 }
 add_action('admin_post_frpd_media_guard_acquire', 'frpd_mg_handle_acquire');
@@ -1908,9 +999,6 @@ function frpd_mg_handle_guarded_snapshot() {
     }
     $proof['guard_expires_utc'] = gmdate('c', $state['expires']);
     $proof['reserved_uploads'] = frpd_mg_reserved_upload_count($state);
-    if (FRPD_MG_RECOVERY_CONTRACT === ($state['record']['contract'] ?? '')) {
-        $proof['recovery'] = frpd_mg_recovery_projection($state);
-    }
     frpd_mg_render_proof('FRP Depot Guarded Media Snapshot', $proof);
 }
 add_action('admin_post_frpd_media_guard_guarded_snapshot', 'frpd_mg_handle_guarded_snapshot');
@@ -2227,15 +1315,7 @@ function frpd_mg_completion_proof($state) {
     if (is_wp_error($reuse)) {
         return $reuse;
     }
-    $record = is_array($state['record'] ?? null) ? $state['record'] : array();
-    $is_recovery = FRPD_MG_RECOVERY_CONTRACT === ($record['contract'] ?? '');
-    $upload_count = $is_recovery
-        ? count($record['missing_positions'])
-        : $expected_count - (is_array($reuse) ? 1 : 0);
-    if ($is_recovery
-        && FRPD_MG_RECOVERY_ATTACHMENT_ID !== (int) ($ids[FRPD_MG_RECOVERY_POSITION - 1] ?? 0)) {
-        return new WP_Error('frpd_mg_completion_identity', 'The fixed recovery hero binding is invalid.');
-    }
+    $upload_count = $expected_count - (is_array($reuse) ? 1 : 0);
     $expected_matches = array();
     $expected_name_conflicts = array();
     $expected_hash_conflicts = array();
@@ -2269,53 +1349,17 @@ function frpd_mg_completion_proof($state) {
     $actual_names = $snapshot['name_conflicts'];
     $actual_hashes = $snapshot['hash_conflicts'];
     $actual_matches = $snapshot['fixed_matches'];
-    $actual_identities = $snapshot['fixed_identities'] ?? null;
-    $identity_matches = array();
-    if (is_array($actual_identities)) {
-        foreach ($actual_identities as $identity) {
-            if (!is_array($identity)
-                || array_keys($identity) !== array(
-                    'attachment_id', 'position', 'post_type', 'post_status', 'mime_type',
-                    'relative_path', 'basename', 'bytes', 'sha256', 'png_width', 'png_height',
-                    'png_mode', 'png_bit_depth', 'png_color_type'
-                )) {
-                return new WP_Error(
-                    'frpd_mg_completion_identity',
-                    'The complete fixed attachment identity proof is not closed and exact.'
-                );
-            }
-            $identity_matches[] = array(
-                'attachment_id' => (int) $identity['attachment_id'],
-                'fixed_position' => (int) $identity['position'],
-            );
-        }
-    }
-    // The completion proof is a statement about the six ORDERED positions, so its
-    // identities are published in position order rather than the snapshot's
-    // attachment-ID walk order.
-    if (is_array($actual_identities)) {
-        usort($actual_identities, static function ($left, $right) {
-            return ((int) ($left['position'] ?? 0)) <=> ((int) ($right['position'] ?? 0));
-        });
-    }
     $sort_matches($actual_names);
     $sort_matches($actual_hashes);
     $sort_matches($actual_matches);
-    $sort_matches($identity_matches);
     $sort_matches($expected_name_conflicts);
     $sort_matches($expected_hash_conflicts);
     $sort_matches($expected_matches);
-    $expected_attachment_total = FRPD_MG_RECOVERY_CONTRACT === ($state['record']['contract'] ?? '')
-        ? FRPD_MG_RECOVERY_FINAL_ATTACHMENT_TOTAL
-        : (int) $state['snapshot_count'] + $upload_count;
     if (!$snapshot['complete'] || !empty($snapshot['failures'])
-        || (int) $snapshot['attachment_total'] !== $expected_attachment_total
+        || (int) $snapshot['attachment_total'] !== (int) $state['snapshot_count'] + $upload_count
         || $actual_names !== $expected_name_conflicts
         || $actual_hashes !== $expected_hash_conflicts
-        || $actual_matches !== $expected_matches
-        // Only the recovery contract publishes complete per-attachment identities;
-        // every other family must publish NONE, so neither side can drift silently.
-        || $identity_matches !== ($is_recovery ? $expected_matches : array())) {
+        || $actual_matches !== $expected_matches) {
         return new WP_Error('frpd_mg_completion_snapshot', 'The complete live reuse/upload proof is not exact.');
     }
     $product_id = (int) $state['product_id'];
@@ -2326,13 +1370,12 @@ function frpd_mg_completion_proof($state) {
         return new WP_Error('frpd_mg_completion_gallery', 'The fixed product gallery does not match the verified family attachments.');
     }
     return array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
+        'schema' => 2,
         'plugin_version' => FRPD_MG_VERSION,
         'mode' => 'guard_completed',
         'family' => $state['family'],
         'product_id' => $product_id,
         'attachment_ids' => $ids,
-        'attachment_identities' => $actual_identities,
         'attachment_total' => $snapshot['attachment_total'],
         'snapshot_sha256' => $snapshot['snapshot_sha256'],
     );
@@ -2357,10 +1400,10 @@ function frpd_mg_complete_state($state) {
         . "AND state_version = %d AND expires_utc > UTC_TIMESTAMP(6) "
         . "AND CONNECTION_ID() = %d AND IS_USED_LOCK(%s) = CONNECTION_ID() "
         . "AND EXISTS (SELECT 1 FROM `{$posts}` WHERE ID = %d AND post_type = 'product') "
-        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND BINARY meta_key = BINARY '_thumbnail_id') "
-        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND BINARY meta_key = BINARY '_thumbnail_id' AND BINARY meta_value = BINARY %s) "
-        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND BINARY meta_key = BINARY '_product_image_gallery') "
-        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND BINARY meta_key = BINARY '_product_image_gallery' AND BINARY meta_value = BINARY %s)",
+        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND meta_key = '_thumbnail_id') "
+        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND meta_key = '_thumbnail_id' AND meta_value = %s) "
+        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND meta_key = '_product_image_gallery') "
+        . "AND 1 = (SELECT COUNT(*) FROM `{$postmeta}` WHERE post_id = %d AND meta_key = '_product_image_gallery' AND meta_value = %s)",
         $next,
         (int) $state['state_version'],
         (int) $GLOBALS['frpd_mg_lock_connection_id'],
@@ -2374,6 +1417,7 @@ function frpd_mg_complete_state($state) {
         $gallery
     ));
     if (1 !== (int) $updated) {
+        frpd_mg_clear_expired_state_under_lock();
         return new WP_Error('frpd_mg_completion_drift', 'The guard changed before completion could be recorded.');
     }
     $row = $wpdb->get_row('SELECT state_status, state_version FROM `' . frpd_mg_table_name() . '` WHERE guard_id = 1', ARRAY_A);
@@ -2405,20 +1449,13 @@ function frpd_mg_handle_complete() {
 }
 add_action('admin_post_frpd_media_guard_complete', 'frpd_mg_handle_complete');
 
-function frpd_mg_update_state($state, $record, $attachments) {
+function frpd_mg_update_state($state, $reserved, $attachments) {
     $owned = frpd_mg_assert_lock_owned();
     if (is_wp_error($owned)) {
         return $owned;
     }
     global $wpdb;
-    // The immutable half of the record can never be rewritten by an update: only the
-    // append-only `reserved` list may differ from the durable row.
-    $existing = is_array($state) && is_array($state['record'] ?? null) ? $state['record'] : null;
-    if (!is_array($record) || null === $existing
-        || $record['contract'] !== $existing['contract']
-        || $record['initial_attachments'] !== $existing['initial_attachments']
-        || $record['missing_positions'] !== $existing['missing_positions']
-        || !frpd_mg_state_record_is_valid($state['family'], $record, $attachments)) {
+    if (!frpd_mg_state_bindings_are_valid($state['family'], array_values($reserved), $attachments)) {
         return new WP_Error('frpd_mg_state_bindings', 'The media guard reuse/upload bindings are invalid.');
     }
     $next_version = (int) $state['state_version'] + 1;
@@ -2428,7 +1465,7 @@ function frpd_mg_update_state($state, $record, $attachments) {
         . "WHERE guard_id = 1 AND state_status = 'active' AND state_version = %d "
         . "AND expires_utc > UTC_TIMESTAMP(6) AND CONNECTION_ID() = %d "
         . "AND IS_USED_LOCK(%s) = CONNECTION_ID()",
-        wp_json_encode($record, JSON_UNESCAPED_SLASHES),
+        wp_json_encode(array_values($reserved), JSON_UNESCAPED_SLASHES),
         wp_json_encode($attachments, JSON_UNESCAPED_SLASHES),
         $next_version,
         (int) $state['state_version'],
@@ -2440,7 +1477,7 @@ function frpd_mg_update_state($state, $record, $attachments) {
     }
     $fresh = frpd_mg_active_state();
     if (!is_array($fresh) || $fresh['state_version'] !== $next_version
-        || $fresh['record'] !== $record || $fresh['attachments'] !== $attachments) {
+        || $fresh['reserved'] !== array_values($reserved) || $fresh['attachments'] !== $attachments) {
         return new WP_Error('frpd_mg_state_verify', 'The media guard state update could not be verified.');
     }
     return $fresh;
@@ -2483,26 +1520,22 @@ function frpd_mg_upload_prefilter($file) {
     $mime = is_array($image_info) ? (string) ($image_info['mime'] ?? '') : '';
     $image_type = is_array($image_info) ? (int) ($image_info[2] ?? 0) : 0;
     $reuse = frpd_mg_reuse_contract($state['family']);
-    // The ONLY permitted upload is the next unreserved missing position taken from the
-    // IMMUTABLE durable record. Arbitrary gaps in positions 2-6 are therefore supported,
-    // and nothing here reads a position, index or ordering from the caller: the request
-    // only ever matches the one filename the record already decided comes next.
-    $next = frpd_mg_next_reserved_filename($state);
+    $reuse_position = is_array($reuse) ? (int) $reuse['position'] : 0;
     if (($file['error'] ?? null) !== UPLOAD_ERR_OK
         || $raw_filename !== $filename || sanitize_file_name($raw_filename) !== $raw_filename
         || !is_array($match) || false === $size || (int) $size !== $match['bytes']
         || !is_string($digest) || !hash_equals($match['sha256'], $digest)
         || "\x89PNG\r\n\x1a\n" !== $signature || IMAGETYPE_PNG !== $image_type
         || 'image/png' !== $mime
-        || is_wp_error($reuse) || !is_string($next) || !hash_equals($next, $filename)
-        || array_key_exists($filename, $state['attachments'])
+        || is_wp_error($reuse) || (int) $match['position'] === $reuse_position
+        || count($state['reserved']) !== count($state['attachments'])
         || in_array($filename, $state['reserved'], true)) {
         $file['error'] = 'FRP Depot media guard refused a non-fixed or repeated upload.';
         return $file;
     }
-    $record = $state['record'];
-    $record['reserved'][] = $filename;
-    $fresh = frpd_mg_update_state($state, $record, $state['attachments']);
+    $reserved = $state['reserved'];
+    $reserved[] = $filename;
+    $fresh = frpd_mg_update_state($state, $reserved, $state['attachments']);
     if (is_wp_error($fresh)) {
         $file['error'] = 'FRP Depot media guard could not reserve the fixed upload.';
         return $file;
@@ -2641,7 +1674,7 @@ function frpd_mg_capture_allowed_attachment($attachment_id) {
         }
         $attachments = $state['attachments'];
         $attachments[$filename] = $attachment_id;
-        $fresh = frpd_mg_update_state($state, $state['record'], $attachments);
+        $fresh = frpd_mg_update_state($state, $state['reserved'], $attachments);
         if (is_wp_error($fresh)) {
             wp_die('FRP Depot media guard could not persist the fixed attachment identity.', 'Media guard', array('response' => 423));
         }
@@ -2784,275 +1817,6 @@ function frpd_mg_upload_bits_guard($upload) {
 }
 add_filter('wp_upload_bits', 'frpd_mg_upload_bits_guard', PHP_INT_MIN, 1);
 
-/** Read-only bounded origin-only fixed-file proof for the one recovery family. */
-function frpd_mg_handle_origin_proof() {
-    frpd_mg_require_admin();
-    check_admin_referer('frpd_mg_origin_proof');
-    $locked = frpd_mg_hold_request_lock();
-    if (is_wp_error($locked)) {
-        frpd_mg_fail($locked->get_error_message(), 423);
-    }
-    $proof = frpd_mg_origin_only_file_proof();
-    if (is_wp_error($proof)) {
-        frpd_mg_fail($proof->get_error_message());
-    }
-    frpd_mg_render_proof('FRP Depot Origin-Only Fixed-File Proof', $proof);
-}
-add_action('admin_post_frpd_media_guard_origin_proof', 'frpd_mg_handle_origin_proof');
-
-/** Bind the recovery nonce to exactly one durable acquisition owner record. */
-function frpd_mg_recovery_nonce_action($state) {
-    if (!is_array($state)) {
-        return FRPD_MG_RECOVERY_NONCE . ':invalid';
-    }
-    $binding = hash('sha256', wp_json_encode(array(
-        'state_schema' => FRPD_MG_STATE_SCHEMA,
-        'family' => (string) ($state['family'] ?? ''),
-        'snapshot_sha256' => (string) ($state['snapshot_sha256'] ?? ''),
-        'state_version' => (int) ($state['state_version'] ?? 0),
-        'owner_user_id' => (int) ($state['owner_user_id'] ?? 0),
-        'owner_session_hash' => (string) ($state['owner_session_sha256'] ?? ''),
-        'owner_cookie_hash' => (string) ($state['owner_hash'] ?? ''),
-    ), JSON_UNESCAPED_SLASHES));
-    return FRPD_MG_RECOVERY_NONCE . ':' . $binding;
-}
-
-/** Validate the one three-field admin-post body, including raw duplicate fields. */
-function frpd_mg_exact_recovery_post_fields($raw_body = null) {
-    $expected = array('action', '_wpnonce', 'if_match');
-    if ('POST' !== strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? ''))) {
-        return new WP_Error('frpd_mg_recovery_route', 'Recovery requires one exact POST request.');
-    }
-    if (!empty($_GET) || !empty($_FILES)) {
-        return new WP_Error('frpd_mg_recovery_route', 'Recovery rejects query and file fields.');
-    }
-    $content_type = strtolower(trim((string) ($_SERVER['CONTENT_TYPE'] ?? '')));
-    if ('' === $content_type
-        || 0 !== strpos($content_type, 'application/x-www-form-urlencoded')) {
-        return new WP_Error(
-            'frpd_mg_recovery_route',
-            'Recovery requires application/x-www-form-urlencoded form data.'
-        );
-    }
-    if (null === $raw_body) {
-        $raw_body = file_get_contents('php://input');
-        if ('' === (string) $raw_body && 'cli' === PHP_SAPI) {
-            $raw_body = http_build_query($_POST, '', '&', PHP_QUERY_RFC3986);
-        }
-    }
-    if (!is_string($raw_body) || '' === $raw_body) {
-        return new WP_Error('frpd_mg_recovery_route', 'Recovery form data is missing.');
-    }
-    $decoded = array();
-    foreach (explode('&', $raw_body) as $pair) {
-        if ('' === $pair) {
-            return new WP_Error('frpd_mg_recovery_route', 'Recovery form data is malformed.');
-        }
-        $parts = explode('=', $pair, 2);
-        $key = urldecode($parts[0]);
-        $value = urldecode($parts[1] ?? '');
-        if (!in_array($key, $expected, true) || array_key_exists($key, $decoded)) {
-            return new WP_Error(
-                'frpd_mg_recovery_route',
-                'Recovery requires exactly one action, _wpnonce, and if_match field.'
-            );
-        }
-        $decoded[$key] = $value;
-    }
-    $post = is_array($_POST) ? $_POST : array();
-    $keys = array_keys($post);
-    sort($keys, SORT_STRING);
-    $sorted_expected = $expected;
-    sort($sorted_expected, SORT_STRING);
-    if ($keys !== $sorted_expected || count($decoded) !== 3) {
-        return new WP_Error(
-            'frpd_mg_recovery_route',
-            'Recovery requires exactly one action, _wpnonce, and if_match field.'
-        );
-    }
-    foreach ($expected as $key) {
-        if (!isset($decoded[$key]) || !isset($post[$key]) || !is_string($post[$key])
-            || !hash_equals($decoded[$key], $post[$key])) {
-            return new WP_Error(
-                'frpd_mg_recovery_route',
-                'Recovery fields must be scalar and byte-consistent with the raw body.'
-            );
-        }
-    }
-    return $decoded;
-}
-
-/** Emit fresh observed state after one failed internal dispatch; never claim rollback. */
-function frpd_mg_render_recovery_failure($classification, $dispatch_status = null) {
-    $fresh = frpd_mg_exact_state();
-    $state_status = is_array($fresh) ? (string) $fresh['state_status'] : 'indeterminate';
-    $state_version = is_array($fresh) ? (int) $fresh['state_version'] : null;
-    if ('gallery' === $state_status) {
-        $message = 'The one allowed request failed after claim; state remains gallery. '
-            . 'Do not retry. Reconcile the product and durable state offline.';
-    } elseif ('indeterminate' === $state_status) {
-        $message = 'The one allowed request failed and fresh state is unproven; state may '
-            . 'remain gallery. Do not retry. Reconcile offline.';
-    } else {
-        $message = 'The one allowed request failed; fresh observed state is ' . $state_status
-            . '. Do not retry. Reconcile the product and durable state offline.';
-    }
-    frpd_mg_render_proof('FRP Depot Open Manway Recovery Failure', array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
-        'plugin_version' => FRPD_MG_VERSION,
-        'mode' => 'recovery_gallery_failed_no_retry',
-        'classification' => (string) $classification,
-        'observed_state_status' => $state_status,
-        'observed_state_version' => $state_version,
-        'dispatch_status' => is_int($dispatch_status) ? $dispatch_status : null,
-        'message' => $message,
-    ), 409);
-}
-
-/**
- * The ONE owner-bound Open Manway recovery gallery commit.
- *
- * WHY THIS EXISTS AT ALL: the gallery write must be seen by
- * frpd_mg_rest_pre_insert_product_object() as coming from the guard OWNER, and
- * that predicate needs the exact WordPress user, a nonempty session token and
- * the guard secret cookie. The cookie is deliberately scoped to `/wp-admin/`,
- * so a Basic-auth WooCommerce REST call from Python can never satisfy it and
- * would be refused with frpd_mg_gallery_owner/403. The commit therefore happens
- * INSIDE this authenticated admin-post request, where all three facts hold.
- *
- * The caller supplies NOTHING but the action, the nonce and the plan-pinned
- * non-secret If-Match gallery hash. Product 1397 and the six ordered attachment
- * IDs are derived exclusively from the durable guard record and the fixed
- * manifest. The active->gallery claim is performed by the existing REST filter
- * under the same advisory lock, exactly as the guard's semantics already
- * require, so this route adds no second claim path. There is no retry, rollback
- * or cleanup endpoint: any uncertainty leaves the row's normal expiry behaviour
- * intact.
- */
-function frpd_mg_handle_recovery_gallery() {
-    frpd_mg_require_admin();
-    $fields = frpd_mg_exact_recovery_post_fields();
-    if (is_wp_error($fields)
-        || !hash_equals(FRPD_MG_RECOVERY_ACTION, (string) ($fields['action'] ?? ''))) {
-        frpd_mg_fail(is_wp_error($fields) ? $fields->get_error_message()
-            : 'The fixed recovery action is not exact.', 400);
-    }
-    $if_match = (string) $fields['if_match'];
-    if (1 !== preg_match('/\A"[a-f0-9]{64}"\z/', $if_match)) {
-        frpd_mg_fail('The fixed recovery gallery precondition is not a gallery hash.', 400);
-    }
-    $locked = frpd_mg_hold_request_lock();
-    if (is_wp_error($locked)) {
-        frpd_mg_fail($locked->get_error_message(), 423);
-    }
-    $state = frpd_mg_exact_state();
-    if (is_wp_error($state)) {
-        frpd_mg_fail($state->get_error_message(), 500);
-    }
-    if (!is_array($state) || !frpd_mg_owner_matches($state)) {
-        frpd_mg_fail('The active media guard is not owned by this user, session and browser.', 403);
-    }
-    $recovery = frpd_mg_recovery_contract($state['family']);
-    if (is_wp_error($recovery) || !is_array($recovery)
-        || FRPD_MG_RECOVERY_CONTRACT !== ($state['record']['contract'] ?? '')
-        || FRPD_MG_RECOVERY_FAMILY !== $state['family']
-        || FRPD_MG_RECOVERY_PRODUCT_ID !== (int) $state['product_id']
-        || 'active' !== ($state['state_status'] ?? '')) {
-        frpd_mg_fail('The active guard is not the fixed Open Manway recovery contract.', 409);
-    }
-    check_admin_referer(frpd_mg_recovery_nonce_action($state), '_wpnonce');
-    $ids = frpd_mg_final_attachment_ids($state);
-    if (is_wp_error($ids) || 6 !== count($ids)
-        || FRPD_MG_RECOVERY_ATTACHMENT_ID !== (int) $ids[FRPD_MG_RECOVERY_POSITION - 1]) {
-        frpd_mg_fail('The six fixed Open Manway recovery bindings are not complete and exact.', 409);
-    }
-    $before = frpd_mg_product_gallery_ids(FRPD_MG_RECOVERY_PRODUCT_ID);
-    if (is_wp_error($before)) {
-        frpd_mg_fail($before->get_error_message(), 409);
-    }
-    if (!hash_equals(frpd_mg_gallery_etag($before), $if_match)) {
-        frpd_mg_fail('The product gallery changed before the conditional recovery update.', 412);
-    }
-    if (!class_exists('WP_REST_Request') || !function_exists('rest_do_request')) {
-        frpd_mg_fail('The internal WordPress REST dispatcher is unavailable.', 500);
-    }
-    $images = array();
-    foreach ($ids as $attachment_id) {
-        $images[] = array('id' => (int) $attachment_id);
-    }
-    $request = new WP_REST_Request('PUT', FRPD_MG_RECOVERY_REST_ROUTE);
-    $request->set_header('content-type', 'application/json');
-    $request->set_header('if-match', $if_match);
-    $request->set_body(wp_json_encode(array('images' => $images), JSON_UNESCAPED_SLASHES));
-    try {
-        $response = rest_do_request($request);
-    } catch (Throwable $throwable) {
-        frpd_mg_render_recovery_failure('dispatch_exception');
-    }
-    if (is_wp_error($response)) {
-        frpd_mg_render_recovery_failure('dispatch_wp_error');
-    }
-    $status = is_object($response) && method_exists($response, 'get_status')
-        ? (int) $response->get_status() : 0;
-    $data = is_object($response) && method_exists($response, 'get_data')
-        ? $response->get_data() : null;
-    $failed = is_object($response) && method_exists($response, 'is_error')
-        ? (bool) $response->is_error() : true;
-    $after = frpd_mg_product_gallery_ids(FRPD_MG_RECOVERY_PRODUCT_ID);
-    $fresh = frpd_mg_exact_state();
-    if ($failed || 200 !== $status || !is_array($data)
-        || FRPD_MG_RECOVERY_PRODUCT_ID !== (int) ($data['id'] ?? 0)
-        || is_wp_error($after) || $after !== $ids
-        || !is_array($fresh) || 'gallery' !== ($fresh['state_status'] ?? '')) {
-        frpd_mg_render_recovery_failure('post_dispatch_mismatch', $status);
-    }
-    frpd_mg_render_proof('FRP Depot Open Manway Recovery Gallery Committed', array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
-        'plugin_version' => FRPD_MG_VERSION,
-        'mode' => 'recovery_gallery_committed',
-        'contract' => FRPD_MG_RECOVERY_CONTRACT,
-        'family' => FRPD_MG_RECOVERY_FAMILY,
-        'product_id' => FRPD_MG_RECOVERY_PRODUCT_ID,
-        'prior_operation_sha256' => FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256,
-        'attachment_ids' => array_map('intval', $ids),
-        'gallery_etag_before' => frpd_mg_gallery_etag($before),
-        'gallery_etag_after' => frpd_mg_gallery_etag($after),
-        'state_status' => 'gallery',
-        'state_version' => (int) $fresh['state_version'],
-        'transport' => 'internal_authenticated_rest_do_request',
-    ));
-}
-add_action('admin_post_' . FRPD_MG_RECOVERY_ACTION, 'frpd_mg_handle_recovery_gallery');
-
-/** Non-secret capability projection so a deployment can prove what is installed. */
-function frpd_mg_capability_projection() {
-    return array(
-        'schema' => FRPD_MG_PROOF_SCHEMA,
-        'plugin_version' => FRPD_MG_VERSION,
-        'state_schema' => FRPD_MG_STATE_SCHEMA,
-        'proof_schema' => FRPD_MG_PROOF_SCHEMA,
-        'manifest_sha256' => FRPD_MG_MANIFEST_SHA256,
-        'families' => array('elbow_90', 'manway_cover', 'open_manway', 'pipe', 'stub_flange'),
-        'fixed_reuse_family' => FRPD_MG_REUSE_FAMILY,
-        'fixed_recovery' => array(
-            'contract' => FRPD_MG_RECOVERY_CONTRACT,
-            'family' => FRPD_MG_RECOVERY_FAMILY,
-            'product_id' => FRPD_MG_RECOVERY_PRODUCT_ID,
-            'position' => FRPD_MG_RECOVERY_POSITION,
-            'attachment_id' => FRPD_MG_RECOVERY_ATTACHMENT_ID,
-            'filename' => FRPD_MG_RECOVERY_FILENAME,
-            'prior_operation_sha256' => FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256,
-            'recoverable_positions' => array(2, 3, 4, 5, 6),
-        ),
-        'capabilities' => array(
-            'existing_fixed_attachment_acquisition' => true,
-            'non_prefix_upload_reservation' => true,
-            'origin_only_file_enumeration' => true,
-            'owner_bound_gallery_commit' => true,
-        ),
-    );
-}
-
 function frpd_mg_admin_menu() {
     add_management_page(
         'FRP Depot Media Guard',
@@ -3077,15 +1841,6 @@ function frpd_mg_admin_page() {
     echo '<p id="frpd-mg-version">Version ' . esc_html(FRPD_MG_VERSION) . '</p>';
     echo '<p id="frpd-mg-status">' . (is_wp_error($state) ? 'Guard unavailable'
         : (is_array($state) ? 'Guard active' : 'Guard inactive')) . '</p>';
-    echo '<script type="application/json" id="frpd-mg-capability">' . wp_json_encode(
-        frpd_mg_capability_projection(),
-        JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE |
-        JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT
-    ) . '</script>';
-    echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
-    wp_nonce_field('frpd_mg_origin_proof');
-    echo '<input type="hidden" name="action" value="frpd_media_guard_origin_proof">';
-    echo '<button type="submit" id="frpd-mg-origin-proof">Origin-only fixed-file proof</button></form>';
     foreach ($manifest['families'] as $family => $record) {
         echo '<section data-frpd-family="' . esc_attr($family) . '"><h2>' . esc_html($family) . '</h2>';
         echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '">';
@@ -3108,19 +1863,6 @@ function frpd_mg_admin_page() {
         wp_nonce_field('frpd_mg_complete');
         echo '<input type="hidden" name="action" value="frpd_media_guard_complete">';
         echo '<button type="submit" id="frpd-mg-complete">Verify exact family attachments and complete guard</button></form>';
-        if (FRPD_MG_RECOVERY_CONTRACT === ($state['record']['contract'] ?? '')) {
-            // Exactly three fields: owner/acquisition-bound nonce, action and non-secret
-            // If-Match gallery hash. No referer, product, attachment, path or URL field.
-            echo '<form method="post" action="' . esc_url(admin_url('admin-post.php')) . '"'
-                . ' id="frpd-mg-recovery-gallery-form">';
-            wp_nonce_field(frpd_mg_recovery_nonce_action($state), '_wpnonce', true, false);
-            echo '<input type="hidden" name="action" value="' . esc_attr(FRPD_MG_RECOVERY_ACTION) . '">';
-            echo '<label for="frpd-mg-recovery-if-match">Plan-pinned gallery If-Match</label>';
-            echo '<input type="text" name="if_match" id="frpd-mg-recovery-if-match" value=""'
-                . ' size="70" autocomplete="off" spellcheck="false">';
-            echo '<button type="submit" id="frpd-mg-recovery-gallery">'
-                . 'Commit the fixed Open Manway recovery gallery</button></form>';
-        }
     }
     echo '</div>';
 }

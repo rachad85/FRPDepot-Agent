@@ -73,14 +73,15 @@ GUARD_PLUGIN_PHP_BYTES = 86320
 GUARD_RUNTIME_MANIFEST_SHA256 = "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565"
 GUARD_RUNTIME_MANIFEST_BYTES = 4475
 GUARD_ZIP_PATH = THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard-1.0.5.zip"
-GUARD_PLUGIN_PHP_PATH = (
-    THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
-    / "frpdepot-media-mutation-guard.php"
-)
-GUARD_RUNTIME_MANIFEST_PATH = (
-    THIS_DIR / "media_mutation_guard" / "frpdepot-media-mutation-guard"
-    / "approved-media.json"
-)
+# *** THE 1.0.5 SOURCE PINS POINT AT THE IMMUTABLE RELEASE SNAPSHOT, NOT THE WORKING TREE. ***
+# 2026-08-21: the working tree moved to Guard 1.0.6 while 1.0.5 is still the INSTALLED
+# plugin this tool drives. `released/1.0.5/` holds the exact bytes extracted from the
+# pinned 1.0.5 ZIP, so this tool keeps proving the version that is actually live.
+# Do NOT repoint these back at `frpdepot-media-mutation-guard/` -- that directory is
+# now the NEXT version's source and its hashes deliberately differ.
+GUARD_RELEASE_DIR = THIS_DIR / "media_mutation_guard" / "released" / "1.0.5"
+GUARD_PLUGIN_PHP_PATH = GUARD_RELEASE_DIR / "frpdepot-media-mutation-guard.php"
+GUARD_RUNTIME_MANIFEST_PATH = GUARD_RELEASE_DIR / "approved-media.json"
 GUARD_TTL_SECONDS = 1800
 GUARD_ADMIN_PATH = "/wp-admin/tools.php"
 GUARD_POST_PATH = "/wp-admin/admin-post.php"
@@ -1456,6 +1457,7 @@ class ProductFamilyAdmin(media_base.AdminPage):
         are present.
         """
         rows = self._page.query_selector_all(media_base.LIST_ROW_SELECTOR)
+        self._last_row_identity_diagnostics: list[dict[str, Any]] = []
         found: list[dict[str, Any]] = []
         identity_selector = 'input[name="media[]"]'
         for row in rows:
@@ -1465,11 +1467,13 @@ class ProductFamilyAdmin(media_base.AdminPage):
                     and len(row.query_selector_all(media_base.EMPTY_TABLE_CELL_SELECTOR)) == 1):
                 continue
             ids: set[int] = set()
+            exact_edit_link_count = 0
             invalid_edit_candidate = False
             for link in row.query_selector_all(media_base.ROW_LINK_SELECTOR):
                 href = str(link.get_attribute("href") or "")
                 attachment_id = parse_exact_attachment_edit_url(href)
                 if attachment_id is not None:
+                    exact_edit_link_count += 1
                     ids.add(attachment_id)
                 elif is_attachment_edit_candidate_url(href):
                     invalid_edit_candidate = True
@@ -1496,10 +1500,36 @@ class ProductFamilyAdmin(media_base.AdminPage):
             if (invalid_edit_candidate or invalid_checkbox or len(ids) > 1
                     or len(checkbox_ids) > 1
                     or (ids and checkbox_ids and ids != checkbox_ids)):
+                self._last_row_identity_diagnostics.append({
+                    "reason": "invalid_identity_carriers",
+                    "exact_edit_link_count": exact_edit_link_count,
+                    "exact_edit_unique_count": len(ids),
+                    "invalid_edit_candidate": invalid_edit_candidate,
+                    "media_control_count": len(identity_controls),
+                    "invalid_checkbox": invalid_checkbox,
+                    "checkbox_unique_count": len(checkbox_ids),
+                    "exact_checkbox_agree": bool(
+                        ids and checkbox_ids and ids == checkbox_ids
+                    ),
+                    "retains_identity_values": False,
+                })
                 found.append({"id": None, "filename": "", "stem": ""})
                 continue
             resolved_ids = ids or checkbox_ids
             if len(resolved_ids) != 1:
+                self._last_row_identity_diagnostics.append({
+                    "reason": "missing_unique_identity",
+                    "exact_edit_link_count": exact_edit_link_count,
+                    "exact_edit_unique_count": len(ids),
+                    "invalid_edit_candidate": invalid_edit_candidate,
+                    "media_control_count": len(identity_controls),
+                    "invalid_checkbox": invalid_checkbox,
+                    "checkbox_unique_count": len(checkbox_ids),
+                    "exact_checkbox_agree": bool(
+                        ids and checkbox_ids and ids == checkbox_ids
+                    ),
+                    "retains_identity_values": False,
+                })
                 found.append({"id": None, "filename": "", "stem": ""})
                 continue
             attachment_id = next(iter(resolved_ids))
@@ -1528,11 +1558,18 @@ class ProductFamilyAdmin(media_base.AdminPage):
         totals_consistent = True
         pages = 0
         unidentified = 0
+        unidentified_diagnostic_counts: dict[str, int] = {}
         terminal_empty_page = False
         for page_number in range(1, media_base.MAX_LIBRARY_PAGES + 1):
             self._goto(media_base.library_page_url(page_number))
             pages = page_number
+            self._last_row_identity_diagnostics = []
             page_rows = self._row_records()
+            for diagnostic in self._last_row_identity_diagnostics:
+                diagnostic_key = canonical({"page": page_number, **diagnostic})
+                unidentified_diagnostic_counts[diagnostic_key] = (
+                    unidentified_diagnostic_counts.get(diagnostic_key, 0) + 1
+                )
             if not page_rows:
                 terminal_empty_page = True
                 break
@@ -1550,6 +1587,14 @@ class ProductFamilyAdmin(media_base.AdminPage):
                     continue
                 if attachment_id in seen:
                     unidentified += 1
+                    diagnostic_key = canonical({
+                        "page": page_number,
+                        "reason": "duplicate_row_identity",
+                        "retains_identity_values": False,
+                    })
+                    unidentified_diagnostic_counts[diagnostic_key] = (
+                        unidentified_diagnostic_counts.get(diagnostic_key, 0) + 1
+                    )
                     continue
                 seen.add(attachment_id)
                 if not record.get("filename"):
@@ -1590,6 +1635,10 @@ class ProductFamilyAdmin(media_base.AdminPage):
             result["sanitized_row_structure_diagnostic"] = (
                 self._sanitized_row_structure_diagnostic()
             )
+            result["sanitized_unidentified_diagnostics"] = [
+                {"count": unidentified_diagnostic_counts[key], **json.loads(key)}
+                for key in sorted(unidentified_diagnostic_counts)
+            ]
         return result
 
     def upload_one(self, expected: dict[str, Any], known_ids: set[int],

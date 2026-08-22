@@ -1,378 +1,6 @@
 <?php
-// Local offline harness for FRP Depot Media Mutation Guard. No WordPress/network writes.
-define('ABSPATH', __DIR__ . DIRECTORY_SEPARATOR);
-define('ARRAY_A', 'ARRAY_A');
-define('WP_PLUGIN_DIR', dirname(__DIR__) . DIRECTORY_SEPARATOR . 'hetron_private_history'
-    . DIRECTORY_SEPARATOR . 'plugin');
-
-class WP_Error {
-    private string $code;
-    private string $message;
-    public function __construct($code = '', $message = '', $data = null) {
-        $this->code = (string) $code;
-        $this->message = (string) $message;
-    }
-    public function get_error_message() { return $this->message; }
-}
-function is_wp_error($value) { return $value instanceof WP_Error; }
-function plugin_dir_path($file) { return dirname($file) . DIRECTORY_SEPARATOR; }
-function add_action($hook, $callback, $priority = 10, $accepted_args = 1) {
-    $GLOBALS['registered_actions'][(string) $hook][] = array($callback, $priority, $accepted_args);
-}
-function add_filter($hook, $callback, $priority = 10, $accepted_args = 1) {
-    $GLOBALS['registered_filters'][(string) $hook][] = array($callback, $priority, $accepted_args);
-}
-function register_activation_hook($file, $callback) {}
-function register_deactivation_hook($file, $callback) {}
-function wp_get_session_token() { return 'offline-session-token'; }
-function get_current_user_id() { return 1; }
-function get_option($name, $default = false) { return $GLOBALS['options'][$name] ?? $default; }
-function add_option($name, $value, $deprecated = '', $autoload = null) {
-    if (array_key_exists($name, $GLOBALS['options'])) { return false; }
-    $GLOBALS['options'][$name] = $value; return true;
-}
-function update_option($name, $value, $autoload = null) {
-    $changed = !array_key_exists($name, $GLOBALS['options']) || $GLOBALS['options'][$name] !== $value;
-    $GLOBALS['options'][$name] = $value; return $changed;
-}
-function delete_option($name) {
-    if (!array_key_exists($name, $GLOBALS['options'])) { return false; }
-    unset($GLOBALS['options'][$name]); return true;
-}
-function get_attached_file($id, $unfiltered = false) { return $GLOBALS['attachment_paths'][(int) $id] ?? false; }
-function get_post_meta($id, $key, $single = false) {
-    $id = (int) $id;
-    $key = (string) $key;
-    if (!$single && isset($GLOBALS['post_meta_rows'][$id])
-        && array_key_exists($key, $GLOBALS['post_meta_rows'][$id])) {
-        return $GLOBALS['post_meta_rows'][$id][$key];
-    }
-    if (!isset($GLOBALS['post_meta'][$id])
-        || !array_key_exists($key, $GLOBALS['post_meta'][$id])) {
-        return $single ? '' : array();
-    }
-    $value = $GLOBALS['post_meta'][$id][$key];
-    return $single ? $value : array($value);
-}
-function get_metadata_by_mid($type, $meta_id) {
-    return 'post' === $type ? ($GLOBALS['metadata_by_mid'][(int) $meta_id] ?? false) : false;
-}
-function get_post($id) { return $GLOBALS['attachment_posts'][(int) $id] ?? null; }
-function get_post_status($post) { return is_object($post) ? ($post->post_status ?? '') : ''; }
-function get_post_mime_type($post) { return is_object($post) ? ($post->post_mime_type ?? '') : ''; }
-function is_plugin_active($file) { return in_array((string) $file, $GLOBALS['active_plugins'], true); }
-function get_post_type($id) {
-    if (in_array((int) $id, $GLOBALS['attachment_ids'], true)) { return 'attachment'; }
-    return in_array((int) $id, $GLOBALS['product_ids'], true) ? 'product' : 'post';
-}
-function get_post_thumbnail_id($id) { return $GLOBALS['thumbnail_ids'][(int) $id] ?? 0; }
-function wp_json_encode($value, $flags = 0) { return json_encode($value, $flags); }
-function is_user_logged_in() { return true; }
-function current_user_can($capability) { return true; }
-function admin_url($path = '') { return 'https://frpdepots.com/wp-admin/' . ltrim($path, '/'); }
-function esc_html($value) { return htmlspecialchars((string) $value, ENT_QUOTES); }
-function esc_url($value) { return (string) $value; }
-function esc_attr($value) { return htmlspecialchars((string) $value, ENT_QUOTES); }
-function sanitize_key($value) { return preg_replace('/[^a-z0-9_\-]/', '', strtolower((string) $value)); }
-function sanitize_file_name($value) { return (string) $value; }
-function wp_normalize_path($path) { return str_replace('\\\\', '/', (string) $path); }
-function wp_upload_dir($time = null, $create = true) { return array('basedir' => $GLOBALS['upload_basedir']); }
-function wp_unslash($value) { return $value; }
-function wp_nonce_field($action) {}
-function status_header($status) {}
-function nocache_headers() {}
-function wp_die($message, $title = '', $args = array()) { throw new RuntimeException((string) $message); }
-
-class FakeWpdb {
-    public string $posts = 'wp_posts';
-    public string $postmeta = 'wp_postmeta';
-    public string $prefix = 'wp_';
-    public string $last_error = '';
-    public int $connection_id = 1;
-    public int $lock_owner_id = 1;
-    public ?array $state = null;
-    public int $rows_affected = 0;
-    public array $prepared_args = array();
-    public bool $reconnect_on_state_read = false;
-    public bool $fail_attachment_enumeration = false;
-    public bool $fail_meta_collation = false;
-    public function prepare($query, ...$args) { $this->prepared_args = $args; return $query; }
-    public function get_var($query) {
-        if (str_contains($query, 'SELECT CASE') && str_contains($query, "'_thumbnail_id'")) {
-            $key = (string) ($this->prepared_args[0] ?? '');
-            $folded = rtrim(strtolower(strtr($key, array('í' => 'i', 'Í' => 'i'))));
-            if ('_thumbnail_id' === $folded) { return '_thumbnail_id'; }
-            if ('_product_image_gallery' === $folded) { return '_product_image_gallery'; }
-            return '';
-        }
-        if (str_contains($query, 'CONNECTION_ID')) { return $this->connection_id; }
-        if (str_contains($query, 'IS_USED_LOCK')) { return $this->lock_owner_id; }
-        return 1;
-    }
-    public function get_col($query) {
-        if ($this->fail_attachment_enumeration) {
-            $this->last_error = 'simulated attachment enumeration failure';
-            return array();
-        }
-        return $GLOBALS['attachment_ids'];
-    }
-    public function get_results($query, $format = null) {
-        if (str_contains($query, 'SELECT meta_key, meta_value FROM')) {
-            $post_id = (int) ($this->prepared_args[0] ?? 0);
-            $rows = array();
-            foreach (($GLOBALS['post_meta_rows'][$post_id] ?? array()) as $key => $values) {
-                foreach ($values as $value) {
-                    $rows[] = array('meta_key' => (string) $key, 'meta_value' => (string) $value);
-                }
-            }
-            return $rows;
-        }
-        return array();
-    }
-    public function get_row($query, $format = null) {
-        if (str_contains($query, 'information_schema.COLUMNS')) {
-            if ($this->fail_meta_collation) {
-                $this->last_error = 'simulated metadata collation lookup failure';
-                return null;
-            }
-            return array('charset_name' => 'utf8mb4', 'collation_name' => 'utf8mb4_unicode_ci');
-        }
-        if (str_contains($query, 'SHOW TABLE STATUS')) { return array('Engine' => 'InnoDB'); }
-        if (str_contains($query, 'UTC_TIMESTAMP(6) AS issued_utc')) {
-            return array(
-                'issued_utc' => gmdate('Y-m-d H:i:s.000000'),
-                'expires_utc' => gmdate('Y-m-d H:i:s.000000', time() + 1800),
-                'expires_epoch' => time() + 1800,
-                'db_connection_id' => $this->connection_id,
-                'lock_owner_id' => $this->lock_owner_id,
-            );
-        }
-        if (str_contains($query, 'UTC_TIMESTAMP(6) AS completed_utc')) {
-            return array('completed_utc' => gmdate('Y-m-d H:i:s.000000'));
-        }
-        if (str_contains($query, 'wp_frpd_media_guard')) {
-            if ($this->reconnect_on_state_read) {
-                $this->connection_id = 2;
-                $this->reconnect_on_state_read = false;
-            }
-            $row = is_array($this->state) ? $this->state : array('guard_id' => null);
-            $row['is_active'] = (in_array(($row['state_status'] ?? 'active'), array('active', 'gallery'), true)
-                && (int) ($row['expires_epoch'] ?? 0) > time()) ? '1' : '0';
-            $row['db_connection_id'] = $this->connection_id;
-            $row['lock_owner_id'] = $this->lock_owner_id;
-            return $row;
-        }
-        return null;
-    }
-    public function query($query) {
-        if (str_contains($query, 'INSERT INTO `wp_frpd_media_guard`')) {
-            if ($this->connection_id !== 1 || $this->lock_owner_id !== 1) { return 0; }
-            $args = $this->prepared_args;
-            $this->state = array(
-                'guard_id' => 1,
-                'schema_version' => (int) ($args[0] ?? 0),
-                'family' => (string) ($args[1] ?? ''),
-                'product_id' => (int) ($args[2] ?? 0),
-                'manifest_sha256' => (string) ($args[3] ?? ''),
-                'snapshot_sha256' => (string) ($args[4] ?? ''),
-                'snapshot_count' => (int) ($args[5] ?? 0),
-                'owner_user_id' => (int) ($args[6] ?? 0),
-                'owner_session_sha256' => (string) ($args[7] ?? ''),
-                'owner_token_sha256' => (string) ($args[8] ?? ''),
-                'issued_utc' => (string) ($args[9] ?? ''),
-                'expires_utc' => (string) ($args[10] ?? ''),
-                'expires_epoch' => time() + 1800,
-                'state_status' => 'active',
-                'completed_utc' => null,
-                'state_version' => 1,
-                'reserved_json' => (string) ($args[11] ?? '[]'),
-                'attachments_json' => (string) ($args[12] ?? '{}'),
-            );
-            return 1;
-        }
-        if (str_contains($query, "SET state_status = 'completed'")) {
-            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'gallery'
-                || (int) $this->state['expires_epoch'] <= time()
-                || $this->connection_id !== 1 || $this->lock_owner_id !== 1
-                || (int) ($GLOBALS['thumbnail_ids'][1368] ?? 0) !== 4849
-                || (string) ($GLOBALS['post_meta'][1368]['_product_image_gallery'] ?? '') !== '202,203,204,205,206'
-                || ((int) ($GLOBALS['product_meta_counts'][1368]['_thumbnail_id'] ?? 1) !== 1
-                    && str_contains($query, "meta_key = '_thumbnail_id')"))
-                || ((int) ($GLOBALS['product_meta_counts'][1368]['_product_image_gallery'] ?? 1) !== 1
-                    && str_contains($query, "meta_key = '_product_image_gallery')"))) {
-                return 0;
-            }
-            $this->state['state_status'] = 'completed';
-            $this->state['completed_utc'] = gmdate('Y-m-d H:i:s.000000');
-            $this->state['state_version']++;
-            return 1;
-        }
-        if (str_contains($query, "SET state_status = 'gallery'")) {
-            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'active'
-                || (int) $this->state['state_version'] !== (int) ($this->prepared_args[1] ?? 0)
-                || (int) $this->state['expires_epoch'] <= time()
-                || $this->connection_id !== 1 || $this->lock_owner_id !== 1) {
-                return 0;
-            }
-            $this->state['state_status'] = 'gallery';
-            $this->state['state_version'] = (int) ($this->prepared_args[0] ?? 0);
-            return 1;
-        }
-        if (str_contains($query, 'SET reserved_json = %s')) {
-            if (!is_array($this->state) || ($this->state['state_status'] ?? '') !== 'active'
-                || (int) $this->state['expires_epoch'] <= time()
-                || $this->connection_id !== 1 || $this->lock_owner_id !== 1) {
-                return 0;
-            }
-            $this->state['reserved_json'] = (string) ($this->prepared_args[0] ?? '[]');
-            $this->state['attachments_json'] = (string) ($this->prepared_args[1] ?? '{}');
-            $this->state['state_version'] = (int) ($this->prepared_args[2] ?? $this->state['state_version']);
-            return 1;
-        }
-        if (str_contains($query, "SET state_status = 'expired'")) {
-            $allows_gallery = str_contains($query, "state_status IN ('active','gallery')");
-            $eligible = is_array($this->state)
-                && (($this->state['state_status'] ?? '') === 'active'
-                    || ($allows_gallery && ($this->state['state_status'] ?? '') === 'gallery'))
-                && (int) $this->state['expires_epoch'] <= time();
-            if (!$eligible) { return 0; }
-            $this->state['state_status'] = 'expired';
-            $this->state['state_version']++;
-            return 1;
-        }
-        return 1;
-    }
-    public function insert($table, $data) {
-        if (is_array($this->state)) { return false; }
-        $data['expires_epoch'] = time() + 1800;
-        $this->state = $data;
-        return 1;
-    }
-    public function update($table, $data, $where) {
-        if (!is_array($this->state)
-            || (isset($where['state_version'])
-                && (int) $this->state['state_version'] !== (int) $where['state_version'])
-            || (isset($where['state_status'])
-                && (string) ($this->state['state_status'] ?? '') !== (string) $where['state_status'])) {
-            return 0;
-        }
-        $this->state = array_merge($this->state, $data);
-        return 1;
-    }
-}
-$GLOBALS['wpdb'] = new FakeWpdb();
-$GLOBALS['options'] = array();
-$GLOBALS['attachment_ids'] = array();
-$GLOBALS['attachment_paths'] = array();
-$GLOBALS['attachment_posts'] = array();
-$GLOBALS['active_plugins'] = array('frpdepot-hetron-private-history/frpdepot-hetron-private-history.php');
-$GLOBALS['post_meta'] = array();
-$GLOBALS['post_meta_rows'] = array();
-$GLOBALS['product_meta_counts'] = array();
-$GLOBALS['product_ids'] = array(1368);
-$GLOBALS['thumbnail_ids'] = array();
-$GLOBALS['upload_basedir'] = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'frpd-mg-uploads';
-if (!is_dir($GLOBALS['upload_basedir'])) { mkdir($GLOBALS['upload_basedir'], 0700, true); }
-
-require __DIR__ . '/frpdepot-media-mutation-guard/frpdepot-media-mutation-guard.php';
-
-$passed = 0;
-function check($condition, $message) {
-    global $passed;
-    if (!$condition) { throw new RuntimeException('FAIL: ' . $message); }
-    $passed++;
-}
-function reset_lock() {
-    $GLOBALS['frpd_mg_lock_held'] = false;
-    $GLOBALS['frpd_mg_lock_connection_id'] = 0;
-    $GLOBALS['wpdb']->connection_id = 1;
-    $GLOBALS['wpdb']->lock_owner_id = 1;
-    $GLOBALS['frpd_mg_allowed_upload_request'] = false;
-    $GLOBALS['frpd_mg_allowed_upload_filename'] = '';
-    $GLOBALS['frpd_mg_allowed_attachment_id'] = 0;
-    $GLOBALS['frpd_mg_attachment_insert_consumed'] = false;
-    $GLOBALS['frpd_mg_allowed_gallery_request'] = false;
-    $GLOBALS['frpd_mg_allowed_gallery_product_id'] = 0;
-    $GLOBALS['frpd_mg_allowed_gallery_ids'] = array();
-    $GLOBALS['frpd_mg_allowed_tmp_path'] = '';
-    $GLOBALS['frpd_mg_allowed_destination'] = '';
-    $GLOBALS['frpd_mg_destination_verified'] = false;
-}
-
-class FakeProduct {
-    private int $id;
-    public function __construct($id) { $this->id = (int) $id; }
-    public function get_id() { return $this->id; }
-}
-class FakeRestRequest {
-    private string $method;
-    private array $json;
-    private string $if_match;
-    private array $query;
-    private array $body;
-    private array $files;
-    public function __construct($method, $json, $if_match, $query = array(), $body = array(), $files = array()) {
-        $this->method = (string) $method;
-        $this->json = $json;
-        $this->if_match = (string) $if_match;
-        $this->query = is_array($query) ? $query : array();
-        $this->body = is_array($body) ? $body : array();
-        $this->files = is_array($files) ? $files : array();
-    }
-    public function get_method() { return $this->method; }
-    public function get_json_params() { return $this->json; }
-    public function get_query_params() { return $this->query; }
-    public function get_body_params() { return $this->body; }
-    public function get_file_params() { return $this->files; }
-    public function get_header($name) {
-        return 'if-match' === strtolower((string) $name) ? $this->if_match : '';
-    }
-}
-function set_test_state($state) {
-    $manifest = frpd_mg_manifest();
-    $GLOBALS['wpdb']->state = array(
-        'guard_id' => 1,
-        'schema_version' => FRPD_MG_STATE_SCHEMA,
-        'family' => $state['family'],
-        'product_id' => $manifest['families'][$state['family']]['product_id'],
-        'manifest_sha256' => FRPD_MG_MANIFEST_SHA256,
-        'snapshot_sha256' => str_repeat('a', 64),
-        'snapshot_count' => $state['snapshot_count'] ?? 1,
-        'owner_user_id' => 1,
-        'owner_session_sha256' => hash('sha256', 'offline-session-token'),
-        'owner_token_sha256' => $state['owner_hash'],
-        'issued_utc' => gmdate('Y-m-d H:i:s.000000'),
-        'expires_utc' => gmdate('Y-m-d H:i:s.000000', $state['expires']),
-        'expires_epoch' => $state['expires'],
-        'state_status' => $state['state_status'] ?? 'active',
-        'completed_utc' => null,
-        'state_version' => $state['state_version'] ?? 1,
-        'reserved_json' => json_encode($state['reserved'] ?? array()),
-        'attachments_json' => json_encode($state['attachments'] ?? array()),
-    );
-}
-function upload_file($name, $tmp) {
-    return array('name' => $name, 'tmp_name' => $tmp, 'error' => UPLOAD_ERR_OK, 'type' => 'image/png');
-}
-function fixed_source($family, $position) {
-    $manifest = frpd_mg_manifest();
-    $filename = $manifest['families'][$family]['images'][$position - 1]['filename'];
-    if ('stub_flange' === $family) {
-        return 'C:\\FRPDepot\\Dado\\20_Working\\stub_flange_chatgpt_views_v2_20260820\\'
-            . $filename;
-    }
-    if ('open_manway' === $family) {
-        return 'C:\\FRPDepot\\Dado\\20_Working\\frp_manway\\approved_gallery_20260820\\'
-            . $filename;
-    }
-    $root = 'C:\\FRPDepot\\Dado\\20_Working\\product_image_overhaul_20260815\\generated_review_batches\\';
-    $dirs = array(
-        'manway_cover' => 'manway_cover_real_source_batch_20260815',
-        'elbow_90' => 'elbow_90_family_batch_20260815',
-        'pipe' => 'pipe_real_source_batch_20260815',
-    );
-    return $root . $dirs[$family] . '\\' . $filename;
-}
+// Shared offline harness bootstrap; the assertion suites require this file.
+require __DIR__ . '/guard_test_bootstrap.php';
 
 $manifest = frpd_mg_manifest();
 check(!is_wp_error($manifest), 'runtime manifest loads');
@@ -388,7 +16,8 @@ foreach ($expected_family_counts as $family => $count) {
     check(count($manifest['families'][$family]['images']) === $count,
         $family . ' has its exact fixed image count');
 }
-check(FRPD_MG_VERSION === '1.0.5', 'guard version is pinned to v1.0.5');
+check(FRPD_MG_VERSION === '1.0.7', 'guard version is pinned to v1.0.7');
+check(FRPD_MG_STATE_SCHEMA === 3, 'durable guard state schema is bumped to 3');
 check($manifest['fixed_reuse'] === array(
     'actual_filename' => '01_stub_flange_real_source_hero-1.png',
     'approved_filename' => '01_authentic_source_hero.png',
@@ -423,8 +52,10 @@ check($admin_post_actions === array(
     'admin_post_frpd_media_guard_acquire',
     'admin_post_frpd_media_guard_complete',
     'admin_post_frpd_media_guard_guarded_snapshot',
+    'admin_post_frpd_media_guard_origin_proof',
+    'admin_post_frpd_media_guard_recovery_gallery',
     'admin_post_frpd_media_guard_snapshot',
-), 'guard exposes only the four exact fixed admin actions');
+), 'guard exposes only the six exact fixed admin actions in v1.0.7');
 check(!isset($GLOBALS['registered_actions']['admin_post_frpd_media_guard_delete']),
     'guard exposes no delete action');
 check(isset($GLOBALS['registered_actions']['wp_ajax_image-editor'])
@@ -464,8 +95,9 @@ check(!is_wp_error($snapshot) && $snapshot['complete'] === true,
     'benign snapshot complete' . (is_wp_error($snapshot) ? ': ' . $snapshot->get_error_message() : ''));
 check($snapshot['attachment_total'] === 1 && $snapshot['hashed_total'] === 1, 'snapshot counts exact');
 check($snapshot['name_conflicts'] === array() && $snapshot['hash_conflicts'] === array(), 'benign snapshot has no conflict');
-check($snapshot['schema'] === 2 && $snapshot['private_exceptions'] === array(),
-    'ordinary complete snapshot uses schema 2 with no private exception');
+check($snapshot['schema'] === FRPD_MG_PROOF_SCHEMA && $snapshot['schema'] === 3
+    && $snapshot['private_exceptions'] === array(),
+    'ordinary complete snapshot uses the running proof schema 3 with no private exception');
 reset_lock();
 $GLOBALS['attachment_ids'] = array(11, 1832);
 $GLOBALS['attachment_paths'] = array(11 => $benign, 1832 => false);
@@ -544,14 +176,19 @@ check($reuse_snapshot['fixed_matches'] === $reuse_match,
     'fresh original-file rehash binds attachment 4849 to fixed position 1');
 $reuse_bindings = frpd_mg_acquisition_bindings('stub_flange', $reuse_snapshot);
 check($reuse_bindings === array(
-    'reserved' => array('01_authentic_source_hero.png'),
+    'record' => array(
+        'contract' => FRPD_MG_FAMILY_CONTRACT,
+        'initial_attachments' => array('01_authentic_source_hero.png' => 4849),
+        'missing_positions' => array(2, 3, 4, 5, 6),
+        'reserved' => array(),
+    ),
     'attachments' => array('01_authentic_source_hero.png' => 4849),
-), 'acquisition produces the sole durable reuse binding in the existing JSON schema');
+), 'Stub Flange acquisition still produces its sole durable reuse binding, unchanged and not generalized');
 
 $secret = 'fixed-test-owner-secret';
 $persisted = frpd_mg_insert_state('stub_flange', $secret, $reuse_snapshot);
 check(is_array($persisted)
-    && $persisted['reserved'] === $reuse_bindings['reserved']
+    && $persisted['record'] === $reuse_bindings['record']
     && $persisted['attachments'] === $reuse_bindings['attachments'],
     'guard insertion persists the reused attachment binding without a table-schema change');
 $GLOBALS['attachment_ids'][] = 12;
@@ -579,12 +216,14 @@ $state = array(
     'created' => time(),
     'expires' => time() + 600,
     'snapshot_count' => 5,
-    'reserved' => $reuse_bindings['reserved'],
+    'record' => $reuse_bindings['record'],
+    'reserved' => $reuse_bindings['record']['reserved'],
     'attachments' => $reuse_bindings['attachments'],
 );
 $stub_names = array_column(frpd_mg_expected_images('stub_flange'), 'filename');
 $stub_excess_state = $state;
-$stub_excess_state['reserved'] = $stub_names;
+$stub_excess_state['record'] = test_record('stub_flange', $stub_names);
+$stub_excess_state['reserved'] = $stub_excess_state['record']['reserved'];
 $stub_excess_state['attachments'] = array_combine($stub_names, array(4849, 302, 303, 304, 305, 306));
 set_test_state($stub_excess_state);
 $_COOKIE[FRPD_MG_COOKIE] = $secret;
@@ -602,7 +241,8 @@ check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'active',
 $pipe_names = array_column(frpd_mg_expected_images('pipe'), 'filename');
 $pipe_excess_state = $state;
 $pipe_excess_state['family'] = 'pipe';
-$pipe_excess_state['reserved'] = $pipe_names;
+$pipe_excess_state['record'] = test_record('pipe', $pipe_names);
+$pipe_excess_state['reserved'] = $pipe_excess_state['record']['reserved'];
 $pipe_excess_state['attachments'] = array_combine($pipe_names, array(401, 402, 403, 404));
 set_test_state($pipe_excess_state);
 reset_lock();
@@ -628,7 +268,7 @@ $position_one_upload = frpd_mg_upload_prefilter(
     upload_file(basename($position_one_source), $position_one_source)
 );
 check(isset($position_one_upload['error'])
-    && json_decode($GLOBALS['wpdb']->state['reserved_json'], true) === array($stub_names[0]),
+    && json_decode($GLOBALS['wpdb']->state['reserved_json'], true)['reserved'] === array(),
     'Stub Flange position 1 upload is impossible and cannot create a reservation');
 $target = fixed_source('stub_flange', 2);
 check(is_file($target), 'fixed approved Stub Flange position 2 upload exists');
@@ -650,8 +290,8 @@ $allowed = frpd_mg_upload_prefilter($upload);
 check(($allowed['error'] ?? UPLOAD_ERR_OK) === UPLOAD_ERR_OK,
     'exact owner upload allowed: ' . (string) ($allowed['error'] ?? 'no error'));
 check($GLOBALS['frpd_mg_allowed_upload_request'] === true, 'allowed request marked');
-check(json_decode($GLOBALS['wpdb']->state['reserved_json'], true)
-    === array($stub_names[0], basename($target)), 'only exact position 2 is reserved after the reuse binding');
+check(json_decode($GLOBALS['wpdb']->state['reserved_json'], true)['reserved']
+    === array(basename($target)), 'only exact position 2 is reserved after the reuse binding');
 $destination = $GLOBALS['upload_basedir'] . DIRECTORY_SEPARATOR . basename($target);
 @unlink($destination);
 check(frpd_mg_pre_move_uploaded_file(null, $upload, $destination, 'image/png') === null, 'exact destination allowed before move');
@@ -718,7 +358,8 @@ check(frpd_mg_guard_blocks_attachment_mutation() === false, 'expired guard does 
 
 $complete_state = $state;
 $fixed_names = array_column(frpd_mg_expected_images('stub_flange'), 'filename');
-$complete_state['reserved'] = $fixed_names;
+$complete_state['record'] = test_record('stub_flange', $fixed_names);
+$complete_state['reserved'] = $complete_state['record']['reserved'];
 $complete_state['attachments'] = array_combine(
     $fixed_names, array(4849, 202, 203, 204, 205, 206)
 );
@@ -930,7 +571,17 @@ $GLOBALS['post_meta'][1368]['_product_image_gallery'] = '202,203,204,205,206';
 $GLOBALS['wpdb']->state['expires_epoch'] = time() - 1;
 $expired_completion = frpd_mg_complete_state($active_before_completion);
 check(is_wp_error($expired_completion), 'completion after database expiry is refused atomically');
-check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'expired', 'expired completion retains expired audit row');
+// 1.0.7 REMOVED the automatic retire-to-expired write. An expired row keeps its own
+// durable evidence untouched, and no acquisition may replace it while it is
+// unresolved -- that is what closes the semantic-retry route, and it is why there
+// is deliberately no reset, force-unlock or cleanup path anywhere in the plugin.
+check(($GLOBALS['wpdb']->state['state_status'] ?? '') === 'gallery',
+    'a refused expired completion leaves the durable row byte-semantically untouched');
+check(frpd_mg_active_state() === null, 'an expired row is never reported as an active guard');
+check(is_array(frpd_mg_exact_state()) && frpd_mg_exact_state()['is_active'] === false,
+    'the expired row is still readable as exact evidence, not collapsed to null');
+check(frpd_mg_terminal_state_is_replaceable(frpd_mg_exact_state()) === false,
+    'an expired unresolved row can never be replaced by a fresh acquisition');
 $GLOBALS['wpdb']->state = $db_before_completion;
 $GLOBALS['wpdb']->state['expires_epoch'] = time() + 1800;
 $active_before_completion = frpd_mg_active_state();

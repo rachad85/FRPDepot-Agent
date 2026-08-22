@@ -1,0 +1,20 @@
+{
+  "artifact_bytes": 3687,
+  "artifact_name": "frpdepot-fixed-four-origin-file-cleanup-1.0.0.zip",
+  "artifact_sha256": "66bbbafd63557fb2a626d372c2269df1b07d2c8f79f216a81aa94f37964253ae",
+  "members": {
+    "frpdepot-fixed-four-origin-file-cleanup/frpdepot-fixed-four-origin-file-cleanup.php": {
+      "bytes": 7442,
+      "sha256": "3fc318d11261f6f8234b6a9848893884b846746fd97d6a60146b096d4e8fbcf0"
+    },
+    "frpdepot-fixed-four-origin-file-cleanup/readme.txt": {
+      "bytes": 978,
+      "sha256": "34ae30c9cd0197f675c4e5abfd2a30ff9635593cedca2392fbb7a8c4f3431b1e"
+    }
+  },
+  "plugin_file": "frpdepot-fixed-four-origin-file-cleanup/frpdepot-fixed-four-origin-file-cleanup.php",
+  "plugin_name": "FRP Depot Fixed Four Origin File Cleanup",
+  "plugin_slug": "frpdepot-fixed-four-origin-file-cleanup",
+  "plugin_version": "1.0.0",
+  "schema": 1
+}

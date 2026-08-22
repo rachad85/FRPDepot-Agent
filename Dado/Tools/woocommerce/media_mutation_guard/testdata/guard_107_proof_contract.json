@@ -1,0 +1,1405 @@
+{
+    "produced_by": "test_media_mutation_guard_recovery_lifecycle.php",
+    "plugin_version": "1.0.7",
+    "state_schema": 3,
+    "proof_schema": 3,
+    "capability": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "state_schema": 3,
+        "proof_schema": 3,
+        "manifest_sha256": "adb9b81f7a8e55205c7224af6005c0c386ec833eef36be7281dca96313e9d900",
+        "families": [
+            "elbow_90",
+            "manway_cover",
+            "open_manway",
+            "pipe",
+            "stub_flange"
+        ],
+        "fixed_reuse_family": "stub_flange",
+        "fixed_recovery": {
+            "contract": "open_manway_recovery",
+            "family": "open_manway",
+            "product_id": 1397,
+            "position": 1,
+            "attachment_id": 7609,
+            "filename": "01_manway_premium_hero.png",
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "recoverable_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ]
+        },
+        "capabilities": {
+            "existing_fixed_attachment_acquisition": true,
+            "non_prefix_upload_reservation": true,
+            "origin_only_file_enumeration": true,
+            "owner_bound_gallery_commit": true
+        }
+    },
+    "origin_only_proof": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "origin_only_file_proof",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:34+00:00",
+        "directories_scanned": 3,
+        "yearmonth_supported": true,
+        "complete": true,
+        "files": [
+            {
+                "position": 1,
+                "basename": "01_manway_premium_hero.png",
+                "discovered": 1,
+                "paths": [
+                    {
+                        "relative_path": "2026/08/01_manway_premium_hero.png",
+                        "bytes": 1750111,
+                        "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                        "bytes_and_hash_exact": true,
+                        "owner_attachment_ids": [
+                            7609
+                        ]
+                    }
+                ],
+                "owner_attachment_ids": [
+                    7609
+                ],
+                "bytes_and_hash_exact": true,
+                "origin_only": false
+            },
+            {
+                "position": 2,
+                "basename": "02_manway_top_oblique.png",
+                "discovered": 0,
+                "paths": [],
+                "owner_attachment_ids": [],
+                "bytes_and_hash_exact": false,
+                "origin_only": false
+            },
+            {
+                "position": 3,
+                "basename": "03_manway_low_side_angle.png",
+                "discovered": 0,
+                "paths": [],
+                "owner_attachment_ids": [],
+                "bytes_and_hash_exact": false,
+                "origin_only": false
+            },
+            {
+                "position": 4,
+                "basename": "04_manway_flange_bore_detail.png",
+                "discovered": 0,
+                "paths": [],
+                "owner_attachment_ids": [],
+                "bytes_and_hash_exact": false,
+                "origin_only": false
+            },
+            {
+                "position": 5,
+                "basename": "05_manway_opposite_face.png",
+                "discovered": 0,
+                "paths": [],
+                "owner_attachment_ids": [],
+                "bytes_and_hash_exact": false,
+                "origin_only": false
+            },
+            {
+                "position": 6,
+                "basename": "06_manway_laminate_detail.png",
+                "discovered": 0,
+                "paths": [],
+                "owner_attachment_ids": [],
+                "bytes_and_hash_exact": false,
+                "origin_only": false
+            }
+        ],
+        "origin_only": []
+    },
+    "guard_acquired": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guard_acquired",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:34+00:00",
+        "attachment_total": 364,
+        "hashed_total": 363,
+        "total_bytes": 1776175,
+        "snapshot_sha256": "2fe90b6cf62484cfa2d7138233de4b10d131b6fac3f3491a5ce2b24864036507",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 0,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [],
+            "bound_uploads": [],
+            "remaining_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "unbound_reservation": null
+        },
+        "origin_only_proof": {
+            "schema": 3,
+            "plugin_version": "1.0.7",
+            "mode": "origin_only_file_proof",
+            "family": "open_manway",
+            "generated_utc": "2026-08-22T06:56:34+00:00",
+            "directories_scanned": 3,
+            "yearmonth_supported": true,
+            "complete": true,
+            "files": [
+                {
+                    "position": 1,
+                    "basename": "01_manway_premium_hero.png",
+                    "discovered": 1,
+                    "paths": [
+                        {
+                            "relative_path": "2026/08/01_manway_premium_hero.png",
+                            "bytes": 1750111,
+                            "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                            "bytes_and_hash_exact": true,
+                            "owner_attachment_ids": [
+                                7609
+                            ]
+                        }
+                    ],
+                    "owner_attachment_ids": [
+                        7609
+                    ],
+                    "bytes_and_hash_exact": true,
+                    "origin_only": false
+                },
+                {
+                    "position": 2,
+                    "basename": "02_manway_top_oblique.png",
+                    "discovered": 0,
+                    "paths": [],
+                    "owner_attachment_ids": [],
+                    "bytes_and_hash_exact": false,
+                    "origin_only": false
+                },
+                {
+                    "position": 3,
+                    "basename": "03_manway_low_side_angle.png",
+                    "discovered": 0,
+                    "paths": [],
+                    "owner_attachment_ids": [],
+                    "bytes_and_hash_exact": false,
+                    "origin_only": false
+                },
+                {
+                    "position": 4,
+                    "basename": "04_manway_flange_bore_detail.png",
+                    "discovered": 0,
+                    "paths": [],
+                    "owner_attachment_ids": [],
+                    "bytes_and_hash_exact": false,
+                    "origin_only": false
+                },
+                {
+                    "position": 5,
+                    "basename": "05_manway_opposite_face.png",
+                    "discovered": 0,
+                    "paths": [],
+                    "owner_attachment_ids": [],
+                    "bytes_and_hash_exact": false,
+                    "origin_only": false
+                },
+                {
+                    "position": 6,
+                    "basename": "06_manway_laminate_detail.png",
+                    "discovered": 0,
+                    "paths": [],
+                    "owner_attachment_ids": [],
+                    "bytes_and_hash_exact": false,
+                    "origin_only": false
+                }
+            ],
+            "origin_only": []
+        }
+    },
+    "guarded_snapshot_initial": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:34+00:00",
+        "attachment_total": 364,
+        "hashed_total": 363,
+        "total_bytes": 1776175,
+        "snapshot_sha256": "2fe90b6cf62484cfa2d7138233de4b10d131b6fac3f3491a5ce2b24864036507",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 0,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [],
+            "bound_uploads": [],
+            "remaining_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "unbound_reservation": null
+        }
+    },
+    "guarded_snapshot_after_2": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:35+00:00",
+        "attachment_total": 365,
+        "hashed_total": 364,
+        "total_bytes": 3598024,
+        "snapshot_sha256": "66f83653458c74d178905d61f6c2ff102129772a5a37a4d44beb8a8049708a57",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 1,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [
+                "02_manway_top_oblique.png"
+            ],
+            "bound_uploads": {
+                "02_manway_top_oblique.png": 7700
+            },
+            "remaining_positions": [
+                3,
+                4,
+                5,
+                6
+            ],
+            "unbound_reservation": null
+        }
+    },
+    "guarded_snapshot_after_3": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:35+00:00",
+        "attachment_total": 366,
+        "hashed_total": 365,
+        "total_bytes": 5403820,
+        "snapshot_sha256": "34980fa262b830757434e12c6ab2ea8266755fca63049aaca784e8e4425a2ec8",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7803,
+                "position": 3,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/03_manway_low_side_angle.png",
+                "basename": "03_manway_low_side_angle.png",
+                "bytes": 1805796,
+                "sha256": "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 2,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [
+                "02_manway_top_oblique.png",
+                "03_manway_low_side_angle.png"
+            ],
+            "bound_uploads": {
+                "02_manway_top_oblique.png": 7700,
+                "03_manway_low_side_angle.png": 7803
+            },
+            "remaining_positions": [
+                4,
+                5,
+                6
+            ],
+            "unbound_reservation": null
+        }
+    },
+    "guarded_snapshot_after_4": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:36+00:00",
+        "attachment_total": 367,
+        "hashed_total": 366,
+        "total_bytes": 7522318,
+        "snapshot_sha256": "4790559719960e6ae579b04f7388743000e39a903a05c676b0b22f1e39f95cb5",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7704,
+                "position": 4,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/04_manway_flange_bore_detail.png",
+                "basename": "04_manway_flange_bore_detail.png",
+                "bytes": 2118498,
+                "sha256": "d740be620cf0c083e7e399127c2205dd6f7b9e73fb08fdee31e1b79568d75950",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7803,
+                "position": 3,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/03_manway_low_side_angle.png",
+                "basename": "03_manway_low_side_angle.png",
+                "bytes": 1805796,
+                "sha256": "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 3,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [
+                "02_manway_top_oblique.png",
+                "03_manway_low_side_angle.png",
+                "04_manway_flange_bore_detail.png"
+            ],
+            "bound_uploads": {
+                "02_manway_top_oblique.png": 7700,
+                "03_manway_low_side_angle.png": 7803,
+                "04_manway_flange_bore_detail.png": 7704
+            },
+            "remaining_positions": [
+                5,
+                6
+            ],
+            "unbound_reservation": null
+        }
+    },
+    "guarded_snapshot_after_5": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:36+00:00",
+        "attachment_total": 368,
+        "hashed_total": 367,
+        "total_bytes": 9274315,
+        "snapshot_sha256": "e96aec0477c45c803a4d870e93b46c8005fb37402d7759e69c4da5c5374a2f08",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7704,
+                "position": 4,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/04_manway_flange_bore_detail.png",
+                "basename": "04_manway_flange_bore_detail.png",
+                "bytes": 2118498,
+                "sha256": "d740be620cf0c083e7e399127c2205dd6f7b9e73fb08fdee31e1b79568d75950",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7803,
+                "position": 3,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/03_manway_low_side_angle.png",
+                "basename": "03_manway_low_side_angle.png",
+                "bytes": 1805796,
+                "sha256": "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7805,
+                "position": 5,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/05_manway_opposite_face.png",
+                "basename": "05_manway_opposite_face.png",
+                "bytes": 1751997,
+                "sha256": "c54c9fd74fbdc55d0b9295b1bb7fb1dd0146cee645f455025d1b1895f21a543a",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 4,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [
+                "02_manway_top_oblique.png",
+                "03_manway_low_side_angle.png",
+                "04_manway_flange_bore_detail.png",
+                "05_manway_opposite_face.png"
+            ],
+            "bound_uploads": {
+                "02_manway_top_oblique.png": 7700,
+                "03_manway_low_side_angle.png": 7803,
+                "04_manway_flange_bore_detail.png": 7704,
+                "05_manway_opposite_face.png": 7805
+            },
+            "remaining_positions": [
+                6
+            ],
+            "unbound_reservation": null
+        }
+    },
+    "guarded_snapshot_after_6": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guarded_snapshot",
+        "family": "open_manway",
+        "generated_utc": "2026-08-22T06:56:37+00:00",
+        "attachment_total": 369,
+        "hashed_total": 368,
+        "total_bytes": 11621552,
+        "snapshot_sha256": "3d44a8fbba8a8d1284b19db10578baa815e228ef0132786e8059ecb94c937c2b",
+        "complete": true,
+        "failures": [],
+        "private_exceptions": [
+            {
+                "attachment_id": 1832,
+                "attached_file": "2026/03/HETRON-CR-Guide-2007_Ineos.pdf",
+                "post_name": "hetron-cr-guide-2007_ineos",
+                "post_status": "private",
+                "mime_type": "application/pdf",
+                "post_date_gmt": "2026-03-17 15:20:38",
+                "protector_plugin_file": "frpdepot-hetron-private-history/frpdepot-hetron-private-history.php",
+                "protector_plugin_sha256": "8c06b73a3a76ac2da7e7e9bba25c3f8a31ecdad917b30d436e41b32784b17116"
+            }
+        ],
+        "name_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            },
+            {
+                "attachment_id": 7806,
+                "fixed_position": 6
+            }
+        ],
+        "hash_conflicts": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            },
+            {
+                "attachment_id": 7806,
+                "fixed_position": 6
+            }
+        ],
+        "fixed_matches": [
+            {
+                "attachment_id": 7609,
+                "fixed_position": 1
+            },
+            {
+                "attachment_id": 7700,
+                "fixed_position": 2
+            },
+            {
+                "attachment_id": 7704,
+                "fixed_position": 4
+            },
+            {
+                "attachment_id": 7803,
+                "fixed_position": 3
+            },
+            {
+                "attachment_id": 7805,
+                "fixed_position": 5
+            },
+            {
+                "attachment_id": 7806,
+                "fixed_position": 6
+            }
+        ],
+        "fixed_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7704,
+                "position": 4,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/04_manway_flange_bore_detail.png",
+                "basename": "04_manway_flange_bore_detail.png",
+                "bytes": 2118498,
+                "sha256": "d740be620cf0c083e7e399127c2205dd6f7b9e73fb08fdee31e1b79568d75950",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7803,
+                "position": 3,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/03_manway_low_side_angle.png",
+                "basename": "03_manway_low_side_angle.png",
+                "bytes": 1805796,
+                "sha256": "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7805,
+                "position": 5,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/05_manway_opposite_face.png",
+                "basename": "05_manway_opposite_face.png",
+                "bytes": 1751997,
+                "sha256": "c54c9fd74fbdc55d0b9295b1bb7fb1dd0146cee645f455025d1b1895f21a543a",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7806,
+                "position": 6,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/06_manway_laminate_detail.png",
+                "basename": "06_manway_laminate_detail.png",
+                "bytes": 2347237,
+                "sha256": "bfde2b6ab1f1de5cc6ad24b9aa556ef1ed46bd9cd43b34a2a5b1c77bb612e0e7",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "guard_active": true,
+        "guard_expires_utc": "2026-08-22T07:26:34+00:00",
+        "reserved_uploads": 5,
+        "recovery": {
+            "contract": "open_manway_recovery",
+            "product_id": 1397,
+            "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+            "initial_attachments": {
+                "01_manway_premium_hero.png": 7609
+            },
+            "missing_positions": [
+                2,
+                3,
+                4,
+                5,
+                6
+            ],
+            "current_reservations": [
+                "02_manway_top_oblique.png",
+                "03_manway_low_side_angle.png",
+                "04_manway_flange_bore_detail.png",
+                "05_manway_opposite_face.png",
+                "06_manway_laminate_detail.png"
+            ],
+            "bound_uploads": {
+                "02_manway_top_oblique.png": 7700,
+                "03_manway_low_side_angle.png": 7803,
+                "04_manway_flange_bore_detail.png": 7704,
+                "05_manway_opposite_face.png": 7805,
+                "06_manway_laminate_detail.png": 7806
+            },
+            "remaining_positions": [],
+            "unbound_reservation": null
+        }
+    },
+    "recovery_gallery_committed": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "recovery_gallery_committed",
+        "contract": "open_manway_recovery",
+        "family": "open_manway",
+        "product_id": 1397,
+        "prior_operation_sha256": "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+        "attachment_ids": [
+            7609,
+            7700,
+            7803,
+            7704,
+            7805,
+            7806
+        ],
+        "gallery_etag_before": "\"708ccec9a3f99a4a533d0796f69d02973b6681823b507d9081e5adbdc98aa885\"",
+        "gallery_etag_after": "\"9059915a9719489d98b9d3c74e68df5de790fbf6f33805a5e461a5053ef7ecbf\"",
+        "state_status": "gallery",
+        "state_version": 12,
+        "transport": "internal_authenticated_rest_do_request"
+    },
+    "guard_completed": {
+        "schema": 3,
+        "plugin_version": "1.0.7",
+        "mode": "guard_completed",
+        "family": "open_manway",
+        "product_id": 1397,
+        "attachment_ids": [
+            7609,
+            7700,
+            7803,
+            7704,
+            7805,
+            7806
+        ],
+        "attachment_identities": [
+            {
+                "attachment_id": 7609,
+                "position": 1,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/01_manway_premium_hero.png",
+                "basename": "01_manway_premium_hero.png",
+                "bytes": 1750111,
+                "sha256": "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7700,
+                "position": 2,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/02_manway_top_oblique.png",
+                "basename": "02_manway_top_oblique.png",
+                "bytes": 1821849,
+                "sha256": "0fd7e2c62fb88d425cdfaf949415520ac89a5d95d07cf75b8e9791d308ea8181",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7803,
+                "position": 3,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/03_manway_low_side_angle.png",
+                "basename": "03_manway_low_side_angle.png",
+                "bytes": 1805796,
+                "sha256": "40ac3a69f5903d53f6fd71f952ac63ed237abc1a37a17c800a345c06211c8e63",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7704,
+                "position": 4,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/04_manway_flange_bore_detail.png",
+                "basename": "04_manway_flange_bore_detail.png",
+                "bytes": 2118498,
+                "sha256": "d740be620cf0c083e7e399127c2205dd6f7b9e73fb08fdee31e1b79568d75950",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7805,
+                "position": 5,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/05_manway_opposite_face.png",
+                "basename": "05_manway_opposite_face.png",
+                "bytes": 1751997,
+                "sha256": "c54c9fd74fbdc55d0b9295b1bb7fb1dd0146cee645f455025d1b1895f21a543a",
+                "png_width": 1254,
+                "png_height": 1254,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            },
+            {
+                "attachment_id": 7806,
+                "position": 6,
+                "post_type": "attachment",
+                "post_status": "inherit",
+                "mime_type": "image/png",
+                "relative_path": "2026/08/06_manway_laminate_detail.png",
+                "basename": "06_manway_laminate_detail.png",
+                "bytes": 2347237,
+                "sha256": "bfde2b6ab1f1de5cc6ad24b9aa556ef1ed46bd9cd43b34a2a5b1c77bb612e0e7",
+                "png_width": 1402,
+                "png_height": 1122,
+                "png_mode": "RGB",
+                "png_bit_depth": 8,
+                "png_color_type": 2
+            }
+        ],
+        "attachment_total": 369,
+        "snapshot_sha256": "3d44a8fbba8a8d1284b19db10578baa815e228ef0132786e8059ecb94c937c2b"
+    }
+}

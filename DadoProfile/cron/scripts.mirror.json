@@ -8,9 +8,9 @@
  },
  "conduct_review.py": {
   "kind": "copy",
-  "deployed_sha256": "f99d01715c8c05182cee5581a362f9a7e37c980f4951e69e4ec50bdf0c60887a",
+  "deployed_sha256": "6e467e8312042046506dae511c43678bbf1c5ab2d74f9d8ed0718415449249df",
   "repo_path": "Dado\\Tools\\conduct\\conduct_review.py",
-  "repo_sha256": "f99d01715c8c05182cee5581a362f9a7e37c980f4951e69e4ec50bdf0c60887a",
+  "repo_sha256": "6e467e8312042046506dae511c43678bbf1c5ab2d74f9d8ed0718415449249df",
   "in_sync": true
  },
  "dado_daily_banking_review.py": {
@@ -29,16 +29,16 @@
  },
  "dado_inbox_reasoner.py": {
   "kind": "copy",
-  "deployed_sha256": "8c44c7d50cc867a8d1e601cffe6a058eb0a3eb8d2f3fb88c869738dd0d368512",
+  "deployed_sha256": "228ee5ec3f13eb3befd261a1697239865809d4992ad1b818ca76bb1a9e7206b5",
   "repo_path": "Dado\\Tools\\watch\\dado_inbox_reasoner.py",
-  "repo_sha256": "8c44c7d50cc867a8d1e601cffe6a058eb0a3eb8d2f3fb88c869738dd0d368512",
+  "repo_sha256": "228ee5ec3f13eb3befd261a1697239865809d4992ad1b818ca76bb1a9e7206b5",
   "in_sync": true
  },
  "job_runner.py": {
   "kind": "copy",
-  "deployed_sha256": "78d89f1725f73f9d4d62da901d8bea0df2c7a77690f709b4702bcb58111d7210",
+  "deployed_sha256": "b5fbe84d148a3096ec24f897c4dbde19caadd9b40e69820c21eed4f6bc090288",
   "repo_path": "Dado\\Tools\\watch\\job_runner.py",
-  "repo_sha256": "78d89f1725f73f9d4d62da901d8bea0df2c7a77690f709b4702bcb58111d7210",
+  "repo_sha256": "b5fbe84d148a3096ec24f897c4dbde19caadd9b40e69820c21eed4f6bc090288",
   "in_sync": true
  },
  "packing_observation_weekly_reminder.py": {

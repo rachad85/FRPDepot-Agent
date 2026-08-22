@@ -3,8 +3,9 @@
 
 Local packaging only. It validates the exact approved five-family source manifest,
 including six Stub Flange and six Open Manway images and four images for every
-other family, binds the one fixed pre-existing Stub Flange hero reuse, reduces it
-to the runtime filename/size/SHA contract, and writes a deterministic ZIP. It
+other family, binds the one fixed pre-existing Stub Flange hero reuse and the one
+literal Open Manway recovery contract, reduces them to the runtime
+filename/size/SHA contract, and writes a deterministic ZIP. It
 makes no browser, network, WordPress, WooCommerce, or email call.
 """
 from __future__ import annotations
@@ -19,7 +20,7 @@ import zipfile
 ROOT = Path(r"C:\FRPDepot")
 HERE = Path(__file__).resolve().parent
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
-PLUGIN_VERSION = "1.0.5"
+PLUGIN_VERSION = "1.0.7"
 PLUGIN_DIR = HERE / PLUGIN_SLUG
 SOURCE_MANIFEST = (
     ROOT / "Dado" / "20_Working" / "frp_manway" / "approved_gallery_20260820"
@@ -54,6 +55,24 @@ REUSE_REQUIRED_CURRENT_RAW_META = {
     "_product_image_gallery": "4850,4851,4852",
 }
 REUSE_UPLOAD_POSITIONS = [2, 3, 4, 5, 6]
+# The ONE literal Open Manway recovery contract finalized in 1.0.7. It is a closed
+# record naming one family, one product, one prior operation and one verified
+# attachment; there is no generic recovery contract in the plugin or here.
+RECOVERY_CONTRACT = "open_manway_recovery"
+RECOVERY_FAMILY = "open_manway"
+RECOVERY_PRODUCT_ID = 1397
+RECOVERY_PRIOR_OPERATION_SHA256 = (
+    "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85"
+)
+RECOVERY_PRIOR_PLAN_SHA256 = (
+    "1c7865b0287b076fe83c179c2e44f33a3bcb2effb048e87374c32ad4781b19df"
+)
+RECOVERY_POSITION = 1
+RECOVERY_ATTACHMENT_ID = 7609
+RECOVERY_FILENAME = "01_manway_premium_hero.png"
+RECOVERY_BYTES = 1750111
+RECOVERY_SHA256 = "472b5e5b0aba9a7201444524c559e6797c266a0de008d7bc70b4f8ef1938d0cd"
+RECOVERY_POSITIONS = [2, 3, 4, 5, 6]
 MEMBERS = (
     "frpdepot-media-mutation-guard.php",
     "approved-media.json",
@@ -135,11 +154,17 @@ def build_runtime_manifest() -> dict[str, object]:
             filename = image.get("filename")
             digest = image.get("sha256")
             size = image.get("bytes")
+            width = image.get("width")
+            height = image.get("height")
+            mode = image.get("mode")
             if (not isinstance(filename, str) or Path(filename).name != filename
                     or not filename.lower().endswith(".png")
                     or not isinstance(digest, str) or len(digest) != 64
                     or any(ch not in "0123456789abcdef" for ch in digest)
                     or type(size) is not int or size <= 0
+                    or type(width) is not int or width <= 0
+                    or type(height) is not int or height <= 0
+                    or mode not in {"RGB", "RGBA"}
                     or filename in seen_names or digest in seen_hashes):
                 raise SystemExit(f"ERROR: invalid or duplicate fixed image: {key}/{position}")
             seen_names.add(filename)
@@ -148,6 +173,9 @@ def build_runtime_manifest() -> dict[str, object]:
                 "position": position,
                 "filename": filename,
                 "bytes": size,
+                "width": width,
+                "height": height,
+                "mode": mode,
                 "sha256": digest,
             })
         runtime_families[key] = {"product_id": product_id, "images": reduced}
@@ -157,9 +185,30 @@ def build_runtime_manifest() -> dict[str, object]:
             or reused_image["bytes"] != REUSE_BYTES
             or reused_image["sha256"] != REUSE_SHA256):
         raise SystemExit("ERROR: fixed Stub Flange reuse identity or approved bytes changed")
+    recovery_image = runtime_families[RECOVERY_FAMILY]["images"][RECOVERY_POSITION - 1]
+    if (runtime_families[RECOVERY_FAMILY]["product_id"] != RECOVERY_PRODUCT_ID
+            or recovery_image["position"] != RECOVERY_POSITION
+            or recovery_image["filename"] != RECOVERY_FILENAME
+            or recovery_image["bytes"] != RECOVERY_BYTES
+            or recovery_image["sha256"] != RECOVERY_SHA256
+            or len(runtime_families[RECOVERY_FAMILY]["images"]) != 6):
+        raise SystemExit("ERROR: fixed Open Manway recovery identity or approved bytes changed")
     return {
-        "schema": 2,
+        "schema": 3,
         "source_manifest_sha256": SOURCE_MANIFEST_SHA256,
+        "fixed_recovery": {
+            "contract": RECOVERY_CONTRACT,
+            "family": RECOVERY_FAMILY,
+            "product_id": RECOVERY_PRODUCT_ID,
+            "prior_operation_sha256": RECOVERY_PRIOR_OPERATION_SHA256,
+            "prior_plan_sha256": RECOVERY_PRIOR_PLAN_SHA256,
+            "position": RECOVERY_POSITION,
+            "attachment_id": RECOVERY_ATTACHMENT_ID,
+            "filename": RECOVERY_FILENAME,
+            "bytes": RECOVERY_BYTES,
+            "sha256": RECOVERY_SHA256,
+            "recoverable_positions": list(RECOVERY_POSITIONS),
+        },
         "fixed_reuse": {
             "family": REUSE_FAMILY,
             "product_id": REUSE_PRODUCT_ID,
@@ -208,6 +257,30 @@ def validate_plugin_source(runtime_bytes: bytes) -> None:
     )
     if any(pin not in php for pin in reuse_pins):
         raise SystemExit("ERROR: PHP fixed Stub Flange reuse contract disagrees")
+    recovery = runtime.get("fixed_recovery")
+    if not isinstance(recovery, dict):
+        raise SystemExit("ERROR: runtime fixed Open Manway recovery contract is missing")
+    recovery_pins = (
+        f"define('FRPD_MG_RECOVERY_CONTRACT', '{recovery['contract']}');",
+        f"define('FRPD_MG_RECOVERY_FAMILY', '{recovery['family']}');",
+        f"define('FRPD_MG_RECOVERY_PRODUCT_ID', {recovery['product_id']});",
+        "define('FRPD_MG_RECOVERY_PRIOR_OPERATION_SHA256', "
+        f"'{recovery['prior_operation_sha256']}');",
+        f"define('FRPD_MG_RECOVERY_PRIOR_PLAN_SHA256', '{recovery['prior_plan_sha256']}');",
+        f"define('FRPD_MG_RECOVERY_POSITION', {recovery['position']});",
+        f"define('FRPD_MG_RECOVERY_ATTACHMENT_ID', {recovery['attachment_id']});",
+        f"define('FRPD_MG_RECOVERY_FILENAME', '{recovery['filename']}');",
+        f"define('FRPD_MG_RECOVERY_BYTES', {recovery['bytes']});",
+        f"define('FRPD_MG_RECOVERY_SHA256', '{recovery['sha256']}');",
+        "define('FRPD_MG_STATE_SCHEMA', 3);",
+        "define('FRPD_MG_PROOF_SCHEMA', 3);",
+    )
+    if any(pin not in php for pin in recovery_pins):
+        raise SystemExit("ERROR: PHP fixed Open Manway recovery contract disagrees")
+    if recovery["recoverable_positions"] != [2, 3, 4, 5, 6]:
+        raise SystemExit("ERROR: fixed Open Manway recoverable positions changed")
+    if runtime.get("schema") != 3:
+        raise SystemExit("ERROR: runtime manifest schema is not the 1.0.7 contract")
     count_block = re.search(
         r"\$counts\s*=\s*array\((.*?)\n\s*\);", php, flags=re.DOTALL
     )
@@ -223,6 +296,19 @@ def validate_plugin_source(runtime_bytes: bytes) -> None:
             )
     if f"Stable tag: {PLUGIN_VERSION}\n" not in readme:
         raise SystemExit("ERROR: readme stable tag disagrees with package version")
+    for phrase in (
+            "one literal Open Manway recovery contract",
+            "attachment 7609",
+            "product 1397",
+            "origin-only",
+            "admin-post",
+            "BUILT AND TESTED ONLY",
+            "WITHDRAWN_NOT_DEPLOYED_NOT_STAGEABLE",
+    ):
+        if phrase not in readme:
+            raise SystemExit(
+                f"ERROR: readme does not state the exact 1.0.7 contract: {phrase!r}"
+            )
 
 
 def build(output: Path) -> dict[str, object]:

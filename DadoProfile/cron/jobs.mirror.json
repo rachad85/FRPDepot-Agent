@@ -404,6 +404,38 @@
    "enabled_toolsets": [
     "terminal"
    ],
+   "id": "ef32f52291eb",
+   "model": null,
+   "name": "resume-open-manway-guard-correction",
+   "no_agent": false,
+   "paused_reason": null,
+   "prompt": "Rachad already instructed Dado to continue the FRP MANWAY gallery recovery end to end without waiting for keep-going prompts. This one-shot exists only because the Claude engineering CLI quota resets at 05:30 UTC. Working directory is C:\\FRPDepot. Start the already-written OFFLINE correction runner durably and report its job ID. Do not edit code yourself, do not ask questions, and do not use browser/network/vault/live WordPress/WooCommerce/Zoho/Drive/email. Run exactly through the terminal: C:/Users/TDI-service/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe Dado/Tools/watch/job_runner.py start --name correct-guard-107-open-manway-210-resumed --lane discord -- C:/Users/TDI-service/AppData/Local/hermes/hermes-agent/venv/Scripts/python.exe C:/FRPDepot/Dado/20_Working/frp_manway/run_open_manway_guard_107_recovery_210_correction.py . This launches Claude against C:\\FRPDepot\\Dado\\20_Working\\frp_manway\\open_manway_guard_107_recovery_210_correction_brief.md and returns immediately. If a job with that exact name is already running, do not duplicate it; report the existing job ID. The job itself is offline-only; zero live website actions are allowed.",
+   "provider": null,
+   "repeat": {
+    "times": 1
+   },
+   "schedule": {
+    "kind": "once",
+    "run_at": "2026-08-22T05:32:00+00:00",
+    "display": "once at 2026-08-22 01:32"
+   },
+   "schedule_display": "once at 2026-08-22 01:32",
+   "script": null,
+   "skill": "operations:frp-commissioned-write-lifecycle",
+   "skills": [
+    "operations:frp-commissioned-write-lifecycle"
+   ],
+   "state": "completed",
+   "workdir": "C:\\FRPDepot"
+  },
+  {
+   "base_url": null,
+   "context_from": null,
+   "deliver": "origin",
+   "enabled": false,
+   "enabled_toolsets": [
+    "terminal"
+   ],
    "id": "0f0c6db1feb1",
    "model": null,
    "name": "retry-stub-flange-media-scan-once",

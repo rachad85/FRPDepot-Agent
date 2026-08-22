@@ -45,6 +45,9 @@ class FakeElement:
     def inner_text(self):
         return self.text
 
+    def text_content(self):
+        return self.text
+
     def click(self, **kwargs):
         self.clicked += 1
         if self.on_click is not None:
@@ -73,6 +76,14 @@ class FakePage:
         self.handlers = {}
         self.guard_version = f"Version {tool.PLUGIN_VERSION}"
         self.guard_status = "Guard inactive"
+        # "auto" mirrors production: only a live 1.0.7 page publishes a capability.
+        self.capability = "auto"
+        self.families = ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"]
+        # A live guard row would render these; an inactive, unresolved-state-free
+        # page renders none of them.
+        self.guarded_snapshot_controls = 0
+        self.completion_controls = 0
+        self.recovery_gallery_forms = 0
         self.waits = []
         self.closed = False
 
@@ -84,6 +95,26 @@ class FakePage:
             return [] if self.row is None else [self.row]
         if selector.startswith("tr.plugin-update-tr"):
             return self.update_rows
+        if selector == tool.GUARD_CAPABILITY_SELECTOR:
+            value = self.capability
+            if value == "auto":
+                if self.guard_version != f"Version {tool.PLUGIN_VERSION}":
+                    return []
+                value = json.dumps(tool.EXPECTED_GUARD_CAPABILITY)
+            return [] if value is None else [FakeElement(text=value)]
+        if selector == "section[data-frpd-family]":
+            return [FakeElement(attrs={"data-frpd-family": name})
+                    for name in self.families]
+        if selector == "#frpd-mg-guarded-snapshot":
+            return [FakeElement()] * self.guarded_snapshot_controls
+        if selector == "#frpd-mg-complete":
+            return [FakeElement()] * self.completion_controls
+        if selector == "#frpd-mg-recovery-gallery-form":
+            return [FakeElement()] * self.recovery_gallery_forms
+        if selector == "#frpd-mg-origin-proof":
+            # Only the pinned build exposes the origin-only proof control.
+            return ([FakeElement()]
+                    if self.guard_version == f"Version {tool.PLUGIN_VERSION}" else [])
         return []
 
     def query_selector(self, selector):
@@ -129,15 +160,78 @@ def fixed_row(active: bool, version: str = tool.PLUGIN_VERSION):
 
 
 class ArtifactTests(unittest.TestCase):
-    def test_release_contract_is_exact_103_to_105(self):
-        self.assertEqual(tool.WITHDRAWN_PLUGIN_VERSION, "1.0.3")
-        self.assertEqual(tool.PLUGIN_VERSION, "1.0.5")
-        self.assertEqual(tool.TOOL_VERSION, "1.5.2")
-        self.assertEqual(tool.SCHEMA_VERSION, 9)
-        self.assertEqual(tool.ARTIFACT_PATH.name, "frpdepot-media-mutation-guard-1.0.5.zip")
+    def test_release_contract_is_exact_105_to_107(self):
+        self.assertEqual(tool.CURRENT_PLUGIN_VERSION, "1.0.5")
+        self.assertEqual(tool.WITHDRAWN_PLUGIN_VERSION, "1.0.5")
+        self.assertEqual(tool.PLUGIN_VERSION, "1.0.7")
+        self.assertEqual(tool.TOOL_VERSION, "1.7.0")
+        self.assertEqual(tool.SCHEMA_VERSION, 11)
+        self.assertEqual(tool.ARTIFACT_PATH.name, "frpdepot-media-mutation-guard-1.0.7.zip")
         source = MODULE_PATH.read_text(encoding="utf-8")
         self.assertNotIn("v1.0.3-to-v1.0.4 update", source)
-        self.assertNotIn("exact v1.0.4 six-view Open Manway update", source)
+        self.assertNotIn("v1.0.5-to-v1.0.6 update", source)
+        self.assertIn("v1.0.5-to-v1.0.7 update", source)
+
+    def test_the_withdrawn_106_artifact_can_never_be_staged_or_deployed(self):
+        self.assertEqual(tool.WITHDRAWN_ARTIFACT_VERSIONS, ("1.0.6",))
+        self.assertEqual(
+            tool.WITHDRAWN_ARTIFACTS,
+            {"6a753c570d167075b8fa0a66349ab0a812aa7e222a7aedb2f6d374b913a7010e":
+             "WITHDRAWN_NOT_DEPLOYED_NOT_STAGEABLE"})
+        self.assertNotIn(tool.ARTIFACT_SHA256, tool.WITHDRAWN_ARTIFACTS)
+        withdrawn = (tool.ARTIFACT_PATH.parent
+                     / "frpdepot-media-mutation-guard-1.0.6.zip")
+        self.assertTrue(withdrawn.is_file(),
+                        "the rejected 1.0.6 evidence must be kept unchanged")
+        digest = hashlib.sha256(withdrawn.read_bytes()).hexdigest()
+        self.assertIn(digest, tool.WITHDRAWN_ARTIFACTS)
+        with mock.patch.object(tool, "ARTIFACT_PATH", withdrawn), \
+                self.assertRaises(tool.DeploymentError) as caught:
+            tool.validate_artifact_payload()
+        self.assertIn("REFUSED", str(caught.exception))
+
+    def test_only_the_one_new_transition_is_permitted(self):
+        """Exactly installed-active-healthy 1.0.5 may become exactly 1.0.7."""
+        self.assertEqual(tool.ACTIONS,
+                         frozenset({"install_inactive", "replace_active", "activate", "deactivate"}))
+        tool.validate_before("replace_active",
+                             tool.project_row(True, True, "1.0.5", False))
+        for row in (tool.project_row(True, True, "1.0.6", False),
+                    tool.project_row(True, True, "1.0.7", False),
+                    tool.project_row(True, True, "1.0.4", False),
+                    tool.project_row(True, False, "1.0.5", False),
+                    tool.project_row(True, True, "1.0.5", True),
+                    tool.project_row(False, None, "", False)):
+            with self.subTest(row=row["version"] + str(row["active"]) + str(row["update_marker"])):
+                with self.assertRaises(tool.DeploymentError):
+                    tool.validate_before("replace_active", row)
+        self.assertEqual(tool.expected_after("replace_active"),
+                         tool.project_row(True, True, "1.0.7", False))
+
+    def test_every_earlier_plan_and_operation_is_permanently_superseded(self):
+        plan_dir = tool.PLAN_DIR
+        staged = sorted(plan_dir.glob("*.json")) if plan_dir.is_dir() else []
+        self.assertTrue(staged, "the earlier deployment plans must remain on disk")
+        for path in staged:
+            record = json.loads(path.read_text(encoding="ascii"))
+            with self.subTest(plan=path.name):
+                self.assertIn(record["sha256"], tool.SUPERSEDED_PLAN_SHA256)
+                self.assertIn(record["operation_sha256"], tool.SUPERSEDED_OPERATION_SHA256)
+
+    def test_expected_capability_names_the_one_recovery_contract(self):
+        capability = tool.EXPECTED_GUARD_CAPABILITY
+        self.assertEqual(capability["plugin_version"], "1.0.7")
+        self.assertEqual(capability["state_schema"], 3)
+        self.assertEqual(capability["proof_schema"], 3)
+        self.assertEqual(capability["manifest_sha256"],
+                         tool.EXPECTED_GUARD_MANIFEST_SHA256)
+        self.assertEqual(capability["fixed_recovery"]["product_id"], 1397)
+        self.assertEqual(capability["fixed_recovery"]["attachment_id"], 7609)
+        self.assertEqual(capability["fixed_recovery"]["recoverable_positions"], [2, 3, 4, 5, 6])
+        self.assertEqual(capability["fixed_reuse_family"], "stub_flange")
+        self.assertEqual(capability["families"],
+                         ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"])
+        self.assertTrue(all(capability["capabilities"].values()))
 
     def test_pinned_artifact_is_exact_and_reproducible(self):
         value = tool.validate_artifact()
@@ -145,6 +239,35 @@ class ArtifactTests(unittest.TestCase):
         self.assertEqual(value["bytes"], tool.ARTIFACT_BYTES)
         self.assertEqual(tuple(value["members"]), tuple(sorted(tool.ARTIFACT_MEMBERS)))
         self.assertEqual(value["member_sha256"], tool.ARTIFACT_MEMBER_SHA256)
+        self.assertEqual(value["member_bytes"], tool.ARTIFACT_MEMBER_BYTES)
+        self.assertEqual(value["version"], tool.PLUGIN_VERSION)
+
+    def test_the_artifact_members_carry_the_exact_version_and_readme_contract(self):
+        """The ZIP is the deliverable, so its own bytes must state the contract."""
+        import io
+        import zipfile
+        with zipfile.ZipFile(io.BytesIO(tool.ARTIFACT_PATH.read_bytes())) as archive:
+            php = archive.read(
+                f"{tool.PLUGIN_SLUG}/frpdepot-media-mutation-guard.php").decode("utf-8")
+            readme = archive.read(f"{tool.PLUGIN_SLUG}/readme.txt").decode("utf-8")
+            manifest = json.loads(
+                archive.read(f"{tool.PLUGIN_SLUG}/approved-media.json").decode("ascii"))
+        self.assertIn(f" * Version: {tool.PLUGIN_VERSION}\n", php)
+        self.assertIn(f"define('FRPD_MG_VERSION', '{tool.PLUGIN_VERSION}');", php)
+        self.assertIn("define('FRPD_MG_STATE_SCHEMA', 3);", php)
+        self.assertIn(f"Stable tag: {tool.PLUGIN_VERSION}\n", readme)
+        self.assertIn("one literal Open Manway recovery contract", readme)
+        self.assertIn("attachment 7609", readme)
+        self.assertIn("origin-only", readme)
+        self.assertIn("admin-post", readme)
+        self.assertEqual(manifest["schema"], 3)
+        self.assertEqual(manifest["fixed_recovery"]["attachment_id"], 7609)
+        self.assertEqual(manifest["fixed_recovery"]["product_id"], 1397)
+        # The Stub Flange reuse contract and all five families survive unchanged.
+        self.assertEqual(manifest["fixed_reuse"]["family"], "stub_flange")
+        self.assertEqual(manifest["fixed_reuse"]["attachment_id"], 4849)
+        self.assertEqual(sorted(manifest["families"]),
+                         ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"])
 
     def test_only_four_fixed_actions_exist(self):
         self.assertEqual(tool.ACTIONS, frozenset({
@@ -168,7 +291,7 @@ class ArtifactTests(unittest.TestCase):
                 ),
                 "activate",
             )
-        for version in ("1.0.1", "1.0.2.1", "1.0.4", "1.0.5"):
+        for version in ("1.0.1", "1.0.2.1", "1.0.3", "1.0.4", "1.0.6", "1.0.7"):
             with self.subTest(version=version), self.assertRaises(tool.DeploymentError):
                 tool.validate_before(
                     "replace_active", tool.project_row(True, True, version, False)
@@ -277,20 +400,78 @@ class ProjectionTests(unittest.TestCase):
         with self.assertRaises(tool.IndeterminateError):
             tool.AdminPage(page).verify_guard_health()
 
-    def test_replacement_source_health_is_exact_103_and_inactive_state(self):
+    def test_replacement_source_health_is_exact_105_and_inactive_state(self):
         page = FakePage(fixed_row(True, tool.WITHDRAWN_PLUGIN_VERSION))
         page.guard_version = f"Version {tool.WITHDRAWN_PLUGIN_VERSION}"
         page.guard_status = "Guard inactive"
-        proof = tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
+        proof = tool.AdminPage(page).verify_guard_health(tool.CURRENT_PLUGIN_VERSION)
         self.assertEqual(proof, {
             "url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
-            "version": tool.WITHDRAWN_PLUGIN_VERSION,
+            "version": tool.CURRENT_PLUGIN_VERSION,
             "guard_active": False,
+            "guard_state_absent": True,
+            "families": ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"],
+            "state_schema": None,
+            "proof_schema": None,
+            "manifest_sha256": None,
+            "recovery_capability_exact": False,
             "javascript_errors": 0,
         })
+        # The live 1.0.5 page must present its exact fixed shape: five families,
+        # no capability projection, no origin-proof control, and NO unresolved
+        # guard/recovery state controls.
+        for field, bad in (("families", ["elbow_90", "open_manway"]),
+                           ("guarded_snapshot_controls", 1),
+                           ("completion_controls", 1),
+                           ("recovery_gallery_forms", 1)):
+            with self.subTest(field=field):
+                original = getattr(page, field)
+                setattr(page, field, bad)
+                with self.assertRaises(tool.IndeterminateError):
+                    tool.AdminPage(page).verify_guard_health(tool.CURRENT_PLUGIN_VERSION)
+                setattr(page, field, original)
+        # "Guard active" is exactly the live signal for a media guard or recovery
+        # state that has not been resolved; it refuses the replacement.
         page.guard_status = "Guard active"
         with self.assertRaises(tool.IndeterminateError):
             tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
+        page.guard_status = "Guard unavailable"
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
+        page.guard_status = "Guard inactive"
+        # A 1.0.5 page must NOT already publish the 1.0.6 capability projection.
+        page.capability = json.dumps(tool.EXPECTED_GUARD_CAPABILITY)
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health(tool.WITHDRAWN_PLUGIN_VERSION)
+
+    def test_replacement_result_health_requires_the_exact_recovery_capability(self):
+        page = FakePage(fixed_row(True))
+        proof = tool.AdminPage(page).verify_guard_health()
+        self.assertTrue(proof["recovery_capability_exact"])
+        self.assertTrue(proof["guard_state_absent"])
+        rounds = tool.AdminPage(page).verify_guard_health_rounds()
+        self.assertEqual(len(rounds), tool.POST_WRITE_READ_ROUNDS)
+        # An absent, drifted or partially-preserved capability all refuse.
+        for broken in (None, json.dumps({"plugin_version": "1.0.6"}), "not json"):
+            with self.subTest(capability=str(broken)[:24]):
+                page.capability = broken
+                with self.assertRaises(tool.IndeterminateError):
+                    tool.AdminPage(page).verify_guard_health()
+        drifted = json.loads(json.dumps(tool.EXPECTED_GUARD_CAPABILITY))
+        drifted["families"] = ["open_manway"]
+        page.capability = json.dumps(drifted)
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health()
+        drifted = json.loads(json.dumps(tool.EXPECTED_GUARD_CAPABILITY))
+        drifted["fixed_reuse_family"] = "open_manway"
+        page.capability = json.dumps(drifted)
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health()
+        drifted = json.loads(json.dumps(tool.EXPECTED_GUARD_CAPABILITY))
+        drifted["fixed_recovery"]["attachment_id"] = 7610
+        page.capability = json.dumps(drifted)
+        with self.assertRaises(tool.IndeterminateError):
+            tool.AdminPage(page).verify_guard_health()
 
     def test_network_admin_and_other_admin_routes_are_refused(self):
         tool.assert_admin_url(tool.PLUGINS_URL, mode="plugins")
@@ -372,16 +553,15 @@ class PlanTests(unittest.TestCase):
         self.assertNotEqual(first["sha256"], second["sha256"])
         self.assertEqual(first["operation_sha256"], second["operation_sha256"])
 
-    def test_literal_replacement_release_is_exact_v103_to_v105(self):
-        self.assertEqual(tool.WITHDRAWN_PLUGIN_VERSION, "1.0.3")
-        self.assertEqual(tool.PLUGIN_VERSION, "1.0.5")
-        self.assertEqual(tool.TOOL_VERSION, "1.5.2")
-        self.assertEqual(tool.SCHEMA_VERSION, 9)
-        self.assertEqual(tool.ARTIFACT_SHA256,
-                         "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74")
-        self.assertEqual(tool.ARTIFACT_BYTES, 21035)
+    def test_literal_replacement_release_is_exact_v105_to_v107(self):
+        self.assertEqual(tool.CURRENT_PLUGIN_VERSION, "1.0.5")
+        self.assertEqual(tool.PLUGIN_VERSION, "1.0.7")
+        self.assertEqual(tool.TOOL_VERSION, "1.7.0")
+        self.assertEqual(tool.SCHEMA_VERSION, 11)
+        self.assertEqual(tool.ARTIFACT_SHA256, "a1f6bf204e443dea9008699abcaf96e7da868a894a5f569215c572c9963ab2d1")
+        self.assertEqual(tool.ARTIFACT_BYTES, 35656)
 
-    def test_obsolete_v104_plan_hash_refuses_before_artifact_registry_or_browser(self):
+    def test_superseded_plan_hash_refuses_before_artifact_registry_or_browser(self):
         path, staged = tool.stage(
             "replace_active",
             tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
@@ -396,7 +576,7 @@ class PlanTests(unittest.TestCase):
         with mock.patch.object(tool, "digest_for", return_value=old_hash), \
                 mock.patch.object(tool, "validate_artifact") as artifact, \
                 mock.patch.object(tool, "admin_session") as browser:
-            with self.assertRaisesRegex(tool.DeploymentError, "permanently superseded"):
+            with self.assertRaisesRegex(tool.DeploymentError, "superseded guard artifact"):
                 tool.load_plan(str(old_path))
         artifact.assert_not_called()
         browser.assert_not_called()
@@ -502,21 +682,56 @@ class PlanTests(unittest.TestCase):
         path, plan = tool.stage("replace_active", before, self.artifact)
         events = []
 
+        def complete_health(expected_version):
+            """The COMPLETE proof the production reader returns; v1.6.0's stub
+            returned a two-field stand-in, which is exactly why its test accepted
+            an incomplete health check."""
+            is_target = expected_version == tool.PLUGIN_VERSION
+            return {
+                "url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
+                "version": expected_version, "guard_active": False,
+                "guard_state_absent": True,
+                "families": ["elbow_90", "manway_cover", "open_manway", "pipe",
+                             "stub_flange"],
+                "state_schema": tool.EXPECTED_GUARD_STATE_SCHEMA if is_target else None,
+                "proof_schema": tool.EXPECTED_GUARD_PROOF_SCHEMA if is_target else None,
+                "manifest_sha256": (tool.EXPECTED_GUARD_MANIFEST_SHA256 if is_target
+                                    else None),
+                "recovery_capability_exact": is_target,
+                "javascript_errors": 0,
+            }
+
         class ReplaceAdmin:
             def goto_plugins(self): events.append("goto")
             def read_row(self, allow_absent=True): return before
             def verify_guard_health(self, expected_version=tool.PLUGIN_VERSION):
                 events.append(f"health:{expected_version}")
-                return {"version": expected_version, "guard_active": False}
+                return complete_health(expected_version)
+            def verify_deployment_round(self, expected_version=tool.PLUGIN_VERSION):
+                health = self.verify_guard_health(expected_version)
+                events.append("round_row")
+                return {"row": tool.project_row(True, True, expected_version, False),
+                        "health": health}
+            def verify_guard_health_rounds(self, expected_version=tool.PLUGIN_VERSION,
+                                           rounds=tool.POST_WRITE_READ_ROUNDS):
+                return [self.verify_deployment_round(expected_version)
+                        for _ in range(rounds)]
+            def read_bounded(self, wanted):
+                events.append("read_bounded")
+                return wanted
             def prepare_install(self): events.append("prepare"); return object(), object()
-            def execute_replace(self, chooser, submit, artifact_raw, expected_before):
+            def execute_replace(self, chooser, submit, artifact_raw, expected_before,
+                                artifact=None, plan=None):
                 self_outer.assertEqual(expected_before, before)
-                self_outer.assertTrue(tool.attempt_path(plan["operation_sha256"]).exists())
+                self_outer.assertEqual(artifact, self_outer.artifact)
+                self_outer.assertIsNotNone(plan)
+                self_outer.assertTrue(tool.attempt_path(
+                    plan["operation_sha256"]).exists())
                 self_outer.assertEqual(hashlib.sha256(artifact_raw).hexdigest(),
                                        tool.ARTIFACT_SHA256)
                 events.append("upload_then_replace")
                 return {"comparison_name": tool.PLUGIN_NAME,
-                        "comparison_current_version": tool.WITHDRAWN_PLUGIN_VERSION,
+                        "comparison_current_version": tool.CURRENT_PLUGIN_VERSION,
                         "comparison_uploaded_version": tool.PLUGIN_VERSION,
                         "wordpress_success_marker_exact": True,
                         "active_withdrawn_version_reverified_immediately_before_overwrite": True,
@@ -530,13 +745,177 @@ class PlanTests(unittest.TestCase):
         with mock.patch.object(tool, "admin_session", session), mock.patch.object(tool, "print_json"):
             tool.command_commit(argparse.Namespace(approval="APPROVED", plan=str(path)))
         self.assertEqual(events, [
-            "goto", f"health:{tool.WITHDRAWN_PLUGIN_VERSION}", "goto", "prepare",
-            "upload_then_replace", f"health:{tool.PLUGIN_VERSION}",
+            "goto", f"health:{tool.CURRENT_PLUGIN_VERSION}", "goto", "prepare",
+            "upload_then_replace",
+            f"health:{tool.PLUGIN_VERSION}", "round_row",
+            f"health:{tool.PLUGIN_VERSION}", "round_row",
+            f"health:{tool.PLUGIN_VERSION}", "round_row",
+            "goto", "read_bounded",
         ])
         result = json.loads(tool.result_path(plan["operation_sha256"]).read_text(encoding="ascii"))
         self.assertEqual(result["status"], "verified")
         self.assertEqual(result["after"], tool.project_row(True, True, tool.PLUGIN_VERSION, False))
         self.assertEqual(result["writes"], 2)
+        # Three independent fresh COMPLETE reads must each prove the exact plugin
+        # row AND the exact guard health together.
+        rounds = result["replacement"]["health_rounds"]
+        self.assertEqual(len(rounds), tool.POST_WRITE_READ_ROUNDS)
+        for round_proof in rounds:
+            self.assertEqual(round_proof["row"],
+                             tool.project_row(True, True, tool.PLUGIN_VERSION, False))
+            self.assertEqual(round_proof["health"]["version"], tool.PLUGIN_VERSION)
+            self.assertTrue(round_proof["health"]["recovery_capability_exact"])
+            self.assertTrue(round_proof["health"]["guard_state_absent"])
+            self.assertEqual(round_proof["health"]["javascript_errors"], 0)
+            self.assertEqual(round_proof["health"]["state_schema"],
+                             tool.EXPECTED_GUARD_STATE_SCHEMA)
+            self.assertEqual(round_proof["health"]["manifest_sha256"],
+                             tool.EXPECTED_GUARD_MANIFEST_SHA256)
+
+    def test_a_post_round_row_or_health_mismatch_is_indeterminate(self):
+        """Each of the three rounds must prove BOTH the row and the health."""
+        for broken in ("row", "version", "capability", "state", "javascript"):
+            with self.subTest(broken=broken):
+                page = FakePage(fixed_row(True, tool.PLUGIN_VERSION))
+                if broken == "row":
+                    page.row = fixed_row(False, tool.PLUGIN_VERSION)
+                elif broken == "version":
+                    page.guard_version = "Version 1.0.6"
+                elif broken == "capability":
+                    page.capability = None
+                elif broken == "state":
+                    page.recovery_gallery_forms = 1
+                elif broken == "javascript":
+                    page.guard_status = "Guard unavailable"
+                with self.assertRaises(tool.IndeterminateError):
+                    tool.AdminPage(page).verify_deployment_round()
+
+    def test_a_complete_post_round_proves_row_and_health_together(self):
+        page = FakePage(fixed_row(True, tool.PLUGIN_VERSION))
+        proof = tool.AdminPage(page).verify_deployment_round()
+        self.assertEqual(proof["row"],
+                         tool.project_row(True, True, tool.PLUGIN_VERSION, False))
+        self.assertEqual(proof["health"]["version"], tool.PLUGIN_VERSION)
+        self.assertTrue(proof["health"]["recovery_capability_exact"])
+
+
+class SharedPredicateTests(unittest.TestCase):
+    """ONE normalized predicate, at stage, at commit preflight, and immediately
+    before the first upload form submission.
+
+    v1.6.0 had `validate_before()` but used it only while staging: commit
+    re-implemented a subset inline, and `AdminPage.execute_replace()` selected
+    and submitted the artifact with nothing fresher than the preflight.
+    """
+
+    def setUp(self):
+        self.artifact = tool.validate_artifact()
+        self.before = tool.project_row(True, True, tool.CURRENT_PLUGIN_VERSION, False)
+        self.plan = {"action": "replace_active", "before": self.before,
+                     "after_expected": tool.expected_after("replace_active"),
+                     "artifact": self.artifact}
+        self.health = {"url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
+                       "version": tool.CURRENT_PLUGIN_VERSION, "guard_active": False,
+                       "guard_state_absent": True, "javascript_errors": 0}
+
+    def test_the_exact_accepted_evidence_passes(self):
+        tool.assert_deployment_eligibility(
+            "replace_active", self.before, artifact=self.artifact, plan=self.plan,
+            health=self.health)
+
+    def test_stage_and_the_predicate_are_the_same_gate(self):
+        tool.validate_before("replace_active", self.before)
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        # stage -> validate_before -> assert_deployment_eligibility, plus the
+        # commit preflight and the pre-submit call inside execute_replace.
+        self.assertEqual(source.count("assert_deployment_eligibility("), 5)
+
+    def test_every_stage_accepted_field_mutated_refuses_before_any_write(self):
+        """Mutate each accepted field and prove a FREE refusal."""
+        row_mutations = {
+            "absent": tool.project_row(False, None, "", False),
+            "inactive": tool.project_row(True, False, tool.CURRENT_PLUGIN_VERSION, False),
+            "already_the_target": tool.project_row(True, True, tool.PLUGIN_VERSION, False),
+            "the_withdrawn_build": tool.project_row(True, True, "1.0.6", False),
+            "another_version": tool.project_row(True, True, "1.0.4", False),
+            "update_marker": tool.project_row(True, True, tool.CURRENT_PLUGIN_VERSION, True),
+        }
+        for label, row in row_mutations.items():
+            with self.subTest(field=f"row:{label}"), \
+                    self.assertRaises(tool.DeploymentError):
+                tool.assert_deployment_eligibility(
+                    "replace_active", row, artifact=self.artifact, plan=self.plan,
+                    health=self.health)
+
+        artifact_mutations = {
+            "sha256": {**self.artifact, "sha256": "f" * 64},
+            "bytes": {**self.artifact, "bytes": self.artifact["bytes"] + 1},
+            "version": {**self.artifact, "version": "1.0.6"},
+            "members": {**self.artifact, "members": ["x"]},
+            "member_sha256": {**self.artifact, "member_sha256": {}},
+            "member_bytes": {**self.artifact, "member_bytes": {}},
+            "withdrawn_hash": {
+                **self.artifact,
+                "sha256": next(iter(tool.WITHDRAWN_ARTIFACTS))},
+        }
+        for label, artifact in artifact_mutations.items():
+            with self.subTest(field=f"artifact:{label}"), \
+                    self.assertRaises(tool.DeploymentError):
+                tool.assert_deployment_eligibility(
+                    "replace_active", self.before, artifact=artifact, plan=self.plan,
+                    health=self.health)
+
+        plan_mutations = {
+            "action": {**self.plan, "action": "activate"},
+            "before": {**self.plan, "before": tool.project_row(True, False, "1.0.5", False)},
+            "after_expected": {**self.plan,
+                               "after_expected": tool.project_row(True, False,
+                                                                  tool.PLUGIN_VERSION, False)},
+            "artifact": {**self.plan, "artifact": {**self.artifact, "sha256": "0" * 64}},
+        }
+        for label, plan in plan_mutations.items():
+            with self.subTest(field=f"plan:{label}"), \
+                    self.assertRaises(tool.DeploymentError):
+                tool.assert_deployment_eligibility(
+                    "replace_active", self.before, artifact=self.artifact, plan=plan,
+                    health=self.health)
+
+        health_mutations = {
+            "version": {**self.health, "version": tool.PLUGIN_VERSION},
+            "guard_active": {**self.health, "guard_active": True},
+            "guard_state": {**self.health, "guard_state_absent": False},
+            "javascript": {**self.health, "javascript_errors": 1},
+        }
+        for label, health in health_mutations.items():
+            with self.subTest(field=f"health:{label}"), \
+                    self.assertRaises(tool.DeploymentError):
+                tool.assert_deployment_eligibility(
+                    "replace_active", self.before, artifact=self.artifact,
+                    plan=self.plan, health=health)
+
+    def test_a_refusal_is_free_and_never_indeterminate(self):
+        with self.assertRaises(tool.DeploymentError) as caught:
+            tool.assert_deployment_eligibility(
+                "replace_active", tool.project_row(True, False, "1.0.5", False))
+        self.assertNotIsInstance(caught.exception, tool.IndeterminateError)
+
+    def test_the_pre_submit_predicate_runs_before_any_file_is_chosen(self):
+        """A row that drifts between preflight and submit uploads NOTHING."""
+        chooser = FakeElement()
+        submit = FakeElement()
+        page = FakePage(fixed_row(True, tool.CURRENT_PLUGIN_VERSION))
+        page.url = f"{tool.ORIGIN}/wp-admin/update.php?action=upload-plugin"
+        drifted = FakePage(fixed_row(True, tool.PLUGIN_VERSION))
+        drifted.guard_version = f"Version {tool.CURRENT_PLUGIN_VERSION}"
+        page.context = type("Ctx", (), {"new_page": lambda self: drifted})()
+        with self.assertRaises(tool.DeploymentError) as caught:
+            tool.AdminPage(page).execute_replace(
+                chooser, submit, tool.ARTIFACT_PATH.read_bytes(),
+                tool.project_row(True, True, tool.CURRENT_PLUGIN_VERSION, False))
+        self.assertNotIsInstance(caught.exception, tool.IndeterminateError)
+        self.assertEqual(chooser.files, [])
+        self.assertEqual(submit.clicked, 0)
+        self.assertTrue(drifted.closed)
 
 
 class SourceSurfaceTests(unittest.TestCase):
@@ -616,11 +995,16 @@ class SourceSurfaceTests(unittest.TestCase):
             [table] if selector == "table.update-from-upload-comparison"
             else [drift_link] if selector == tool.OVERWRITE_SELECTOR else []
         )
-        with self.assertRaises(tool.IndeterminateError):
+        drift_chooser = FakeElement()
+        with self.assertRaises(tool.DeploymentError) as caught:
             tool.AdminPage(page).execute_replace(
-                FakeElement(), FakeElement(), tool.ARTIFACT_PATH.read_bytes(),
-                tool.project_row(True, True, tool.WITHDRAWN_PLUGIN_VERSION, False),
+                drift_chooser, FakeElement(), tool.ARTIFACT_PATH.read_bytes(),
+                tool.project_row(True, True, tool.CURRENT_PLUGIN_VERSION, False),
             )
+        # 1.7.0 catches this at the FRESH pre-submit predicate, so it is a free
+        # refusal with no upload at all rather than an indeterminate attempt.
+        self.assertNotIsInstance(caught.exception, tool.IndeterminateError)
+        self.assertEqual(drift_chooser.files, [])
         self.assertEqual(drift_link.clicked, 0)
         self.assertTrue(drift_audit.closed)
 

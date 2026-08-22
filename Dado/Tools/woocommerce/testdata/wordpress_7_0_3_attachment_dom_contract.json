@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "wordpress_version": "7.0.3",
+  "sources": {
+    "media_list": {
+      "url": "https://raw.githubusercontent.com/WordPress/wordpress-develop/7.0.3/src/wp-admin/includes/class-wp-media-list-table.php",
+      "sha256": "e480fa867d3a6b63c5e9bb973f860707d7f9f69b1a6bc7a3803f1a61d7c14763",
+      "relevant_lines": "608-660"
+    },
+    "edit_form": {
+      "url": "https://raw.githubusercontent.com/WordPress/wordpress-develop/7.0.3/src/wp-admin/edit-form-advanced.php",
+      "sha256": "a74058bfbc0768353858872e0a170c34220ca52f9d726f37ecbb325e75b9aab6",
+      "relevant_lines": "238,492-493"
+    },
+    "attachment_metadata": {
+      "url": "https://raw.githubusercontent.com/WordPress/wordpress-develop/7.0.3/src/wp-admin/includes/media.php",
+      "sha256": "9bbe54a96d9c62e50edb13ccd7215db78cac215b9907aaa024cf40c85749fa4d",
+      "relevant_lines": "3324-3395"
+    }
+  },
+  "unattached_parent_cell": {
+    "selector": "td.parent.column-parent",
+    "inner_text": "(Unattached)\nAttach",
+    "link_count": 1,
+    "attach_selector": "a[href=\"#the-list\"].hide-if-no-js.aria-button-if-js",
+    "attach_text": "Attach",
+    "onclick_template": "findPosts.open( 'media[]', '{attachment_id}' ); return false;"
+  },
+  "attachment_edit": {
+    "hidden_fields": [
+      "post_ID",
+      "post_type",
+      "original_post_status"
+    ],
+    "post_parent_hidden_field_exists": false,
+    "uploaded_to_selector": ".misc-pub-uploadedto",
+    "uploaded_to_box_count_when_unattached": 0
+  }
+}

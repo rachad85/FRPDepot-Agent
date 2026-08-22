@@ -5,7 +5,7 @@ Closed scope:
 - install exactly the pinned plugin ZIP, inactive, only when absent;
 - activate exactly that installed version;
 - deactivate exactly that installed version as the fixed emergency path.
-- replace the exact active, healthy, inactive-state v1.0.3 guard once with exact v1.0.5;
+- replace the exact active, healthy, inactive-state v1.0.5 guard once with exact v1.0.7.
 
 Every action uses an immutable authenticated 24-hour plan and a later exact
 APPROVED. There is no arbitrary replace, delete, arbitrary plugin, generic browser,
@@ -38,8 +38,8 @@ if str(ROOT) not in sys.path:
 from Dado.Tools.common.ui_lane_lock import ui_browser_lock
 
 TOOL_NAME = "wordpress_media_guard_deployment_tool"
-TOOL_VERSION = "1.5.2"
-SCHEMA_VERSION = 9
+TOOL_VERSION = "1.7.0"
+SCHEMA_VERSION = 11
 APPROVAL_WORD = "APPROVED"
 ORIGIN = "https://frpdepots.com"
 CDP_ENDPOINT = "http://127.0.0.1:9229"
@@ -49,31 +49,89 @@ GUARD_URL = f"{ORIGIN}/wp-admin/tools.php?page=frpd-media-mutation-guard"
 PLUGIN_NAME = "FRP Depot Media Mutation Guard"
 PLUGIN_SLUG = "frpdepot-media-mutation-guard"
 PLUGIN_FILE = f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"
-WITHDRAWN_PLUGIN_VERSION = "1.0.3"
-PLUGIN_VERSION = "1.0.5"
+# The exact live version this build may replace, and the exact version it
+# installs. 1.0.6 was BUILT, independently reviewed, REJECTED and never deployed:
+# its bytes stay on disk unchanged as evidence and are refused here by hash.
+CURRENT_PLUGIN_VERSION = "1.0.5"
+WITHDRAWN_PLUGIN_VERSION = "1.0.5"
+PLUGIN_VERSION = "1.0.7"
+WITHDRAWN_ARTIFACTS = {
+    "6a753c570d167075b8fa0a66349ab0a812aa7e222a7aedb2f6d374b913a7010e":
+        "WITHDRAWN_NOT_DEPLOYED_NOT_STAGEABLE",
+}
+WITHDRAWN_ARTIFACT_VERSIONS = ("1.0.6",)
+# Every plan and stable operation staged against an earlier artifact is permanently
+# superseded and can never commit. The schema/tool-version bump alone already
+# invalidates them; these sets state it explicitly so a stale file cannot be
+# mistaken for a live authorization.
 SUPERSEDED_PLAN_SHA256 = frozenset({
+    "03b55733fdb767cc015be652a625e822cb5f4fb87df891d4a36f2371c2022367",
     "31e5fd889d25c3dc9ee1dbb1f0f8e74e527808b5b24cb92e12aebddaaafa76ac",
+    "3fa113af990f34eb48e66975d7aadbade9b4e05a0563f06c03e7c1e937eec702",
+    "4c10d1036a9248ac7941d40ac89f0211b833cb8ae2312739d5a2a4ea05126780",
+    "5c45ac727f1d818c805f1f0da961af093ecb01839171da149b4bb842fa8018c7",
+    "9bb2784da86697a61170ec861281e883c0e3cb6374f39b44b87665c57f44ab61",
+    "dbb7382dcd731ae22c22354bac4f304e0304ccb7543939364c847443aa349223",
+    "def4afe80095cc8ac6a711ef284e9c090c97feb2a69594789161f5b4b327adce",
 })
 SUPERSEDED_OPERATION_SHA256 = frozenset({
+    "2805cd9c36499c8aef6d8985b307796bcf102d25f9bd23de7a65c9271a621fd6",
     "3ed56d4c3db984f468b0fee0539c358a598a3c93361f491b0e9b961058490c3c",
+    "6e4b06c9d7ca1fcb3f3ad52853d9b2d6d64934753ef61e4c0689b6f60a5a4b2d",
+    "743a22c75b78a376734057f0ac7471c7b0ee37b0344919bb199ee7b61c357064",
+    "a78074ee9554727473a92fa39d45ec93ae2684ebb710de4c23d51921224dc737",
+    "c11c56f47ac7c95f585496816766ec37de9aa3b0606b7b6c2ac01e08777ae505",
+    "ed562dd452bfe65532eb80f57447c0750a8305082861420daaa2c4e54c0886ff",
 })
-ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.5.zip"
-ARTIFACT_SHA256 = "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74"
-ARTIFACT_BYTES = 21035
+ARTIFACT_PATH = ROOT / "Dado" / "Tools" / "woocommerce" / "media_mutation_guard" / f"{PLUGIN_SLUG}-1.0.7.zip"
+ARTIFACT_SHA256 = "a1f6bf204e443dea9008699abcaf96e7da868a894a5f569215c572c9963ab2d1"
+ARTIFACT_BYTES = 35656
 ARTIFACT_MEMBERS = (
     f"{PLUGIN_SLUG}/approved-media.json",
     f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php",
     f"{PLUGIN_SLUG}/readme.txt",
 )
 ARTIFACT_MEMBER_SHA256 = {
-    f"{PLUGIN_SLUG}/approved-media.json": "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565",
-    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "7d09ad8eb45e552e7dfb31ecf50b800ea50ea1c8074a8e1a899e375f47a2f887",
-    f"{PLUGIN_SLUG}/readme.txt": "4f7e96d3962458ca00cdc61db87c17ef6fb6bec31b78d59b5e0462a0a9c1ea6a",
+    f"{PLUGIN_SLUG}/approved-media.json": "adb9b81f7a8e55205c7224af6005c0c386ec833eef36be7281dca96313e9d900",
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": "87209d942828f2042c26225f48ebe18c91a336dbed1411a102290a3dbf1623bf",
+    f"{PLUGIN_SLUG}/readme.txt": "336447756e6a51c18cd699033f517d7f352102ceeeb492ae480bfbd212aa6e22",
 }
 ARTIFACT_MEMBER_BYTES = {
-    f"{PLUGIN_SLUG}/approved-media.json": 4475,
-    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": 86320,
-    f"{PLUGIN_SLUG}/readme.txt": 4429,
+    f"{PLUGIN_SLUG}/approved-media.json": 5910,
+    f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php": 146101,
+    f"{PLUGIN_SLUG}/readme.txt": 7469,
+}
+# Non-secret proof, read from the live guard page, that the installed build really
+# carries the one literal Open Manway recovery contract. It is compared exactly.
+GUARD_CAPABILITY_SELECTOR = "#frpd-mg-capability"
+EXPECTED_GUARD_MANIFEST_SHA256 = "adb9b81f7a8e55205c7224af6005c0c386ec833eef36be7281dca96313e9d900"
+EXPECTED_GUARD_STATE_SCHEMA = 3
+EXPECTED_GUARD_PROOF_SCHEMA = 3
+EXPECTED_GUARD_CAPABILITY = {
+    "schema": EXPECTED_GUARD_PROOF_SCHEMA,
+    "plugin_version": PLUGIN_VERSION,
+    "state_schema": EXPECTED_GUARD_STATE_SCHEMA,
+    "proof_schema": EXPECTED_GUARD_PROOF_SCHEMA,
+    "manifest_sha256": EXPECTED_GUARD_MANIFEST_SHA256,
+    "families": ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"],
+    "fixed_reuse_family": "stub_flange",
+    "fixed_recovery": {
+        "contract": "open_manway_recovery",
+        "family": "open_manway",
+        "product_id": 1397,
+        "position": 1,
+        "attachment_id": 7609,
+        "filename": "01_manway_premium_hero.png",
+        "prior_operation_sha256":
+            "e0127fcaa04c023cbdd19a36726d6e8f03c3fb01f12f0367550d17c87674dc85",
+        "recoverable_positions": [2, 3, 4, 5, 6],
+    },
+    "capabilities": {
+        "existing_fixed_attachment_acquisition": True,
+        "non_prefix_upload_reservation": True,
+        "origin_only_file_enumeration": True,
+        "owner_bound_gallery_commit": True,
+    },
 }
 ACTIONS = frozenset({"install_inactive", "replace_active", "activate", "deactivate"})
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "wordpress_media_guard_deployment_plans"
@@ -188,6 +246,24 @@ def validate_artifact_payload() -> tuple[dict[str, Any], bytes]:
     php = payloads[f"{PLUGIN_SLUG}/frpdepot-media-mutation-guard.php"].decode("utf-8", errors="strict")
     if f"Plugin Name: {PLUGIN_NAME}" not in php or f"Version: {PLUGIN_VERSION}" not in php:
         raise DeploymentError("REFUSED: fixed plugin artifact identity/version changed.")
+    for withdrawn in WITHDRAWN_ARTIFACT_VERSIONS:
+        if f"Version: {withdrawn}" in php:
+            raise DeploymentError(
+                f"REFUSED: this artifact carries the WITHDRAWN v{withdrawn} plugin version."
+            )
+    if digest in WITHDRAWN_ARTIFACTS:
+        raise DeploymentError(
+            "REFUSED: this artifact is classified "
+            f"{WITHDRAWN_ARTIFACTS[digest]} and can never be staged or deployed."
+        )
+    if (f"define('FRPD_MG_STATE_SCHEMA', {EXPECTED_GUARD_STATE_SCHEMA});" not in php
+            or f"define('FRPD_MG_PROOF_SCHEMA', {EXPECTED_GUARD_PROOF_SCHEMA});" not in php
+            or f"define('FRPD_MG_MANIFEST_SHA256', '{EXPECTED_GUARD_MANIFEST_SHA256}');"
+                not in php):
+        raise DeploymentError(
+            "REFUSED: fixed plugin artifact state/proof schema or manifest digest is not "
+            "the pinned one."
+        )
     artifact = {
         "path": str(path), "sha256": digest, "bytes": len(raw), "version": PLUGIN_VERSION,
         "members": list(members), "member_sha256": member_hashes, "member_bytes": member_bytes,
@@ -416,9 +492,39 @@ class AdminPage:
         return self.read_bounded(expected_after("install_inactive"))
 
     def execute_replace(self, chooser: Any, submit: Any, artifact_raw: bytes,
-                        expected_before: dict[str, Any]) -> dict[str, Any]:
+                        expected_before: dict[str, Any],
+                        artifact: dict[str, Any] | None = None,
+                        plan: dict[str, Any] | None = None) -> dict[str, Any]:
         if len(artifact_raw) != ARTIFACT_BYTES or hashlib.sha256(artifact_raw).hexdigest() != ARTIFACT_SHA256:
             raise DeploymentError("REFUSED: validated in-memory plugin artifact changed.")
+        # *** FRESH, IMMEDIATELY BEFORE THE FIRST WEBSITE WRITE. ***
+        # v1.6.0 set the artifact and clicked submit with nothing fresher than the
+        # commit preflight, so anything that changed in between landed anyway. A
+        # separate audit page is used so the upload form on this page is not lost.
+        context = getattr(self.page, "context", None)
+        if context is None or not callable(getattr(context, "new_page", None)):
+            raise DeploymentError(
+                "REFUSED: a separate pre-submit audit page is unavailable; nothing was uploaded."
+            )
+        preflight_page = context.new_page()
+        try:
+            preflight = AdminPage(preflight_page)
+            fresh_health = preflight.verify_guard_health(CURRENT_PLUGIN_VERSION)
+            preflight.goto_plugins()
+            fresh_row = preflight.read_row(allow_absent=True)
+            assert_deployment_eligibility(
+                "replace_active", fresh_row, artifact=artifact, plan=plan,
+                health=fresh_health)
+            if fresh_row != expected_before:
+                raise DeploymentError(
+                    "REFUSED: the fixed plugin row changed immediately before the upload; "
+                    "nothing was uploaded."
+                )
+        finally:
+            try:
+                preflight_page.close()
+            except Exception:
+                pass
         chooser.set_input_files({
             "name": f"{PLUGIN_SLUG}-{PLUGIN_VERSION}.zip", "mimeType": "application/zip",
             "buffer": artifact_raw,
@@ -510,33 +616,129 @@ class AdminPage:
         self.page.wait_for_timeout(500)
         version = str(self.page.locator("#frpd-mg-version").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
         status = str(self.page.locator("#frpd-mg-status").inner_text(timeout=ACTION_TIMEOUT_MS) or "").strip()
+        families = sorted(str(node.get_attribute("data-frpd-family") or "")
+                          for node in self.page.query_selector_all("section[data-frpd-family]"))
         return {
             "version_text": version,
             "status_text": status,
+            "families": families,
+            # A live guard row -- active OR a claimed gallery state -- renders the
+            # guarded-snapshot and completion controls, and an Open Manway recovery
+            # row additionally renders its own commit form. Their ABSENCE is the
+            # page's own proof that no guard or recovery state is unresolved.
+            "guarded_snapshot_controls": len(
+                self.page.query_selector_all("#frpd-mg-guarded-snapshot")),
+            "completion_controls": len(self.page.query_selector_all("#frpd-mg-complete")),
+            "recovery_gallery_forms": len(
+                self.page.query_selector_all("#frpd-mg-recovery-gallery-form")),
+            "origin_proof_controls": len(
+                self.page.query_selector_all("#frpd-mg-origin-proof")),
             "javascript_error_count": len(errors),
             "javascript_error_kinds": sorted(set(errors)),
         }
 
+    def read_guard_capability(self) -> Any:
+        """Read the non-secret capability projection, or None when absent."""
+        nodes = self.page.query_selector_all(GUARD_CAPABILITY_SELECTOR)
+        if len(nodes) != 1:
+            return None
+        try:
+            return json.loads(str(nodes[0].text_content() or ""))
+        except (json.JSONDecodeError, TypeError):
+            return None
+
     def verify_guard_health(self, expected_version: str = PLUGIN_VERSION) -> dict[str, Any]:
+        """Prove the whole live guard page, not just its version text.
+
+        v1.6.0 checked version text, "Guard inactive", the presence/absence of a
+        capability node and JavaScript errors. That could not tell an exact v1.0.5
+        from any other build claiming to be 1.0.5, and it never proved the state
+        or proof schemas of the build it was about to keep or replace.
+        """
         observed = self.observe_guard_health()
         version = observed["version_text"]
         status = observed["status_text"]
+        capability = self.read_guard_capability()
+        is_target = expected_version == PLUGIN_VERSION
+        # The pinned build publishes its exact capability projection, including
+        # both schemas and the runtime-manifest digest. The CURRENT build does not
+        # publish one at all, and that absence is its expected fixed shape.
+        capability_exact = (capability == EXPECTED_GUARD_CAPABILITY if is_target
+                            else capability is None)
+        schemas_exact = (
+            capability_exact and (
+                not is_target or (
+                    capability.get("state_schema") == EXPECTED_GUARD_STATE_SCHEMA
+                    and capability.get("proof_schema") == EXPECTED_GUARD_PROOF_SCHEMA
+                    and capability.get("manifest_sha256") == EXPECTED_GUARD_MANIFEST_SHA256)))
+        families_exact = observed["families"] == sorted(
+            ["elbow_90", "manway_cover", "open_manway", "pipe", "stub_flange"])
+        # No active guard, no claimed gallery state, no unresolved Open Manway
+        # recovery row: none of their controls may be rendered.
+        state_absent = (observed["guarded_snapshot_controls"] == 0
+                        and observed["completion_controls"] == 0
+                        and observed["recovery_gallery_forms"] == 0)
+        origin_proof_exact = observed["origin_proof_controls"] == (1 if is_target else 0)
         if (observed["javascript_error_count"]
                 or version != f"Version {expected_version}"
-                or status != "Guard inactive"):
+                or status != "Guard inactive"
+                or not capability_exact or not schemas_exact
+                or not families_exact or not state_absent or not origin_proof_exact):
             diagnostic = {
                 "expected_version": expected_version,
                 "version_exact": version == f"Version {expected_version}",
                 "guard_inactive_exact": status == "Guard inactive",
+                "capability_exact": capability_exact,
+                "capability_present": capability is not None,
+                "schemas_exact": schemas_exact,
+                "families_exact": families_exact,
+                "guard_state_absent": state_absent,
+                "origin_proof_control_exact": origin_proof_exact,
                 "javascript_error_count": observed["javascript_error_count"],
                 "javascript_error_kinds": observed["javascript_error_kinds"],
             }
             raise IndeterminateError(
-                "Active media guard plugin health page is not exact and clean: "
+                "Media guard plugin health page is not exact and clean: "
                 + json.dumps(diagnostic, sort_keys=True, separators=(",", ":"))
             )
         return {"url": "/wp-admin/tools.php?page=frpd-media-mutation-guard",
-                "version": expected_version, "guard_active": False, "javascript_errors": 0}
+                "version": expected_version, "guard_active": False,
+                "guard_state_absent": True,
+                "families": list(observed["families"]),
+                "state_schema": EXPECTED_GUARD_STATE_SCHEMA if is_target else None,
+                "proof_schema": EXPECTED_GUARD_PROOF_SCHEMA if is_target else None,
+                "manifest_sha256": EXPECTED_GUARD_MANIFEST_SHA256 if is_target else None,
+                "recovery_capability_exact": is_target,
+                "javascript_errors": 0}
+
+    def verify_deployment_round(self, expected_version: str = PLUGIN_VERSION) -> dict[str, Any]:
+        """ONE complete fresh proof: plugin row AND guard health together.
+
+        v1.6.0 verified health three times but read the plugin row once,
+        afterwards, so no single round proved active-and-healthy at the same
+        moment. Each round now proves both.
+        """
+        health = self.verify_guard_health(expected_version)
+        self.goto_plugins()
+        row = self.read_row(allow_absent=True)
+        wanted = project_row(True, True, expected_version, False)
+        if row != wanted:
+            raise IndeterminateError(
+                "A post-replacement round did not read the exact active plugin row: "
+                + json.dumps({"expected": wanted, "observed": row},
+                             sort_keys=True, separators=(",", ":"))
+            )
+        return {"row": row, "health": health}
+
+    def verify_guard_health_rounds(self, expected_version: str = PLUGIN_VERSION,
+                                   rounds: int = POST_WRITE_READ_ROUNDS) -> list[dict[str, Any]]:
+        """Three independent fresh COMPLETE reads, all of which must be exact."""
+        proofs: list[dict[str, Any]] = []
+        for index in range(rounds):
+            if index:
+                self.page.wait_for_timeout(POST_WRITE_READ_DELAY_MS)
+            proofs.append(self.verify_deployment_round(expected_version))
+        return proofs
 
 
 @contextlib.contextmanager
@@ -662,23 +864,79 @@ def result_path(operation: str) -> Path:
     return RESULT_DIR / f"{operation}.json"
 
 
-def validate_before(action: str, before: dict[str, Any]) -> None:
+def required_before(action: str) -> dict[str, Any]:
+    """The ONE exact live plugin row each fixed action may start from."""
+    if action == "install_inactive":
+        return project_row(False, None, "", False)
+    if action == "activate":
+        return project_row(True, False, PLUGIN_VERSION, False)
+    if action == "deactivate":
+        return project_row(True, True, PLUGIN_VERSION, False)
+    if action == "replace_active":
+        return project_row(True, True, CURRENT_PLUGIN_VERSION, False)
+    raise DeploymentError("REFUSED: action is not fixed.")
+
+
+def assert_deployment_eligibility(action: str, before: dict[str, Any], *,
+                                  artifact: dict[str, Any] | None = None,
+                                  plan: dict[str, Any] | None = None,
+                                  health: dict[str, Any] | None = None) -> None:
+    """THE ONE eligibility predicate.
+
+    v1.6.0 had `validate_before()` but used it only while staging; the commit path
+    re-implemented a subset inline, and `AdminPage.execute_replace()` selected and
+    submitted the artifact with no fresh row/health read at all. This is called at
+    stage, at the fresh commit preflight, AND immediately before the first upload
+    form submission, with whatever fresh evidence that caller holds.
+    """
     if action not in ACTIONS:
         raise DeploymentError("REFUSED: action is not fixed.")
-    if set(before) != ROW_KEYS:
+    if not isinstance(before, dict) or set(before) != ROW_KEYS:
         raise DeploymentError("REFUSED: live plugin projection is invalid.")
-    if action == "install_inactive" and before != project_row(False, None, "", False):
-        raise DeploymentError("REFUSED: fixed plugin must be absent for install; replace is unreachable.")
-    if action == "activate" and before != project_row(True, False, PLUGIN_VERSION, False):
-        raise DeploymentError("REFUSED: activation requires exact installed inactive version without update marker.")
-    if action == "deactivate" and before != project_row(True, True, PLUGIN_VERSION, False):
-        raise DeploymentError("REFUSED: deactivation requires exact installed active version without update marker.")
-    if action == "replace_active" and before != project_row(
-            True, True, WITHDRAWN_PLUGIN_VERSION, False):
+    wanted = required_before(action)
+    if before != wanted:
         raise DeploymentError(
-            f"REFUSED: replacement requires exact active v{WITHDRAWN_PLUGIN_VERSION} "
-            "without an update marker."
+            f"REFUSED: {action} requires the exact live plugin row {wanted!r}; "
+            f"the fresh read is {before!r}."
         )
+    if artifact is not None:
+        if artifact.get("version") != PLUGIN_VERSION:
+            raise DeploymentError("REFUSED: the artifact is not the exact pinned version.")
+        if artifact.get("sha256") != ARTIFACT_SHA256 or artifact.get("bytes") != ARTIFACT_BYTES:
+            raise DeploymentError("REFUSED: the artifact bytes are not the exact pinned ones.")
+        if artifact.get("sha256") in WITHDRAWN_ARTIFACTS:
+            raise DeploymentError(
+                "REFUSED: the artifact is a withdrawn build and can never be deployed.")
+        if (artifact.get("member_sha256") != ARTIFACT_MEMBER_SHA256
+                or artifact.get("member_bytes") != ARTIFACT_MEMBER_BYTES
+                or list(artifact.get("members") or ()) != sorted(ARTIFACT_MEMBERS)):
+            raise DeploymentError("REFUSED: the artifact member set is not the exact pinned one.")
+    if plan is not None:
+        for field, value in (("action", action), ("before", before),
+                             ("after_expected", expected_after(action))):
+            if plan.get(field) != value:
+                raise DeploymentError(
+                    f"REFUSED: the plan's {field} disagrees with the fresh live evidence."
+                )
+        if artifact is not None and plan.get("artifact") != artifact:
+            raise DeploymentError(
+                "REFUSED: the fixed plugin artifact changed after this plan was staged."
+            )
+    if health is not None:
+        expected_health_version = (CURRENT_PLUGIN_VERSION if action == "replace_active"
+                                   else PLUGIN_VERSION)
+        if (health.get("version") != expected_health_version
+                or health.get("guard_active") is not False
+                or health.get("guard_state_absent") is not True
+                or health.get("javascript_errors") != 0):
+            raise DeploymentError(
+                "REFUSED: the fresh guard health page is not the exact expected shape."
+            )
+
+
+def validate_before(action: str, before: dict[str, Any]) -> None:
+    """Kept as the stage-time name; it is the same one predicate."""
+    assert_deployment_eligibility(action, before)
 
 
 def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tuple[Path, dict[str, Any]]:
@@ -694,12 +952,13 @@ def stage(action: str, before: dict[str, Any], artifact: dict[str, Any]) -> tupl
         "after_expected": expected_after(action),
         "writes_if_committed": [{
             "install_inactive": "one fixed plugin ZIP upload; plugin remains inactive",
-            "replace_active": "one fixed ZIP upload to WordPress comparison, then one exact replace-current click; plugin must remain active",
+            "replace_active": "one fixed ZIP upload to WordPress comparison, then one exact replace-current click; exactly v1.0.5 becomes exactly v1.0.7 and the plugin must remain active",
             "activate": "one fixed plugin activation click; its hook creates and verifies one fixed InnoDB guard-state table",
             "deactivate": "one fixed plugin deactivation click",
         }[action]],
-        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.3 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it does not defend against direct database/filesystem mutation, malicious PHP, or a privileged administrator replacing or disabling it. A replacement plan authorizes the upload only; an exact overwrite control is discovered after that write and absence leaves the plan indeterminate with the temporary upload possibly present.",
-        "forbidden": ["replace outside exact active healthy inactive-state v1.0.3-to-v1.0.5 update", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
+        "risk": "One attempt only. For replace_active, upload and replacement are not atomic: the temporary upload can land before replacement, and the active v1.0.5 files can be replaced before verification. A write may land even if verification becomes indeterminate. No retry, arbitrary replace, delete, rollback, or cleanup route exists. Runtime locking requires one authoritative MySQL server with no split, proxy multiplexing, pooled connection ownership change, or independent primary. As an ordinary plugin it does not defend against direct database/filesystem mutation, malicious PHP, or a privileged administrator replacing or disabling it. A replacement plan authorizes the upload only; an exact overwrite control is discovered after that write and absence leaves the plan indeterminate with the temporary upload possibly present.",
+        "forbidden": ["replace outside exact active healthy inactive-state v1.0.5-to-v1.0.7 update",
+                      "deploy the withdrawn v1.0.6 artifact", "delete", "retry", "rollback", "cleanup", "arbitrary plugin",
                       "generic browser", "setting", "content", "user", "media", "product", "order",
                       "customer", "payment", "email", "Zoho", "Drive"],
     }
@@ -740,7 +999,7 @@ def load_plan(raw_path: str) -> tuple[Path, dict[str, Any]]:
         raise DeploymentError("REFUSED: plan hash failed.")
     if saved in SUPERSEDED_PLAN_SHA256:
         raise DeploymentError(
-            "REFUSED: obsolete v1.0.4 deployment plan is permanently superseded and cannot commit."
+            "REFUSED: this deployment plan targets a superseded guard artifact and cannot commit."
         )
     if (plan["schema_version"] != SCHEMA_VERSION or plan["tool"] != TOOL_NAME
             or plan["tool_version"] != TOOL_VERSION or plan["origin"] != ORIGIN
@@ -828,11 +1087,12 @@ def command_commit(args: argparse.Namespace) -> None:
     operation = plan["operation_sha256"]
     if operation in SUPERSEDED_OPERATION_SHA256:
         raise DeploymentError(
-            "REFUSED: obsolete v1.0.4 stable operation is permanently superseded and cannot commit."
+            "REFUSED: this stable operation targets a superseded guard artifact and cannot commit."
         )
     if attempt_path(operation).exists() or result_path(operation).exists():
         raise DeploymentError("REFUSED: stable operation is permanently replay-locked.")
     artifact_raw: bytes | None = None
+    current_artifact: dict[str, Any] | None = None
     if action in {"install_inactive", "replace_active"}:
         current_artifact, artifact_raw = validate_artifact_payload()
         if current_artifact != plan["artifact"]:
@@ -845,19 +1105,25 @@ def command_commit(args: argparse.Namespace) -> None:
             live = admin.read_row(allow_absent=True)
             if live != plan["before"]:
                 raise DeploymentError("REFUSED: fixed plugin state changed after staging; stage a fresh plan.")
+            preflight_health = None
+            if action == "replace_active":
+                preflight_health = admin.verify_guard_health(CURRENT_PLUGIN_VERSION)
+                admin.goto_plugins()
+                live = admin.read_row(allow_absent=True)
+            # THE ONE predicate, on freshly read live evidence, at commit preflight.
+            assert_deployment_eligibility(
+                action, live,
+                artifact=(current_artifact if action in {"install_inactive", "replace_active"}
+                          else None),
+                plan=plan, health=preflight_health)
             if action in {"install_inactive", "replace_active"}:
-                if action == "replace_active":
-                    admin.verify_guard_health(WITHDRAWN_PLUGIN_VERSION)
-                    admin.goto_plugins()
-                    if admin.read_row() != plan["before"]:
-                        raise DeploymentError(
-                            "REFUSED: fixed plugin state changed during replacement preflight."
-                        )
                 chooser, control = admin.prepare_install()
             else:
                 if action == "deactivate":
                     admin.verify_guard_health()
                     admin.goto_plugins()
+                    live = admin.read_row(allow_absent=True)
+                    assert_deployment_eligibility(action, live, plan=plan)
                 control = admin.prepare_state_click(action)
                 chooser = None
             assert_commit_execution_window(plan)
@@ -877,10 +1143,30 @@ def command_commit(args: argparse.Namespace) -> None:
                 if artifact_raw is None:
                     raise DeploymentError("REFUSED: exact in-memory plugin artifact is unavailable.")
                 replacement = admin.execute_replace(
-                    chooser, control, artifact_raw, plan["before"]
+                    chooser, control, artifact_raw, plan["before"],
+                    artifact=plan["artifact"], plan=plan
                 )
                 after = replacement["after"]
-                health = admin.verify_guard_health()
+                # Three independent fresh reads must all prove exact v1.0.6, active,
+                # healthy, no update marker, the exact recovery capability and the
+                # preserved family/reuse protections before this is called verified.
+                # Three independent COMPLETE rounds: each proves the exact plugin
+                # row, active, no update marker, exact health, exact capability,
+                # exact schemas and manifest digest, no unexpected guard state and
+                # no JavaScript error -- together, in the same round.
+                rounds = admin.verify_guard_health_rounds()
+                if len(rounds) != POST_WRITE_READ_ROUNDS:
+                    raise IndeterminateError("The fixed post-replacement rounds did not all run.")
+                after = rounds[-1]["row"]
+                if any(round_proof["row"] != expected_after("replace_active")
+                       for round_proof in rounds):
+                    raise IndeterminateError(
+                        "A post-replacement round did not prove the exact expected row.")
+                admin.goto_plugins()
+                after = admin.read_bounded(expected_after("replace_active"))
+                health = rounds[-1]["health"]
+                replacement["health_rounds"] = rounds
+                replacement["after"] = after
             else:
                 after = admin.execute_state_click(action, control)
                 health = admin.verify_guard_health() if action == "activate" else None

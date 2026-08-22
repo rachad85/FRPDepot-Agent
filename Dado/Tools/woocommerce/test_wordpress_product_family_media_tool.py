@@ -1416,6 +1416,15 @@ class ProductFamilyMediaTests(unittest.TestCase):
         self.assertFalse(evidence["complete"])
         self.assertEqual(evidence["unidentified"], 1)
         self.assertEqual(evidence["rows"], [])
+        diagnostics = evidence["sanitized_unidentified_diagnostics"]
+        self.assertEqual(len(diagnostics), 1)
+        self.assertEqual(diagnostics[0]["reason"], "invalid_identity_carriers")
+        self.assertEqual(diagnostics[0]["exact_edit_link_count"], 1)
+        self.assertEqual(diagnostics[0]["exact_edit_unique_count"], 1)
+        self.assertTrue(diagnostics[0]["invalid_edit_candidate"])
+        self.assertFalse(diagnostics[0]["retains_identity_values"])
+        self.assertNotIn("1767", tool.canonical(diagnostics))
+        self.assertNotIn("1768", tool.canonical(diagnostics))
 
     def test_exact_edit_plus_ordinary_delete_link_keeps_one_exact_identity(self):
         origin = tool.media_base.EXACT_ORIGIN

@@ -1,0 +1,74 @@
+{
+  "schema": 1,
+  "contract": "wordpress_7_0_3_single_plugin_delete_confirmation",
+  "source": {
+    "wordpress_version": "7.0.3",
+    "core_screen": "wp-admin/plugins.php",
+    "action": "delete-selected",
+    "observation": "WordPress core constructs the row Delete control with checked[] and wp_nonce_url serializes that single value in the live DOM as checked[0]. The control opens the core delete-selected confirmation screen; that screen posts its confirmation form, whose hidden field remains checked[], back to the same request URI. The indexed live link shape was re-observed read-only on 2026-08-21 without retaining its nonce.",
+    "screen_file": "Dado/20_Working/wp703_plugins_screen.php",
+    "screen_sha256": "39f237dda3e826ee702fe361f9713eeacad360c97c3f1bf2d40450e91bd2e714",
+    "list_table_file": "Dado/20_Working/wp703_class-wp-plugins-list-table.php",
+    "list_table_sha256": "0d4887b8c6b27d58346ade915f4517033892f8ed8d5d9d65cf227c10cd28faf7"
+  },
+  "plugin": {
+    "file": "frpdepot-fixed-four-origin-file-cleanup/frpdepot-fixed-four-origin-file-cleanup.php",
+    "version": "1.0.0"
+  },
+  "delete_control": {
+    "href_template": "plugins.php?action=delete-selected&checked%5B0%5D=frpdepot-fixed-four-origin-file-cleanup%2Ffrpdepot-fixed-four-origin-file-cleanup.php&plugin_status=all&paged=1&s=&_wpnonce={nonce}",
+    "path": "/wp-admin/plugins.php",
+    "query_keys": [
+      "action",
+      "checked[0]",
+      "plugin_status",
+      "paged",
+      "s",
+      "_wpnonce"
+    ],
+    "query_values_except_nonce": {
+      "action": "delete-selected",
+      "checked[0]": "frpdepot-fixed-four-origin-file-cleanup/frpdepot-fixed-four-origin-file-cleanup.php",
+      "plugin_status": "all",
+      "paged": "1",
+      "s": ""
+    },
+    "nonce_placeholder_only": true
+  },
+  "confirmation_form": {
+    "method": "post",
+    "action": "same_request_uri_as_delete_control",
+    "hidden_names": [
+      "checked[]",
+      "verify-delete",
+      "action",
+      "_wpnonce",
+      "_wp_http_referer"
+    ],
+    "hidden_values_except_nonce_and_referer": {
+      "checked[]": "frpdepot-fixed-four-origin-file-cleanup/frpdepot-fixed-four-origin-file-cleanup.php",
+      "verify-delete": "1",
+      "action": "delete-selected"
+    },
+    "hidden_nonce_must_equal_query_nonce": true,
+    "referer_must_equal_same_request_uri": true,
+    "submit_selector": "input#submit[type=\"submit\"]",
+    "exact_submit_count": 1
+  },
+  "success_redirect": {
+    "url": "https://frpdepots.com/wp-admin/plugins.php?deleted=1&plugin_status=all&paged=1&s=",
+    "path": "/wp-admin/plugins.php",
+    "query_values": {
+      "deleted": "1",
+      "plugin_status": "all",
+      "paged": "1",
+      "s": ""
+    }
+  },
+  "safety": {
+    "nonce_is_validated_transiently_but_never_stored_or_printed": true,
+    "one_checked_plugin_only": true,
+    "confirmation_is_submitted_once_only": true,
+    "ambiguous_url_or_form_refuses_after_lock_without_retry": true
+  }
+}

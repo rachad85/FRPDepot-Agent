@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "contract": "wordpress_7_0_3_media_list_row_identity",
+  "source": {
+    "file": "Dado/20_Working/wp703_class-wp-media-list-table.php",
+    "sha256": "e480fa867d3a6b63c5e9bb973f860707d7f9f69b1a6bc7a3803f1a61d7c14763",
+    "official_row_line": 775,
+    "official_row_template": "<tr id=\"post-{post.ID}\">"
+  },
+  "reader_contract": {
+    "list_row_selector": "#the-list tr",
+    "row_id_regex": "^post-([1-9][0-9]*)$",
+    "matching_edit_link_required": true,
+    "matching_edit_link_path": "/wp-admin/post.php",
+    "matching_edit_link_query_keys": [
+      "action",
+      "post"
+    ],
+    "matching_edit_link_action": "edit",
+    "filename_selector": "p.filename",
+    "empty_placeholder_selector": "td.colspanchange"
+  },
+  "live_failure_reproduced_2026_08_21": {
+    "library_total": 111,
+    "page_one_rows": 20,
+    "old_primary_selector": "td.column-title a[href]",
+    "old_primary_selector_matches_per_row": 0,
+    "exact_edit_links_elsewhere_per_observed_row": 2,
+    "old_reader_identified_rows": 0,
+    "old_reader_unidentified_rows": 20
+  },
+  "safety": {
+    "row_id_alone_is_insufficient": true,
+    "edit_link_alone_is_insufficient": true,
+    "canonical_row_id_must_equal_one_exact_edit_link_id": true,
+    "parent_edit_links_may_coexist": true,
+    "ambiguous_or_unmatched_rows_refuse_closed": true
+  }
+}

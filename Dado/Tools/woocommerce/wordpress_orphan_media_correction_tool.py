@@ -46,8 +46,8 @@ import wordpress_product_family_media_tool as family_media  # noqa: E402
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
 
 TOOL_NAME = "FRP Depot Fixed Orphan Media Record Correction Tool"
-TOOL_VERSION = "1.0.0"
-SCHEMA_VERSION = 1
+TOOL_VERSION = "1.0.1"
+SCHEMA_VERSION = 2
 OPERATION_SCHEMA_VERSION = 1
 ACTION = "correct_four_fixed_unreadable_orphan_records_after_locked_cleanup"
 APPROVAL_WORD = "APPROVED"
@@ -80,6 +80,10 @@ PINNED_GUARD_PROOF_SCHEMA = 2
 PINNED_GUARD_ZIP_SHA256 = "f001bb217ae7aa16b2dd1f0cd08bcb0f6d825bb013c98e1a886ef1f2f436db74"
 PINNED_GUARD_PLUGIN_PHP_SHA256 = "7d09ad8eb45e552e7dfb31ecf50b800ea50ea1c8074a8e1a899e375f47a2f887"
 PINNED_GUARD_RUNTIME_MANIFEST_SHA256 = "23e1800e779ca7a4068c6eff090b9b53524cd3e3cefad9e53f5337ecfcefe565"
+WORDPRESS_CORE_VERSION = "7.0.3"
+WORDPRESS_MEDIA_LIST_SOURCE_SHA256 = "e480fa867d3a6b63c5e9bb973f860707d7f9f69b1a6bc7a3803f1a61d7c14763"
+WORDPRESS_EDIT_FORM_SOURCE_SHA256 = "a74058bfbc0768353858872e0a170c34220ca52f9d726f37ecbb325e75b9aab6"
+WORDPRESS_MEDIA_SOURCE_SHA256 = "9bbe54a96d9c62e50edb13ccd7215db78cac215b9907aaa024cf40c85749fa4d"
 SOURCE_OPERATION_SHA256 = "877ff133b0e4fbf560b3be5877b755c72e5c33dc217c7e4affb23c1a314e2a26"
 SOURCE_PLAN_SHA256 = "0403dcf8b8cc597086439f801dd8493ae6c0b1461887be3f1dc3f0f2ba79fab5"
 SOURCE_RESULT_SHA256 = "0fa72aceb74bbf231618d4b09026f6d7442962a4827c839bfa005187f4ea8ddf"
@@ -427,6 +431,9 @@ def public_absence_evidence(urls: list[str]) -> list[dict[str, Any]]:
 def library_projection(snapshot: dict[str, Any], *,
                        expected_present_ids: tuple[int, ...] = TARGET_IDS) -> dict[str, Any]:
     rows = snapshot.get("rows") if isinstance(snapshot, dict) else None
+    target_parent_states = (
+        snapshot.get("target_parent_states") if isinstance(snapshot, dict) else None
+    )
     if (snapshot.get("complete") is not True or type(snapshot.get("total")) is not int
             or not isinstance(rows, list) or len(rows) != snapshot["total"]):
         summary = {
@@ -465,12 +472,21 @@ def library_projection(snapshot: dict[str, Any], *,
     ]
     if fixed != expected:
         raise CleanupError("REFUSED: fixed Media Library presence/absence state has drifted.")
+    expected_parent_states = [
+        {"id": attachment_id, "state": "unattached", "attach_control_exact": True}
+        for attachment_id in expected_present_ids
+    ]
+    if target_parent_states != expected_parent_states:
+        raise CleanupError(
+            "REFUSED: fixed Media Library Uploaded-to state is not exact."
+        )
     return {
         "total": snapshot["total"],
         "rows": projected,
         "rows_sha256": digest_for(projected),
         "survivor_rows_sha256": digest_for(survivors),
         "target_rows": fixed,
+        "target_parent_states": expected_parent_states,
     }
 
 
@@ -816,9 +832,16 @@ def assert_correction_eligible(state: dict[str, Any],
         for row in TARGETS if row["attachment_id"] in expected_present_ids
     ]
     if (not isinstance(library, dict)
-            or set(library) != {"total", "rows", "rows_sha256", "survivor_rows_sha256", "target_rows"}
+            or set(library) != {
+                "total", "rows", "rows_sha256", "survivor_rows_sha256",
+                "target_rows", "target_parent_states",
+            }
             or type(library.get("total")) is not int or library["total"] < len(expected_present_ids)
             or library.get("target_rows") != expected_target_rows
+            or library.get("target_parent_states") != [
+                {"id": attachment_id, "state": "unattached", "attach_control_exact": True}
+                for attachment_id in expected_present_ids
+            ]
             or not re.fullmatch(r"[0-9a-f]{64}", str(library.get("rows_sha256") or ""))
             or not re.fullmatch(r"[0-9a-f]{64}", str(library.get("survivor_rows_sha256") or ""))):
         raise CleanupError("REFUSED: correction eligibility Media Library state is not exact.")
@@ -833,9 +856,14 @@ def assert_correction_eligible(state: dict[str, Any],
                 "post_id": str(attachment_id),
                 "post_type": "attachment",
                 "original_post_status": "inherit",
-                "post_parent": "0",
+                "uploaded_to_box": "absent",
             },
-            "identity_route": "canonical_attachment_edit_dom_only",
+            "library_parent_state": {
+                "id": attachment_id,
+                "state": "unattached",
+                "attach_control_exact": True,
+            },
+            "identity_route": "canonical_attachment_edit_dom_plus_complete_library_parent",
             "source_provenance": "immutable_locked_upload_result",
             "registered_urls": [spec["source_url"]],
             "delete_control_exact": True,
@@ -929,6 +957,66 @@ class CleanupAdmin:
         snapshot = self._reader.enumerate_library()
         if not isinstance(snapshot, dict):
             raise CleanupError("REFUSED: Media Library reader returned a malformed snapshot.")
+        rows = snapshot.get("rows")
+        pages = snapshot.get("pages")
+        if (snapshot.get("complete") is not True or not isinstance(rows, list)
+                or type(pages) is not int or not 1 <= pages <= media_base.MAX_LIBRARY_PAGES):
+            raise CleanupError("REFUSED: Media Library parent proof cannot use an incomplete walk.")
+        present_ids = tuple(
+            attachment_id for attachment_id in TARGET_IDS
+            if any(isinstance(row, dict) and row.get("id") == attachment_id for row in rows)
+        )
+        found: dict[int, dict[str, Any]] = {}
+        for page_number in range(1, pages + 1):
+            self._reader._goto(media_base.library_page_url(page_number))
+            for attachment_id in present_ids:
+                matches = self._page.query_selector_all(
+                    f"{media_base.LIST_ROW_SELECTOR}#post-{attachment_id}"
+                )
+                if len(matches) > 1 or (matches and attachment_id in found):
+                    raise CleanupError(
+                        "REFUSED: fixed Media Library row identity is duplicated."
+                    )
+                if not matches:
+                    continue
+                cells = matches[0].query_selector_all("td.parent.column-parent")
+                if len(cells) != 1:
+                    raise CleanupError(
+                        "REFUSED: fixed Media Library Uploaded-to cell is unavailable."
+                    )
+                cell = cells[0]
+                links = cell.query_selector_all("a[href]")
+                controls = cell.query_selector_all(
+                    'a[href="#the-list"].hide-if-no-js.aria-button-if-js'
+                )
+                text = " ".join(str(cell.inner_text() or "").casefold().split())
+                control_text = (
+                    " ".join(str(controls[0].inner_text() or "").casefold().split())
+                    if len(controls) == 1 else ""
+                )
+                onclick = (
+                    " ".join(str(controls[0].get_attribute("onclick") or "").split())
+                    if len(controls) == 1 else ""
+                )
+                expected_onclick = (
+                    f"findPosts.open( 'media[]', '{attachment_id}' ); return false;"
+                )
+                if (text != "(unattached) attach" or len(links) != 1
+                        or len(controls) != 1 or control_text != "attach"
+                        or onclick != expected_onclick):
+                    raise CleanupError(
+                        "REFUSED: fixed Media Library row is not exactly unattached."
+                    )
+                found[attachment_id] = {
+                    "id": attachment_id,
+                    "state": "unattached",
+                    "attach_control_exact": True,
+                }
+        if tuple(found) != present_ids:
+            raise CleanupError(
+                "REFUSED: complete Media Library walk did not prove every fixed parent state."
+            )
+        snapshot["target_parent_states"] = [found[attachment_id] for attachment_id in present_ids]
         snapshot["sanitized_row_link_diagnostic"] = diagnostic
         return snapshot
 
@@ -968,35 +1056,74 @@ class CleanupAdmin:
         forms = self._page.query_selector_all("form#post")
         if len(forms) != 1:
             raise CleanupError("REFUSED: exact attachment edit form is unavailable.")
-        values: dict[str, str] = {}
-        for key, selector in (
+        required = (
             ("post_id", 'input#post_ID[name="post_ID"][type="hidden"]'),
             ("post_type", 'input#post_type[name="post_type"][type="hidden"]'),
             ("original_post_status",
              'input#original_post_status[name="original_post_status"][type="hidden"]'),
-            ("post_parent", 'input#post_parent[name="post_parent"][type="hidden"]'),
-        ):
-            elements = self._page.query_selector_all(selector)
-            if len(elements) != 1:
-                raise CleanupError("REFUSED: exact attachment edit identity fields are unavailable.")
-            values[key] = str(elements[0].input_value() or "")
+        )
+        matched = {
+            key: self._page.query_selector_all(selector)
+            for key, selector in required
+        }
+        if any(len(elements) != 1 for elements in matched.values()):
+            inputs = self._page.query_selector_all("form#post input")
+            shapes = sorted((
+                {
+                    "id": str(element.get_attribute("id") or "")[:80],
+                    "name": str(element.get_attribute("name") or "")[:80],
+                    "type": str(element.get_attribute("type") or "")[:32].casefold(),
+                }
+                for element in inputs[:100]
+            ), key=canonical)
+            diagnostic = {
+                "required_counts": {
+                    key: len(matched[key]) for key, _selector in required
+                },
+                "form_input_count": len(inputs),
+                "form_input_shapes": shapes,
+                "shape_limit": 100,
+                "values_retained": False,
+            }
+            raise CleanupError(
+                "REFUSED: exact attachment edit identity fields are unavailable; "
+                "sanitized no-value diagnostic=" + canonical(diagnostic)
+            )
+        values = {
+            key: str(matched[key][0].input_value() or "")
+            for key, _selector in required
+        }
         if (values["post_id"] != str(attachment_id)
                 or values["post_type"] != "attachment"
-                or values["original_post_status"] != "inherit"
-                or values["post_parent"] != "0"):
+                or values["original_post_status"] != "inherit"):
             raise CleanupError("REFUSED: fixed attachment edit identity changed.")
-        return values
+        # WordPress 7.0.3 renders `.misc-pub-uploadedto` only when
+        # get_post(post_parent) resolves to a live parent. The complete Media
+        # Library walk independently proves the canonical `(Unattached) Attach`
+        # parent-column state. No nonexistent `post_parent` hidden input is
+        # invented by this tool.
+        if self._page.query_selector_all(".misc-pub-uploadedto"):
+            raise CleanupError("REFUSED: fixed attachment edit page reports a live parent.")
+        return {**values, "uploaded_to_box": "absent"}
 
-    def _edit_dom_projection(self, attachment_id: int) -> dict[str, Any]:
+    def _edit_dom_projection(self, attachment_id: int, *,
+                             library_parent_state: dict[str, Any]) -> dict[str, Any]:
         """Project only fields already rendered on the fixed attachment edit page.
 
         This intentionally does not call any model, REST, asynchronous admin,
         or page-supplied URL reader. The predecessor failed specifically at
         that metadata-fetch boundary. Identity comes from the exact canonical edit
         route, the attachment URL/name/type boxes, hidden post identity fields,
-        and the single allowlisted permanent-delete control.
+        the complete Media Library parent row, and the single allowlisted
+        permanent-delete control.
         """
         spec = target_spec(attachment_id)
+        if library_parent_state != {
+            "id": attachment_id,
+            "state": "unattached",
+            "attach_control_exact": True,
+        }:
+            raise CleanupError("REFUSED: fixed attachment parent proof is not exact.")
         identity = self.read_attachment(
             attachment_id, expected_basename=spec["filename"]
         )
@@ -1029,14 +1156,18 @@ class CleanupAdmin:
             "filename": spec["filename"],
             "source_url": spec["source_url"],
             "edit_identity": edit_identity,
-            "identity_route": "canonical_attachment_edit_dom_only",
+            "library_parent_state": library_parent_state,
+            "identity_route": "canonical_attachment_edit_dom_plus_complete_library_parent",
             "source_provenance": "immutable_locked_upload_result",
             "registered_urls": [spec["source_url"]],
             "delete_control_exact": True,
         }
 
-    def read_target(self, attachment_id: int) -> dict[str, Any]:
-        return self._edit_dom_projection(attachment_id)
+    def read_target(self, attachment_id: int, *,
+                    library_parent_state: dict[str, Any]) -> dict[str, Any]:
+        return self._edit_dom_projection(
+            attachment_id, library_parent_state=library_parent_state
+        )
 
     def delete_one(self, attachment_id: int, on_write_attempt: Any, *,
                    eligibility_state: dict[str, Any],
@@ -1044,7 +1175,13 @@ class CleanupAdmin:
         assert_correction_eligible(eligibility_state, expected_present_ids)
         if not expected_present_ids or attachment_id != expected_present_ids[0]:
             raise CleanupError("REFUSED: delete adapter target is not the next fixed eligible record.")
-        before = self.read_target(attachment_id)
+        parent_by_id = {
+            row["id"]: row
+            for row in eligibility_state["library"]["target_parent_states"]
+        }
+        before = self.read_target(
+            attachment_id, library_parent_state=parent_by_id[attachment_id]
+        )
         expected_before = eligibility_state["attachments"][0]
         if before != expected_before:
             raise CleanupError("REFUSED: fixed attachment changed after eligibility proof.")
@@ -1124,7 +1261,13 @@ def collect_before(admin: CleanupAdmin, vault: dict[str, Any]) -> dict[str, Any]
     )
     library_raw = admin.enumerate_library()
     library = library_projection(library_raw)
-    identities = [admin.read_target(attachment_id) for attachment_id in TARGET_IDS]
+    parent_by_id = {row["id"]: row for row in library["target_parent_states"]}
+    identities = [
+        admin.read_target(
+            attachment_id, library_parent_state=parent_by_id[attachment_id]
+        )
+        for attachment_id in TARGET_IDS
+    ]
     products = product_projection(vault)
     public = public_evidence(identities)
     state = {
@@ -1375,7 +1518,13 @@ def verify_after_step(admin: CleanupAdmin, vault: dict[str, Any], plan: dict[str
     if products != plan["before"]["products"]:
         raise IndeterminateError("A WooCommerce product or variation reference changed during cleanup.")
     before_by_id = {row["attachment_id"]: row for row in plan["before"]["attachments"]}
-    remaining_rows = [admin.read_target(attachment_id) for attachment_id in remaining]
+    parent_by_id = {row["id"]: row for row in library["target_parent_states"]}
+    remaining_rows = [
+        admin.read_target(
+            attachment_id, library_parent_state=parent_by_id[attachment_id]
+        )
+        for attachment_id in remaining
+    ]
     if remaining_rows != [before_by_id[attachment_id] for attachment_id in remaining]:
         raise IndeterminateError("An untouched fixed attachment changed during cleanup.")
     all_fixed_urls = [row["source_url"] for row in TARGETS]
