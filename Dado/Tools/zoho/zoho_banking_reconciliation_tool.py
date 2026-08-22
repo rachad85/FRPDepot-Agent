@@ -44,6 +44,16 @@ from urllib.request import Request, urlopen
 
 import zoho_tool
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). Bank
+# reconciliation is MONEY work: the two-step stays -- stage, then Rachad's own
+# unambiguous go to THAT plan, sent AFTER the plan was written. Exact APPROVED
+# is no longer REQUIRED ("yes go ahead" to the shown plan counts); the
+# plan-before-approval timestamp check runs whenever the message time is
+# stated; a failed commit is reported and re-staged (no silent retry, no
+# permanent lock). Appended so the common folder never shadows the stdlib.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Zoho Banking Reconciliation Tool"
 SCHEMA_VERSION = 1
 ROOT = Path(r"C:\FRPDepot")
@@ -418,12 +428,22 @@ def require_source_status(action: str, status: str) -> None:
         )
 
 
-def require_rachad_approval(approval: Any) -> None:
-    if approval != APPROVAL_WORD:
-        raise BankingToolError(
-            "Rachad must answer this exact staged plan with the case-sensitive one-word "
-            "approval APPROVED. Staging is not approval, and Dado cannot supply it."
+def require_rachad_approval(approval: Any, plan: dict[str, Any], *,
+                            lane: Any = None, sent_utc: Any = None) -> owner_authority.OwnerGo:
+    """Rachad's own unambiguous go to THIS plan, sent after it was written (A3).
+
+    Staging is not approval, and Dado cannot supply it. Until 2026-08-21 only
+    the case-sensitive string APPROVED passed; it still does. The plan is
+    mandatory and ``sent_utc`` (--approval-message-utc) must be given: a money
+    check never falls back to the reversible rule.
+    """
+    try:
+        return owner_authority.require_owner_go_after_plan(
+            approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=sent_utc, lane=lane, what="this banking plan",
         )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise BankingToolError(str(exc)) from exc
 
 
 def parse_time(value: Any, label: str) -> datetime:
@@ -2177,8 +2197,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise BankingToolError("This banking plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(BankingToolError, owner_authority.read_json_if_exists(path),
+                                      what="banking plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -2680,14 +2703,15 @@ def verify_readback(plan: dict[str, Any], current: dict[str, Any]) -> dict[str, 
 def command_commit(args: argparse.Namespace, expected_action: str) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path, expected_action)
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(
+        args.approval, plan, lane=getattr(args, "approval_lane", None),
+        sent_utc=getattr(args, "approval_message_utc", None),
+    )
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": expected_action,
-        "status": "reserved_before_network_write",
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=expected_action, go=go,
+        reserved="before_network_write", started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     post_result: dict[str, Any] | None = None
     try:
@@ -2786,44 +2810,39 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
             verified = verify_readback(plan, readback)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        record = {
-            "plan_sha256": plan["sha256"],
-            "action": expected_action,
-            "status": status,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        }
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        extra: dict[str, Any] = {"write_attempted": write_attempted}
         # An indeterminate that Zoho ACCEPTED is a different reconcile from one it
         # rejected, so say which - and name the record it created when it can be
         # read, because that ID is what a live reconcile has to look for.
         if post_result is not None:
-            record["zoho_accepted_the_write"] = True
+            extra["zoho_accepted_the_write"] = True
             resulting_id = categorized_result_id(post_result)
             if resulting_id:
-                record["resulting_transaction_id"] = resulting_id
-        write_lock(lock, record)
+                extra["resulting_transaction_id"] = resulting_id
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=expected_action, go=go, reason=str(exc), **extra,
+        ))
         zoho_tool.append_receipt(
-            "zoho_banking_commit_failed_permanently_locked",
+            "zoho_banking_commit_failed_needs_restage",
             f"action={expected_action}; status={status}; plan={plan_path}; sha256={plan['sha256']}",
         )
         raise BankingToolError(
-            f"Banking {expected_action} commit is {status} and permanently locked against replay. "
-            "Reconcile live Zoho state before staging another plan: " + str(exc)
+            owner_authority.explain_outcome(
+                f"Banking {expected_action} commit", status,
+                "Reconcile live Zoho state before staging another plan: " + str(exc), money=True,
+            )
         ) from exc
-    success = {
-        "plan_sha256": plan["sha256"],
-        "action": expected_action,
-        "status": "committed_verified",
+    success_extra: dict[str, Any] = {
         "source_transaction_id": plan["source_snapshot"]["requested_id"],
         "verified_status": verified["status"],
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
     }
     if "resulting_transaction_id" in verified:
-        success["resulting_transaction_id"] = verified["resulting_transaction_id"]
-    write_lock(lock, success)
+        success_extra["resulting_transaction_id"] = verified["resulting_transaction_id"]
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=expected_action, go=go,
+        **success_extra,
+    ))
     zoho_tool.append_receipt(
         "zoho_banking_reconciliation_committed_verified",
         f"action={expected_action}; transaction_id={plan['source_snapshot']['requested_id']}; "
@@ -2836,6 +2855,8 @@ def command_commit(args: argparse.Namespace, expected_action: str) -> None:
         "verified_status": verified["status"],
         "plan_sha256": plan["sha256"],
         "replay_locked": True,
+        "plan_spent": True,
+        "approval_message_utc": go.sent_utc or "not stated",
     }, ensure_ascii=False, indent=2))
 
 
@@ -2855,7 +2876,7 @@ def build_parser() -> argparse.ArgumentParser:
         stage.set_defaults(func=lambda args, selected=action: command_stage(args, selected))
         commit = commands.add_parser(f"commit-{cli_action}")
         commit.add_argument("--plan", required=True)
-        commit.add_argument("--approval", required=True)
+        owner_authority.add_owner_go_arguments(commit, money=True)
         commit.set_defaults(func=lambda args, selected=action: command_commit(args, selected))
     return parser
 

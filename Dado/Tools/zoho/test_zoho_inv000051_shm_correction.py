@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from datetime import timedelta
 import inspect
 import json
 from pathlib import Path
@@ -619,7 +620,7 @@ class ShmCustomerFixedRecordTests(ShmCustomerTestCase):
         dests = sorted(
             option.dest for option in action._actions if option.dest not in ("help", "func")
         )
-        self.assertEqual(dests, ["approval", "plan"])
+        self.assertEqual(dests, ["approval", "approval_lane", "plan"])
 
 
 class ShmCustomerSourceTests(ShmCustomerTestCase):
@@ -902,19 +903,20 @@ class ShmCustomerApprovalTests(ShmCustomerTestCase):
         self.assertIn("/books/v3/contacts?", url)
         self.assertEqual(body, draft.SHM_CUSTOMER_PAYLOAD)
 
-    def test_a_wrong_word_never_reaches_the_network(self):
+    def test_a_conditional_word_never_reaches_the_network(self):
+        """2026-08-21 (A1): "yes" / "OK" now count for this reversible create; a
+        condition, a question, a hold or a blank never reaches the network."""
         path = self.stage()
-        for word in ("approve", "yes", "APPROVE", "OK"):
+        for word in ("approve but wait", "yes?", "hold", "not yet", ""):
             with self.assertRaises(draft.DraftToolError):
                 self.commit(path, approval=word)
             self.assertEqual(self.writes, [])
 
-    def test_a_padded_or_lowercase_approval_is_refused(self):
-        path = self.stage()
-        for word in (" APPROVED", "APPROVED ", "approved", "Approved", "APPROVED\n"):
-            with self.assertRaises(draft.DraftToolError):
-                self.commit(path, approval=word)
-            self.assertEqual(self.writes, [])
+    def test_a_padded_or_lowercase_approval_is_his_clear_go(self):
+        for word in (" APPROVED", "APPROVED ", "approved", "Approved", "yes go ahead"):
+            self.assertEqual(draft.require_exact_approval(word).kind, "reversible")
+        with self.assertRaises(draft.DraftToolError):
+            draft.require_exact_approval("yes", "relay")
 
     def test_a_missing_create_scope_refuses_before_the_write(self):
         path = self.stage()
@@ -960,7 +962,7 @@ class ShmCustomerCommitTests(ShmCustomerTestCase):
         with self.assertRaises(draft.DraftToolError) as caught:
             self.commit(path)
         self.assertEqual(self.writes, [])
-        self.assertIn("already entered commit", str(caught.exception))
+        self.assertIn("cannot be replayed", str(caught.exception))
 
     def test_a_transport_failure_locks_the_plan_no_retry(self):
         path = self.stage()
@@ -973,8 +975,8 @@ class ShmCustomerCommitTests(ShmCustomerTestCase):
                 encoding="utf-8"
             )
         )
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertIs(lock["no_retry"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertIs(lock["permanent_lock"], False)
         self.assertIs(lock["write_attempted"], True)
         # And it is never retried.
         with self.assertRaises(draft.DraftToolError):
@@ -992,7 +994,7 @@ class ShmCustomerCommitTests(ShmCustomerTestCase):
                 encoding="utf-8"
             )
         )
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
 
     def test_a_wrong_readback_becomes_indeterminate(self):
         path = self.stage()
@@ -1237,8 +1239,15 @@ class ShmCorrectionTestCase(unittest.TestCase):
         ), patch.object(revision.zoho_tool, "save_vault"), patch.object(
             revision.zoho_tool, "api_get", side_effect=router
         ), patch.object(revision, "urlopen", side_effect=fake_urlopen):
+            # His go is timed one minute AFTER the plan was written (A3/A5:
+            # --approval-message-utc is required on every money commit).
+            created = json.loads(plan_path.read_text(encoding="utf-8"))["created_utc"]
             revision.command_commit_shm_correction(
-                argparse.Namespace(plan=str(plan_path), approval=approval)
+                argparse.Namespace(
+                    plan=str(plan_path), approval=approval,
+                    approval_message_utc=(revision.parse_time(created, "created_utc")
+                                          + timedelta(minutes=1)).isoformat(),
+                )
             )
 
     def lock_for(self, path: Path) -> dict:
@@ -1282,7 +1291,7 @@ class CorrectionFixedTargetTests(ShmCorrectionTestCase):
         commit = parser._actions[1].choices["commit-inv000051-shm-correction"]
         self.assertEqual(
             sorted(a.dest for a in commit._actions if a.dest not in ("help", "func")),
-            ["approval", "plan"],
+            ["approval", "approval_lane", "approval_message_utc", "plan"],
         )
 
 
@@ -1704,19 +1713,25 @@ class CorrectionApprovalTests(ShmCorrectionTestCase):
         self.assertEqual(body["reference_number"], "0000031")
         self.assertEqual([line["tax_id"] for line in body["line_items"]], [HST_ID, HST_ID])
 
-    def test_a_wrong_word_never_reaches_the_network(self):
+    def test_a_conditional_word_never_reaches_the_network(self):
+        """2026-08-21 (A3): "yes" / "confirmed" to the shown plan now count; a
+        condition, a question, a hold or a blank never reaches the network."""
         path = self.stage()
-        for word in ("approve", "yes", "APPROVE", "confirmed"):
+        for word in ("approve but wait", "yes?", "hold", "not yet", ""):
             with self.assertRaises(revision.InvoiceRevisionError):
                 self.commit(path, approval=word)
             self.assertEqual(self.writes, [])
 
-    def test_a_padded_or_lowercase_approval_is_refused(self):
-        path = self.stage()
-        for word in (" APPROVED", "APPROVED ", "approved", "Approved", "APPROVED\t"):
-            with self.assertRaises(revision.InvoiceRevisionError):
-                self.commit(path, approval=word)
-            self.assertEqual(self.writes, [])
+    def test_a_padded_or_lowercase_approval_is_his_go_and_a_word_before_the_plan_is_not(self):
+        plan = {"created_utc": "2026-08-12T10:00:00+00:00", "expires_utc": "2026-08-13T10:00:00+00:00"}
+        after = "2026-08-12T10:01:00+00:00"
+        for word in (" APPROVED", "APPROVED ", "approved", "Approved", "APPROVED\t", "yes go ahead"):
+            self.assertEqual(revision.require_rachad_approval(word, plan, sent_utc=after).kind, "money")
+        # A go with no time is refused: "after the plan" cannot be proven.
+        with self.assertRaisesRegex(revision.InvoiceRevisionError, "--approval-message-utc"):
+            revision.require_rachad_approval("APPROVED", plan)
+        with self.assertRaisesRegex(revision.InvoiceRevisionError, "BEFORE this plan was created"):
+            revision.require_rachad_approval("APPROVED", plan, sent_utc="2026-08-12T09:59:00+00:00")
 
     def test_a_missing_update_scope_refuses_before_the_lock(self):
         path = self.stage()
@@ -1775,7 +1790,7 @@ class CorrectionCommitDriftTests(ShmCorrectionTestCase):
         with self.assertRaises(revision.InvoiceRevisionError) as caught:
             self.commit(path)
         self.assertEqual(self.writes, [])
-        self.assertIn("already entered commit", str(caught.exception))
+        self.assertIn("cannot be replayed", str(caught.exception))
 
     def test_a_timeout_locks_the_plan_no_retry(self):
         path = self.stage()
@@ -1783,8 +1798,8 @@ class CorrectionCommitDriftTests(ShmCorrectionTestCase):
             self.commit(path, write=URLError("timed out"))
         self.assertIn("indeterminate", str(caught.exception))
         lock = self.lock_for(path)
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertIs(lock["no_retry"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertIs(lock["permanent_lock"], False)
         self.assertIs(lock["write_attempted"], True)
 
     def test_an_api_error_locks_the_plan_no_retry(self):
@@ -1793,7 +1808,7 @@ class CorrectionCommitDriftTests(ShmCorrectionTestCase):
         error.read = lambda: b'{"code":1002,"message":"nope"}'
         with self.assertRaises(revision.InvoiceRevisionError):
             self.commit(path, write=error)
-        self.assertIs(self.lock_for(path)["no_retry"], True)
+        self.assertIs(self.lock_for(path)["permanent_lock"], False)
 
 
 class CorrectionReadBackTests(ShmCorrectionTestCase):
@@ -1802,7 +1817,7 @@ class CorrectionReadBackTests(ShmCorrectionTestCase):
         self.commit(path)
         lock = self.lock_for(path)
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
 
     def test_a_wrong_total_after_the_write_is_indeterminate(self):
         path = self.stage()
@@ -1810,19 +1825,19 @@ class CorrectionReadBackTests(ShmCorrectionTestCase):
         with self.assertRaises(revision.InvoiceRevisionError) as caught:
             self.commit(path, after=after)
         self.assertIn("indeterminate", str(caught.exception))
-        self.assertIs(self.lock_for(path)["no_retry"], True)
+        self.assertIs(self.lock_for(path)["permanent_lock"], False)
 
     def test_a_status_change_after_the_write_is_indeterminate(self):
         path = self.stage()
         with self.assertRaises(revision.InvoiceRevisionError):
             self.commit(path, after=corrected_invoice(status="paid"))
-        self.assertEqual(self.lock_for(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_for(path)["status"], "indeterminate_needs_restage")
 
     def test_a_wrong_customer_after_the_write_is_indeterminate(self):
         path = self.stage()
         with self.assertRaises(revision.InvoiceRevisionError):
             self.commit(path, after=corrected_invoice(customer_id=OLD_CUSTOMER_ID))
-        self.assertEqual(self.lock_for(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_for(path)["status"], "indeterminate_needs_restage")
 
     def test_a_wrong_reference_after_the_write_is_indeterminate(self):
         path = self.stage()

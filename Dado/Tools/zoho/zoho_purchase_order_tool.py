@@ -55,6 +55,16 @@ from urllib.request import Request, urlopen
 
 import zoho_tool
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). A
+# purchase order is MONEY work: it keeps the two-step -- stage, then Rachad's
+# own unambiguous go to THAT plan, sent AFTER the plan was written. Exact
+# APPROVED is no longer REQUIRED ("yes go ahead" to the shown plan counts); the
+# plan-before-approval timestamp check runs whenever the message time is
+# stated; a failed commit is reported and re-staged (no silent retry, no
+# permanent lock). Appending keeps the stdlib ahead of the common folder.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Zoho Draft Purchase Order Tool"
 TOOL_VERSION = "1.0.0"
 ROOT = Path(r"C:\FRPDepot")
@@ -71,8 +81,22 @@ APPROVAL_WORD = "APPROVED"
 PURCHASE_ORDER_CREATE_SCOPE = "ZohoBooks.purchaseorders.CREATE"
 # Every scope that would widen this beyond one Draft creation. The tool refuses
 # to run at all while the saved connection holds one of them.
+# *** ZohoBooks.purchaseorders.UPDATE WAS REMOVED FROM THIS LIST 2026-08-21, AND
+# THAT WAS FORCED, NOT PREFERRED. *** Rachad commissioned
+# zoho_j26_403_revision_tool.py that day to append two fixed lines to the
+# already-emailed PO-00010, which needs the UPDATE scope on the ONE shared saved
+# connection. Leaving UPDATE listed here would have made this create-only tool
+# refuse to run at all the moment that grant is made -- a silent, total loss of
+# the draft-PO capability, discovered at the worst possible time. The choice was
+# never "keep both guardrails"; it was "which tool stops working".
+# NOTHING ABOUT THIS TOOL'S OWN CONTAINMENT CHANGED, and the scope list was
+# always the weaker of the two defences: ALLOWED_METHODS holds only GET and
+# POST, CREATE_PATH_RE pins the one create route, require_create_allowed refuses
+# any verb that is not POST by name, and there is no PUT, PATCH or DELETE
+# transport anywhere in this module. This tool still cannot update, delete,
+# void, cancel, submit, approve, receive, bill, pay or mail a purchase order,
+# with or without the scope. Every widening scope below is still refused.
 FORBIDDEN_PURCHASE_ORDER_SCOPES = (
-    "ZohoBooks.purchaseorders.UPDATE",
     "ZohoBooks.purchaseorders.DELETE",
     "ZohoBooks.purchaseorders.ALL",
     "ZohoInventory.purchaseorders.CREATE",
@@ -267,14 +291,22 @@ def parse_plan_time(value: Any, label: str) -> datetime:
     return parsed
 
 
-def require_exact_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding."""
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise PurchaseOrderToolError(
-            f"Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). It must come from "
-            "his own message (Hard Rule 3); staging is not approval and Dado cannot supply it."
+def require_exact_approval(approval: Any, plan: dict[str, Any], *, lane: Any = None,
+                           sent_utc: Any = None) -> owner_authority.OwnerGo:
+    """Rachad's own unambiguous go to THIS plan, sent after it was written (A3).
+
+    Until 2026-08-21 this compared the exact string APPROVED. It must still come
+    from his own message (Hard Rule 3); staging is not approval and Dado cannot
+    supply it. The time of his message (--approval-message-utc) is required and
+    must fall after ``created_utc`` and before ``expires_utc``.
+    """
+    try:
+        return owner_authority.require_owner_go_after_plan(
+            approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=sent_utc, lane=lane, what="this draft purchase-order plan",
         )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise PurchaseOrderToolError(str(exc)) from exc
 
 
 def books_organization_id(vault: dict[str, Any]) -> str:
@@ -1079,10 +1111,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise PurchaseOrderToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(PurchaseOrderToolError, owner_authority.read_json_if_exists(path),
+                                      what="draft purchase-order plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
         handle.flush()
@@ -1611,15 +1644,16 @@ def verify_created(after: Any, evidence: dict[str, Any], label: str, *, full: bo
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan, intent, evidence = load_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_exact_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_exact_approval(
+        args.approval, plan, lane=getattr(args, "approval_lane", None),
+        sent_utc=getattr(args, "approval_message_utc", None),
+    )
     vendor_label = f"{evidence['vendor']['contact_name']} ({evidence['vendor']['vendor_id']})"
     lock = lock_path(plan["sha256"])
     if lock.exists():
-        raise PurchaseOrderToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed. "
-            "No Zoho call was made."
-        )
+        owner_authority.refuse_replay(PurchaseOrderToolError, owner_authority.read_json_if_exists(lock),
+                                      what="draft purchase-order plan")
     try:
         vault = zoho_tool.load_vault()
         require_purchase_order_scopes([str(scope) for scope in vault.get("scopes") or []])
@@ -1660,13 +1694,10 @@ def command_commit(args: argparse.Namespace) -> None:
             "The draft purchase order was refused BEFORE any write and BEFORE the replay lock. "
             f"Vendor: {vendor_label}. No POST was issued and no email was sent. Reason: {exc}"
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": PLAN_KIND,
-        "status": "in_flight",
-        "vendor_id": evidence["vendor"]["vendor_id"],
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=PLAN_KIND, go=go,
+        kind=PLAN_KIND, vendor_id=evidence["vendor"]["vendor_id"], started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     purchaseorder_id = ""
     try:
@@ -1690,39 +1721,31 @@ def command_commit(args: argparse.Namespace) -> None:
             raise PurchaseOrderToolError("Zoho returned no purchase order number.")
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "kind": PLAN_KIND,
-            "status": "indeterminate",
-            "purchaseorder_id": purchaseorder_id,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": True,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=PLAN_KIND, go=go,
+            reason=str(exc), kind=PLAN_KIND, purchaseorder_id=purchaseorder_id,
+            write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            "zoho_draft_purchase_order_indeterminate_no_retry",
+            "zoho_draft_purchase_order_indeterminate_needs_restage",
             f"vendor={vendor_label}; purchaseorder_id={purchaseorder_id or 'unknown'}; "
             f"write_attempted={str(write_attempted).lower()}; plan={plan_path}; "
             f"sha256={plan['sha256']}; email_sent=false",
         )
         raise PurchaseOrderToolError(
-            "The draft purchase order is indeterminate and this plan is permanently locked "
-            f"against retry. Vendor: {vendor_label}. A POST was ISSUED -- the live purchase order "
-            "list is unconfirmed. No email was sent; this tool has no mail transport. Nothing was "
-            f"deleted, voided, cancelled, cleaned up or attempted a second time. Reason: {exc} "
-            "Read the purchase order list in Zoho and reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "The draft purchase order", owner_authority.STATUS_INDETERMINATE,
+                f"Vendor: {vendor_label}. A POST was ISSUED -- the live purchase order list is "
+                "unconfirmed. No email was sent; this tool has no mail transport. Nothing was "
+                f"deleted, voided, cancelled, cleaned up or attempted a second time. Reason: {exc}",
+                money=True,
+            )
+            + " The re-stage's duplicate walk shows whether the draft landed."
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": PLAN_KIND,
-        "status": "committed_verified",
-        "purchaseorder_id": purchaseorder_id,
-        "purchaseorder_number": purchaseorder_number,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=PLAN_KIND, go=go,
+        kind=PLAN_KIND, purchaseorder_id=purchaseorder_id, purchaseorder_number=purchaseorder_number,
+    ))
     zoho_tool.append_receipt(
         "zoho_draft_purchase_order_committed_verified",
         f"vendor={vendor_label}; purchaseorder_id={purchaseorder_id}; "
@@ -1750,6 +1773,8 @@ def command_commit(args: argparse.Namespace) -> None:
         "email_sent": False,
         "atomic": True,
         "replay_locked": True,
+        "plan_spent": True,
+        "approval_message_utc": go.sent_utc or "not stated",
         "plan": str(plan_path),
         "plan_sha256": plan["sha256"],
     }, ensure_ascii=False, indent=2))
@@ -1763,7 +1788,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage_create)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

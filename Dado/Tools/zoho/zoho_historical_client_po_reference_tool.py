@@ -1188,24 +1188,50 @@ def load_plan(path_text: str) -> dict[str, Any]:
     return validate_plan(raw)
 
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). The
+# customer PO reference on an invoice or sales order is a field on a financial
+# record, so this stays MONEY work: stage, then his own unambiguous go to THAT
+# plan, sent after the plan was written. Exact APPROVED is no longer REQUIRED;
+# a failed commit is reported and re-staged; nothing is permanently locked.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
+# This tool records its attempt under ``state`` (commit_started / verified /
+# indeterminate); the shared replay refusal reads ``status``, so map it.
+_STATE_TO_STATUS = {
+    "verified": owner_authority.STATUS_COMMITTED,
+    "indeterminate": owner_authority.STATUS_INDETERMINATE,
+    "commit_started": owner_authority.STATUS_IN_FLIGHT,
+}
+
+
+def refuse_existing_lock(path: Path) -> None:
+    record = owner_authority.read_json_if_exists(path) or {}
+    owner_authority.refuse_replay(
+        ClientPoReferenceError,
+        {"status": _STATE_TO_STATUS.get(str(record.get("state") or ""), str(record.get("state") or ""))},
+        what="client-PO reference plan",
+    )
+
+
 def lock_path(plan: dict[str, Any]) -> Path:
     return LOCK_DIR / f"{plan['sha256']}.json"
 
 
-def acquire_lock(plan: dict[str, Any]) -> Path:
+def acquire_lock(plan: dict[str, Any], go: owner_authority.OwnerGo | None = None) -> Path:
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     path = lock_path(plan)
     record = {
         "plan_sha256": plan["sha256"], "action": ACTION, "record_key": plan["record_key"],
         "record_id": plan["selection"]["record_id"], "number": plan["selection"]["number"],
-        "locked_utc": utc_now().isoformat(), "state": "commit_started",
+        "locked_utc": utc_now().isoformat(), "state": "commit_started", "permanent_lock": False,
+        **(go.as_record() if go is not None else {}),
     }
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise ClientPoReferenceError(
-            "REFUSED: this plan is already commit-locked; no retry is allowed."
-        ) from exc
+    except FileExistsError:
+        refuse_existing_lock(path)
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
@@ -1408,18 +1434,22 @@ def command_stage(args: argparse.Namespace) -> None:
 
 
 def command_commit(args: argparse.Namespace) -> None:
-    if args.approval != APPROVAL_WORD:
-        raise ClientPoReferenceError(
-            "REFUSED: approval must be exactly unpadded uppercase APPROVED."
-        )
     plan = load_plan(args.plan)
+    # His go is checked before the vault and the network (A3): his own
+    # unambiguous go to THIS plan, after it was written (the message time is required).
+    try:
+        go = owner_authority.require_owner_go_after_plan(
+            args.approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=getattr(args, "approval_message_utc", None), lane=getattr(args, "approval_lane", None),
+            what="this client-PO reference plan",
+        )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise ClientPoReferenceError(str(exc)) from exc
     if utc_now() > parse_utc(plan["expires_utc"], "expires_utc"):
         raise ClientPoReferenceError("REFUSED: staged plan expired; stage a fresh read-only plan.")
     record = select_record(plan["record_key"])
     if lock_path(plan).exists():
-        raise ClientPoReferenceError(
-            "REFUSED: this plan is already commit-locked; no retry is allowed."
-        )
+        refuse_existing_lock(lock_path(plan))
     verify_source_files()
 
     vault = require_scopes_before_lock(record)
@@ -1450,7 +1480,7 @@ def command_commit(args: argparse.Namespace) -> None:
 
     zoho_tool.save_vault(vault)
     target = target_of(record)
-    lock = acquire_lock(plan)
+    lock = acquire_lock(plan, go)
     wrote = False
     try:
         perform_put(token, domain, organization_id, record, plan["payload"])
@@ -1520,10 +1550,11 @@ def command_commit(args: argparse.Namespace) -> None:
         update_lock(lock, "indeterminate", {
             "error": str(exc), "record_key": record["record_key"],
             "record_id": record["record_id"], "number": record["number"],
-            "write_attempted": wrote, "no_retry": True, "emails_sent": 0,
-            "guidance": (
-                "Reconcile with fresh read-only Zoho reads only. This plan is permanently "
-                "locked; nothing here retries, rolls back or cleans up."
+            "write_attempted": wrote, "permanent_lock": False, "emails_sent": 0,
+            "guidance": owner_authority.explain_outcome(
+                "The client-PO reference write", owner_authority.STATUS_INDETERMINATE,
+                "Reconcile with fresh read-only Zoho reads only; nothing here retries, rolls back "
+                "or cleans up.", money=True,
             ),
         })
         raise
@@ -1539,7 +1570,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit", help="Commit ONE immutable staged plan exactly once.")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

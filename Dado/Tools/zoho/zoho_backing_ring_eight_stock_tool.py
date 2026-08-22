@@ -519,18 +519,45 @@ def load_plan(path_text: str) -> dict[str, Any]:
     return validate_plan(plan)
 
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). An
+# Inventory Adjustment is a financial record, so this stays MONEY work: stage,
+# then his own unambiguous go to THAT plan, sent after the plan was written.
+# Exact APPROVED is no longer REQUIRED; a failed commit is reported and
+# re-staged; nothing is permanently locked. The approved plan of 2026-08-11 is
+# spent and stays spent; its on-disk lock is the record the valuation
+# correction tool reads and is not rewritten.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
+_STATE_TO_STATUS = {
+    "verified": owner_authority.STATUS_COMMITTED,
+    "indeterminate": owner_authority.STATUS_INDETERMINATE,
+    "commit_started": owner_authority.STATUS_IN_FLIGHT,
+}
+
+
+def refuse_existing_lock(path: Path) -> None:
+    record = owner_authority.read_json_if_exists(path) or {}
+    state = str(record.get("state") or "")
+    owner_authority.refuse_replay(EightBackingRingStockError, {"status": _STATE_TO_STATUS.get(state, state)},
+                                  what="eight-item backing-ring plan")
+
+
 def lock_path(plan: dict[str, Any]) -> Path:
     return LOCK_DIR / f"{plan['sha256']}.json"
 
 
-def acquire_lock(plan: dict[str, Any]) -> Path:
+def acquire_lock(plan: dict[str, Any], go: owner_authority.OwnerGo | None = None) -> Path:
     LOCK_DIR.mkdir(parents=True, exist_ok=True)
     path = lock_path(plan)
-    record = {"plan_sha256": plan["sha256"], "action": ACTION, "locked_utc": utc_now().isoformat(), "state": "commit_started"}
+    record = {"plan_sha256": plan["sha256"], "action": ACTION, "locked_utc": utc_now().isoformat(),
+              "state": "commit_started", "permanent_lock": False,
+              **(go.as_record() if go is not None else {})}
     try:
         descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise EightBackingRingStockError("REFUSED: this plan is already commit-locked; no retry is allowed.") from exc
+    except FileExistsError:
+        refuse_existing_lock(path)
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
         json.dump(record, handle, ensure_ascii=False, indent=2)
         handle.write("\n")
@@ -562,11 +589,11 @@ def request_result(request: Request) -> dict[str, Any]:
             result = json.loads(response.read().decode("utf-8"))
     except HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
-        raise EightBackingRingStockError(f"Zoho write failed with HTTP {exc.code}: {detail}; plan is permanently locked.") from exc
+        raise EightBackingRingStockError(f"Zoho write failed with HTTP {exc.code}: {detail}; this plan needs re-stage.") from exc
     except (URLError, TimeoutError, OSError, json.JSONDecodeError) as exc:
-        raise EightBackingRingStockError(f"Zoho write result is indeterminate: {exc}; plan is permanently locked.") from exc
+        raise EightBackingRingStockError(f"Zoho write result is indeterminate: {exc}; this plan needs re-stage.") from exc
     if result.get("code") not in (None, 0):
-        raise EightBackingRingStockError(f"Zoho write failed: {result.get('message') or result.get('code')}; plan is permanently locked.")
+        raise EightBackingRingStockError(f"Zoho write failed: {result.get('message') or result.get('code')}; this plan needs re-stage.")
     return result
 
 
@@ -695,13 +722,21 @@ def command_stage(_: argparse.Namespace) -> None:
 
 
 def command_commit(args: argparse.Namespace) -> None:
-    if args.approval != APPROVAL_WORD:
-        raise EightBackingRingStockError("REFUSED: approval must be exactly unpadded uppercase APPROVED.")
     plan = load_plan(args.plan)
+    # His go is checked before the vault and the network (A3): his own
+    # unambiguous go to THIS plan, after it was written (the message time is required).
+    try:
+        go = owner_authority.require_owner_go_after_plan(
+            args.approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=getattr(args, "approval_message_utc", None), lane=getattr(args, "approval_lane", None),
+            what="this eight-item backing-ring stock plan",
+        )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise EightBackingRingStockError(str(exc)) from exc
     if utc_now() > parse_utc(plan["expires_utc"], "expires_utc"):
         raise EightBackingRingStockError("REFUSED: staged plan expired; stage a fresh read-only plan.")
     if lock_path(plan).exists():
-        raise EightBackingRingStockError("REFUSED: this plan is already commit-locked; no retry is allowed.")
+        refuse_existing_lock(lock_path(plan))
     vault = require_scope_before_lock()
     token, vault = zoho_tool.refresh_access_token(vault)
     domain = str(vault.get("api_domain") or "")
@@ -718,7 +753,7 @@ def command_commit(args: argparse.Namespace) -> None:
         if stock_projection(item) != evidence["stock_before"] or protected_item(item) != evidence["protected_item"]:
             raise EightBackingRingStockError("REFUSED BEFORE LOCK: item state changed since staging; stage a fresh plan.")
     zoho_tool.save_vault(vault)
-    lock = acquire_lock(plan)
+    lock = acquire_lock(plan, go)
     adjustment_id = ""
     try:
         result = perform_create(token, domain, organization_id, plan["payload"])
@@ -733,7 +768,14 @@ def command_commit(args: argparse.Namespace) -> None:
         zoho_tool.append_receipt("zoho_eight_backing_ring_stock_verified", str(lock))
         print(json.dumps({"status": "COMMITTED AND VERIFIED", "details": details, "lock": str(lock)}, ensure_ascii=False, indent=2))
     except Exception as exc:
-        update_lock(lock, "indeterminate", {"error": str(exc), "inventory_adjustment_id": adjustment_id or None, "no_retry": True})
+        update_lock(lock, "indeterminate", {
+            "error": str(exc), "inventory_adjustment_id": adjustment_id or None, "permanent_lock": False,
+            "guidance": owner_authority.explain_outcome(
+                "The eight-item stock load", owner_authority.STATUS_INDETERMINATE,
+                "Reconcile with fresh read-only Zoho reads; the re-stage's reference check refuses a "
+                "second adjustment if the first one landed.", money=True,
+            ),
+        })
         raise
 
 
@@ -744,7 +786,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = sub.add_parser("commit", help="Commit one immutable staged plan once.")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

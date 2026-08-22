@@ -272,9 +272,15 @@ class RepairCase(unittest.TestCase):
         return fresh[0]
 
     def commit(self, plan: Path, approval: str = "APPROVED") -> str:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+        after = (tool.parse_utc(created, "created_utc") + timedelta(minutes=1)).isoformat()
         output = io.StringIO()
         with mock.patch("sys.stdout", output):
-            tool.command_commit(argparse.Namespace(plan=str(plan), approval=approval))
+            tool.command_commit(
+                argparse.Namespace(plan=str(plan), approval=approval, approval_message_utc=after)
+            )
         return output.getvalue()
 
     def rewrite(self, path: Path, mutate) -> Path:
@@ -740,18 +746,35 @@ class TestCommit(TestStaging):
         commit_options = {
             option for action in subs[0].choices["commit"]._actions for option in action.option_strings
         }
-        self.assertEqual(commit_options, {"-h", "--help", "--plan", "--approval"})
+        self.assertEqual(commit_options, {"-h", "--help", "--plan", "--approval",
+                                          "--approval-lane", "--approval-message-utc"})
         plan = tool.load_plan(str(self.stage()))
         self.assertEqual(plan["selection"]["record_id"], "96274000000317001")
         self.assertIsInstance(plan["selection"]["record_id"], str)
 
-    def test_approval_must_be_byte_exact_before_any_vault_or_network_use(self):
+    def test_approval_must_be_his_unambiguous_go_before_any_vault_or_network_use(self):
+        """2026-08-21 (A3): exact APPROVED is no longer REQUIRED, but a condition,
+        a question, a blank or a word sent before the plan existed still refuses
+        before the vault and the network."""
         plan = self.stage()
         self.load_mock.reset_mock()
-        for bad in ("approved", " APPROVED", "APPROVED ", "APPROVED\n", "Approved", "YES", ""):
+        for bad in ("approved but wait", "hold", "APPROVED?"):
             with self.subTest(bad=bad):
-                with self.assertRaisesRegex(tool.ClientPoReferenceError, "exactly unpadded"):
+                with self.assertRaisesRegex(tool.ClientPoReferenceError, "unambiguous go"):
                     self.commit(plan, bad)
+        for bad in ("APPROVED\nnow", ""):
+            with self.subTest(bad=bad):
+                with self.assertRaises(tool.ClientPoReferenceError):
+                    self.commit(plan, bad)
+        created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+        early = (tool.parse_utc(created, "created_utc") - timedelta(minutes=1)).isoformat()
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "BEFORE this plan was created"):
+            tool.command_commit(argparse.Namespace(plan=str(plan), approval="yes go ahead",
+                                                   approval_message_utc=early))
+        # A go with NO time cannot be shown to have come after the plan: refused,
+        # naming the flag and the plan's creation time.
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "--approval-message-utc"):
+            tool.command_commit(argparse.Namespace(plan=str(plan), approval="yes go ahead"))
         self.load_mock.assert_not_called()
         self.assertEqual(self.write_calls, [])
         self.assertFalse(self.lock_dir.exists())
@@ -860,7 +883,7 @@ class TestCommit(TestStaging):
         plan = self.stage()
         self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
-        with self.assertRaisesRegex(tool.ClientPoReferenceError, "already commit-locked"):
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "cannot be replayed"):
             self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
 
@@ -872,9 +895,11 @@ class TestCommit(TestStaging):
         self.assertEqual(len(self.write_calls), 1)
         record = json.loads(next(self.lock_dir.glob("*.json")).read_text())
         self.assertEqual(record["state"], "indeterminate")
-        self.assertIs(record["details"]["no_retry"], True)
+        self.assertIs(record["details"]["permanent_lock"], False)
+        self.assertIn("re-stage", record["details"]["guidance"].casefold())
         self.write_error = None
-        with self.assertRaisesRegex(tool.ClientPoReferenceError, "already commit-locked"):
+        # The SAME plan is bound to stale live state: refused, no second PUT.
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "Re-stage"):
             self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
 
@@ -931,7 +956,7 @@ class TestCommit(TestStaging):
                 lock = tool.lock_path(json.loads(plan.read_text(encoding="utf-8")))
                 record = json.loads(lock.read_text())
                 self.assertEqual(record["state"], "indeterminate")
-                self.assertIs(record["details"]["no_retry"], True)
+                self.assertIs(record["details"]["permanent_lock"], False)
                 self.assertIs(record["details"]["write_attempted"], True)
 
     def test_dependency_drift_after_write_locks_indeterminate(self):
@@ -958,7 +983,7 @@ class TestCommit(TestStaging):
         self.assertEqual(len(self.write_calls), 1)
         record = json.loads(next(self.lock_dir.glob("*.json")).read_text())
         self.assertEqual(record["state"], "indeterminate")
-        self.assertIs(record["details"]["no_retry"], True)
+        self.assertIs(record["details"]["permanent_lock"], False)
 
     def test_target_present_elsewhere_but_caption_stale_locks_indeterminate(self):
         """The PO appearing somewhere on the page is NOT proof the field moved."""
@@ -1174,14 +1199,15 @@ class TestMutations(TestStaging):
         plan = self.stage()
 
         def tolerant(args):
-            if args.approval.strip().upper() != tool.APPROVAL_WORD:
-                raise tool.ClientPoReferenceError("REFUSED: approval must be exactly unpadded.")
+            if not args.approval.strip().upper().startswith(tool.APPROVAL_WORD):
+                raise tool.ClientPoReferenceError("REFUSED: approval must start with the word.")
             return None
 
-        # The real guard rejects a padded word; a tolerant one would accept it.
-        with self.assertRaisesRegex(tool.ClientPoReferenceError, "exactly unpadded"):
-            self.commit(plan, " APPROVED ")
-        self.assertIsNone(tolerant(argparse.Namespace(approval=" APPROVED ")))
+        # The real guard rejects a CONDITIONAL word; a prefix-tolerant one would
+        # accept it (2026-08-21: padding and case no longer matter, conditions do).
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "unambiguous go"):
+            self.commit(plan, "APPROVED but hold the invoice")
+        self.assertIsNone(tolerant(argparse.Namespace(approval="APPROVED but hold the invoice")))
 
     def test_widened_id_set_is_caught(self):
         widened = tool.WRITABLE_IDS | {"96274000001559012"}
@@ -1227,7 +1253,7 @@ class TestMutations(TestStaging):
         with self.assertRaises(tool.ClientPoReferenceError):
             self.commit(plan)
         self.mutate_after = None
-        with self.assertRaisesRegex(tool.ClientPoReferenceError, "already commit-locked"):
+        with self.assertRaisesRegex(tool.ClientPoReferenceError, "Re-stage"):
             self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
 

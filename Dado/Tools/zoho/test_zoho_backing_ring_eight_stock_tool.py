@@ -164,9 +164,15 @@ class EightStockToolTestCase(unittest.TestCase):
         self.urlopen_mock.side_effect = transport
 
     def commit(self, plan: Path, approval: str = "APPROVED") -> str:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+        after = (tool.parse_utc(created, "created_utc") + timedelta(minutes=1)).isoformat()
         output = io.StringIO()
         with mock.patch("sys.stdout", output):
-            tool.command_commit(argparse.Namespace(plan=str(plan), approval=approval))
+            tool.command_commit(
+                argparse.Namespace(plan=str(plan), approval=approval, approval_message_utc=after)
+            )
         return output.getvalue()
 
 
@@ -256,10 +262,20 @@ class TestCommitSafetyAndVerification(EightStockToolTestCase):
     def test_approval_is_byte_exact_before_vault_or_network(self) -> None:
         plan = self.stage()
         self.load_vault_mock.reset_mock()
-        for bad in ("approved", " APPROVED", "APPROVED ", "yes", ""):
+        for bad in ("approved but wait", "hold on", "APPROVED?", "not yet", ""):
             with self.subTest(bad=bad):
-                with self.assertRaisesRegex(tool.EightBackingRingStockError, "exactly"):
+                with self.assertRaisesRegex(tool.EightBackingRingStockError, "REFUSED"):
                     self.commit(plan, bad)
+        # A3/A5: a go with NO time cannot be shown to have come after the plan,
+        # and a go sent BEFORE the plan existed cannot approve it.
+        with self.assertRaisesRegex(tool.EightBackingRingStockError, "--approval-message-utc"):
+            tool.command_commit(argparse.Namespace(plan=str(plan), approval="yes go ahead"))
+        created = tool.parse_utc(json.loads(plan.read_text(encoding="utf-8"))["created_utc"], "created")
+        with self.assertRaisesRegex(tool.EightBackingRingStockError, "BEFORE this plan was created"):
+            tool.command_commit(argparse.Namespace(
+                plan=str(plan), approval="yes go ahead",
+                approval_message_utc=(created - timedelta(minutes=1)).isoformat(),
+            ))
         self.load_vault_mock.assert_not_called()
         self.urlopen_mock.assert_not_called()
 
@@ -314,7 +330,7 @@ class TestCommitSafetyAndVerification(EightStockToolTestCase):
         lock = next(self.lock_dir.glob("*.json"))
         record = json.loads(lock.read_text(encoding="utf-8"))
         self.assertEqual(record["state"], "indeterminate")
-        self.assertTrue(record["details"]["no_retry"])
+        self.assertFalse(record["details"]["permanent_lock"])
 
     def test_write_failure_locks_and_never_retries(self) -> None:
         self.allow_writes(fail=True)
@@ -328,7 +344,7 @@ class TestCommitSafetyAndVerification(EightStockToolTestCase):
         plan = self.stage()
         self.allow_writes()
         self.commit(plan)
-        with self.assertRaisesRegex(tool.EightBackingRingStockError, "already commit-locked"):
+        with self.assertRaisesRegex(tool.EightBackingRingStockError, "cannot be replayed"):
             self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
 

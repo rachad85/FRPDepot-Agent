@@ -568,9 +568,12 @@ class DeletePlanTests(unittest.TestCase):
 
 
 class DeleteApprovalTests(unittest.TestCase):
-    def test_only_the_byte_exact_word_is_accepted(self) -> None:
+    def test_his_clear_go_is_accepted_and_a_condition_is_not(self) -> None:
+        # 2026-08-21 (A1): the shared detector decides; a condition, a question
+        # or a blank still refuses.
         tool.require_rachad_approval(tool.APPROVAL_WORD)
-        for wrong in ("approved", " APPROVED", "APPROVED ", "APPROVED!", "yes", ""):
+        tool.require_rachad_approval("yes go ahead")
+        for wrong in ("approved but wait", "hold on", "APPROVED?", ""):
             with self.subTest(approval=wrong):
                 with self.assertRaises(tool.EmailTemplateError):
                     tool.require_rachad_approval(wrong)
@@ -581,6 +584,24 @@ class DeleteApprovalTests(unittest.TestCase):
         self.assertLess(
             source.index("require_rachad_approval"), source.index("contained_plan")
         )
+
+    def test_the_delete_is_money_work_and_is_not_a_restore_route(self) -> None:
+        """Reviewer finding, 2026-08-21. The commissioned delete reaches ONE fixed
+        template behind its own gate; nothing in this module may describe it as
+        the way back for a created template (Zoho deletes are walled, Hard Rule
+        3). And as irreversible work its commit needs the time of his message."""
+        self.assertIn("no restore route for a created template", tool.CREATE_RESTORE_DISCLOSURE)
+        self.assertNotIn("commit-delete", tool.CREATE_RESTORE_DISCLOSURE)
+        self.assertNotIn("restore", tool.DELETE_PLAN_FIELDS)
+        source = Path(tool.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("restore route is stage-delete", source)
+        self.assertNotIn("stage-delete / commit-delete for a created template", source)
+        parser = tool.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["commit-delete", "--plan", "x.json", "--approval", "APPROVED"])
+        args = parser.parse_args(["commit-delete", "--plan", "x.json", "--approval", "APPROVED",
+                                  "--approval-message-utc", "2026-08-21T10:01:00+00:00"])
+        self.assertEqual(args.approval_message_utc, "2026-08-21T10:01:00+00:00")
 
 
 if __name__ == "__main__":

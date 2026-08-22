@@ -23,9 +23,22 @@ status, item creation or deletion, invoices, estimates, orders, bills,
 contacts, batch endpoints and WooCommerce are all unreachable and are rejected
 by the input schema, the plan validator, the write transport and the read-back.
 
-Writes are sequential and NOT atomic: each line is an independent PUT. Any
-failed or indeterminate result stops the run immediately and permanently locks
-the whole plan; earlier verified writes remain in Zoho.
+Writes are sequential and NOT atomic: each line is an independent PUT.
+
+AUTONOMY PROGRAMME, 2026-08-21 (Rachad: "Go on all of them"; spec A2/A4/A6).
+Sales rates are REVERSIBLE work, so this tool now follows the shared owner
+authority in ``Dado/Tools/common/owner_authority.py``:
+* his clear go in his own message covers the whole batch -- exact ``APPROVED``
+  still works but any plain "yes" / "go ahead" / "do it" counts;
+* a failed line is recorded and the remaining lines still run; the plan then
+  reads "needs re-stage" and ``<plan>.restage-input.json`` carries only the
+  failed or untouched lines, so only those are re-staged and applied again;
+* before each PUT the live rate is captured beside the plan
+  (``<plan>.live-before.json``) and ``restore --plan`` puts it back;
+* nothing is permanently locked. A committed-and-verified plan is SPENT
+  (one plan, one write), which is correctness, not a lock on failure.
+The 2026-08-10 commission above (scope, SKU prefixes, x 3.6 rule, name+rate
+payload, read-back) is unchanged.
 """
 from __future__ import annotations
 
@@ -46,16 +59,22 @@ from urllib.request import Request, urlopen
 
 import zoho_tool
 
+# Shared owner authority (2026-08-21). Appending keeps the stdlib ahead of it.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Zoho Inventory FNPT Sales Rate Tool"
 SCHEMA_VERSION = 1
 ACTION = "fnpt_sales_rate_update"
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_price_plans"
 PLAN_LIFETIME_HOURS = 24
-# Rachad's ruling: his approval is ONE PLAIN WORD answering the displayed plan.
-# This tool is deliberately stricter than its siblings — the word is compared
-# byte-exact, with no strip() and no case folding.
-APPROVAL_WORD = "APPROVED"
+# Rachad's ruling (2026-07-26): his approval is ONE PLAIN WORD answering the
+# displayed plan, never a checksum. Until 2026-08-21 this tool compared the
+# word byte-exact; the autonomy programme (spec A1) made any clear affirmative
+# in his own message count for this reversible work. APPROVED still works and
+# is still the word the plan names.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 UPDATE_SCOPE = "ZohoInventory.items.UPDATE"
 ITEM_PATH_RE = re.compile(r"^/inventory/v1/items/([1-9][0-9]*)$")
 HEX_64_RE = re.compile(r"^[0-9a-f]{64}$")
@@ -114,10 +133,11 @@ VOLATILE_FIELDS = ("last_modified_time",)
 UNPROTECTED_FIELDS = frozenset(RATE_FAMILY_FIELDS + VOLATILE_FIELDS)
 
 RISK_NOTE = (
-    "NOT ATOMIC. Each line is an independent sequential PUT. A failure or "
-    "indeterminate result stops the run at once and permanently locks the whole "
-    "plan; writes already verified before that point remain in Zoho and the "
-    "remaining lines are left untouched."
+    "NOT ATOMIC. Each line is an independent sequential PUT. A line that fails "
+    "or cannot be verified is recorded and the remaining lines still run; "
+    "verified writes remain in Zoho, the live rate of every written line is "
+    "captured beside the plan for restore, and only the failed or untouched "
+    "lines are re-staged. Nothing stays locked."
 )
 
 
@@ -307,14 +327,17 @@ def validate_input(raw: dict[str, Any]) -> dict[str, Any]:
     return {"target_currency": TARGET_CURRENCY, "lines": clean}
 
 
-def require_rachad_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding."""
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise PriceToolError(
-            "Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). Building "
-            "or staging is not approval, and Dado cannot supply it."
-        )
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this FNPT sales-rate plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1). APPROVED still works.
+
+    Building or staging is not approval, and Dado cannot supply it; the
+    refusal wording and the lane rule live in the shared module.
+    """
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise PriceToolError(str(exc)) from exc
 
 
 def contained_plan(raw_path: Any) -> Path:
@@ -645,8 +668,8 @@ def command_stage(args: argparse.Namespace) -> None:
     print(f"Expires: {plan['expires_utc']} (24-hour maximum)")
     print(f"RISK: {RISK_NOTE}")
     print(
-        f"To commit, Rachad must answer THIS plan with the exact one word {APPROVAL_WORD}. "
-        "Staging is not approval."
+        f"To commit, relay Rachad's own go to THIS plan ({APPROVAL_WORD}, yes, go ahead, "
+        "do it ...) from his message. Staging is not approval."
     )
 
 
@@ -846,21 +869,67 @@ def oauth_rate_write_allowed(
 # --------------------------------------------------------------------------
 
 
+def restage_input_path(plan_path: Path) -> Path:
+    return plan_path.with_name(plan_path.stem + ".restage-input.json")
+
+
+def write_restage_input(plan_path: Path, plan: dict[str, Any], item_ids: list[str]) -> Path:
+    """A6: the stage input for ONLY the failed or untouched lines of this plan."""
+    lines = [line for line in plan["payload"]["lines"] if line["item_id"] in set(item_ids)]
+    path = restage_input_path(plan_path)
+    path.write_text(
+        json.dumps({"target_currency": TARGET_CURRENCY, "lines": lines}, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token, and the network.
-    require_rachad_approval(args.approval)
+    # His go is checked before the lock, the vault, the token, and the network.
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "in_flight",
-        "completed_item_ids": [],
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    if lock.exists():
+        owner_authority.refuse_replay(PriceToolError, owner_authority.read_json_if_exists(lock),
+                                      what="FNPT sales-rate plan")
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        completed=[], started_utc=utc_now().isoformat(),
+    ), exclusive=True)
+    rows = plan["live_evidence"]["items"]
+    progress = owner_authority.BatchProgress([row["item_id"] for row in rows])
     completed: list[dict[str, str]] = []
-    write_in_flight_item_id = ""
+    captured: dict[str, dict[str, Any]] = {}
+    indeterminate: list[str] = []
+    backup = owner_authority.live_state_path(plan_path)
+
+    def finish_needs_restage(reason: str) -> None:
+        status = owner_authority.STATUS_INDETERMINATE if indeterminate else owner_authority.STATUS_NEEDS_RESTAGE
+        summary = progress.summary()
+        restage = write_restage_input(plan_path, plan, summary["restage_only"])
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=ACTION, go=go, reason=reason,
+            completed=completed, failed=progress.failed, pending=progress.pending,
+            indeterminate=indeterminate, backup=str(backup) if captured else None,
+            restage_input=str(restage),
+        ))
+        zoho_tool.append_receipt(
+            f"zoho_inventory_{ACTION}_{status}",
+            f"status={status}; completed={','.join(row['item_id'] for row in completed) or 'none'}; "
+            f"failed={','.join(progress.failed) or 'none'}; pending={','.join(progress.pending) or 'none'}; "
+            f"backup={backup if captured else 'none'}; restage_input={restage}; plan={plan_path}; "
+            f"sha256={plan['sha256']}",
+        )
+        raise PriceToolError(
+            owner_authority.explain_outcome(
+                "FNPT sales-rate commit", status, reason,
+                completed=[row["item_id"] for row in completed] or None,
+                failed=progress.failed or None, pending=progress.pending or None,
+            )
+            + f" Stage input carrying only those lines: {restage}"
+        )
+
     try:
         vault = zoho_tool.load_vault()
         if UPDATE_SCOPE not in (vault.get("scopes") or []):
@@ -873,9 +942,16 @@ def command_commit(args: argparse.Namespace) -> None:
                 "organization recorded in the plan."
             )
         org_id = organization["organization_id"]
-        for evidence in plan["live_evidence"]["items"]:
-            item_id = evidence["item_id"]
-            target = Decimal(evidence["target_rate_cad"])
+    except Exception as exc:
+        # Nothing was written: every line is still pending.
+        finish_needs_restage(str(exc))
+        raise  # unreachable; finish_needs_restage always raises
+
+    for evidence in rows:
+        item_id = evidence["item_id"]
+        target = Decimal(evidence["target_rate_cad"])
+        in_flight = False
+        try:
             # Refresh immediately before this line's non-atomic PUT.
             current = get_item(access_token, vault, item_id)
             if str(current.get("item_id") or "") != item_id:
@@ -884,20 +960,32 @@ def command_commit(args: argparse.Namespace) -> None:
                 raise PriceToolError(f"Item {item_id} SKU changed after review.")
             if money_text(live_rate(current.get("rate"), "live rate")) != evidence["before_rate"]:
                 raise PriceToolError(
-                    f"Item {item_id} sales rate changed after review. No PUT was issued for "
-                    "this item or any later item."
+                    f"Item {item_id} sales rate changed after review. No PUT was issued for this item."
                 )
             if not secrets.compare_digest(
                 digest_for(current), str(evidence["before_state_sha256"])
             ) or current != evidence["before_state"]:
                 raise PriceToolError(
-                    f"Item {item_id} changed after review. No PUT was issued for this item "
-                    "or any later item."
+                    f"Item {item_id} changed after review. No PUT was issued for this item."
                 )
             rate_value = float(target)
             if Decimal(str(rate_value)) != target:
                 raise PriceToolError(f"Item {item_id} target rate is not exactly representable.")
-            write_in_flight_item_id = item_id
+            # A2: keep the live state this line is about to change beside the plan,
+            # BEFORE the PUT, so `restore` can put it back.
+            captured[item_id] = {
+                "item_id": item_id,
+                "sku": evidence["sku"],
+                "name": evidence["name"],
+                "before_rate": evidence["before_rate"],
+                "target_rate_cad": evidence["target_rate_cad"],
+                "before_state": current,
+            }
+            owner_authority.capture_live_state(
+                plan_path, captured, what="Zoho Inventory item sales rate (rate)",
+                where=f"{org_id} /inventory/v1/items", plan_sha256=plan["sha256"],
+            )
+            in_flight = True
             oauth_rate_write_allowed(
                 access_token,
                 str(vault["api_domain"]),
@@ -911,61 +999,32 @@ def command_commit(args: argparse.Namespace) -> None:
                 raise PriceToolError(f"Item {item_id} read-back returned the wrong item.")
             verify_rate_family(verified, evidence["rate_family_before"], target)
             verify_protected_unchanged(verified, evidence)
+            in_flight = False
             completed.append({
                 "item_id": item_id,
                 "sku": evidence["sku"],
                 "before_rate": evidence["before_rate"],
                 "rate": evidence["target_rate_cad"],
             })
-            write_in_flight_item_id = ""
-        zoho_tool.save_vault(vault)
-    except Exception as exc:
-        if write_in_flight_item_id:
-            status = "indeterminate"
-        elif completed:
-            status = "partial_stopped"
-        else:
-            status = "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": ACTION,
-            "status": status,
-            "plan_locked_indeterminate": status != "aborted_before_write",
-            "completed": completed,
-            "write_in_flight_item_id": write_in_flight_item_id,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
-        zoho_tool.append_receipt(
-            f"zoho_inventory_{ACTION}_{status}_no_retry",
-            f"status={status}; completed={','.join(row['item_id'] for row in completed) or 'none'}; "
-            f"write_in_flight={write_in_flight_item_id or 'none'}; plan={plan_path}; "
-            f"sha256={plan['sha256']}",
-        )
-        failed = write_in_flight_item_id or "none (stopped before this line's write)"
-        raise PriceToolError(
-            f"FNPT sales-rate commit is {status} and the whole plan is permanently locked "
-            f"against retry. Failed or indeterminate item: {failed}. "
-            f"Verified writes that remain in Zoho: "
-            f"{[row['item_id'] for row in completed] or 'none'}. "
-            f"Untouched remaining lines: "
-            f"{len(plan['live_evidence']['items']) - len(completed) - (1 if write_in_flight_item_id else 0)}. "
-            f"Reason: {exc} "
-            "Reconcile live Zoho state before staging any new plan."
-        ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "committed_verified",
-        "completed": completed,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+            progress.done(item_id)
+        except Exception as exc:  # noqa: BLE001 - recorded per line, the batch goes on (A6)
+            progress.fail(item_id, str(exc))
+            if in_flight:
+                indeterminate.append(item_id)
+    zoho_tool.save_vault(vault)
+
+    if progress.status != owner_authority.STATUS_COMMITTED:
+        first = next(iter(progress.failed.values()), "a line failed")
+        finish_needs_restage(first)
+
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        completed=completed, backup=str(backup),
+    ))
     zoho_tool.append_receipt(
         f"zoho_inventory_{ACTION}_committed_verified",
-        f"completed={','.join(row['item_id'] for row in completed)}; plan={plan_path}; "
-        f"sha256={plan['sha256']}",
+        f"completed={','.join(row['item_id'] for row in completed)}; backup={backup}; "
+        f"plan={plan_path}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED",
@@ -975,8 +1034,112 @@ def command_commit(args: argparse.Namespace) -> None:
         "multiplier": MULTIPLIER_TEXT,
         "completed": completed,
         "atomic": False,
+        "plan_spent": True,
         "replay_locked": True,
+        "live_state_backup": str(backup),
+        "restore": f"restore --plan {plan_path} --approval <his go>",
     }, ensure_ascii=False, indent=2))
+
+
+def load_plan_for_restore(path: Path) -> dict[str, Any]:
+    """The plan behind a restore: hash, tool and action are checked; expiry is
+    not, because putting a rate back is allowed after the 24-hour plan window."""
+    plan = read_json_object(path, "Plan")
+    saved = str(plan.get("sha256") or "")
+    core = dict(plan)
+    core.pop("sha256", None)
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise PriceToolError("Plan hash check failed. The plan changed after review.")
+    if plan.get("tool") != TOOL_NAME or plan.get("action") != ACTION:
+        raise PriceToolError("Plan tool or action is invalid for a sales-rate restore.")
+    require_origin(plan.get("origin"))
+    return plan
+
+
+def command_restore(args: argparse.Namespace) -> None:
+    """A2: put back the live sales rates captured before this plan's PUTs.
+
+    One PUT per captured line, each only if the item still carries the rate
+    this plan wrote; a rate that moved since is reported and left alone.
+    """
+    plan_path = contained_plan(args.plan)
+    plan = load_plan_for_restore(plan_path)
+    go = require_rachad_approval(
+        args.approval, getattr(args, "approval_lane", None),
+        what="restoring the sales rates this plan changed",
+    )
+    record = owner_authority.load_live_state(plan_path, PriceToolError)
+    if record.get("plan_sha256") != plan["sha256"]:
+        raise PriceToolError("The captured live state belongs to a different plan.")
+    restore_path = owner_authority.restore_record_path(plan_path)
+    if restore_path.exists():
+        raise PriceToolError(
+            f"This plan's rates were already restored ({restore_path.name}); stage a new plan "
+            "for any further change."
+        )
+    vault = zoho_tool.load_vault()
+    if UPDATE_SCOPE not in (vault.get("scopes") or []):
+        raise PriceToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    organization = verified_organization(access_token, vault)
+    if organization != plan["organization"]:
+        raise PriceToolError(
+            "REFUSED: the live FRP Depot Inventory organization does not match the "
+            "organization recorded in the plan."
+        )
+    org_id = organization["organization_id"]
+    restored: list[dict[str, str]] = []
+    skipped: dict[str, str] = {}
+    failed: dict[str, str] = {}
+    for item_id, snapshot in record["state"].items():
+        try:
+            current = get_item(access_token, vault, item_id)
+            if str(current.get("item_id") or "") != item_id:
+                raise PriceToolError(f"Zoho returned the wrong item for {item_id}.")
+            live = money_text(live_rate(current.get("rate"), "live rate"))
+            if live == snapshot["before_rate"]:
+                skipped[item_id] = f"already at the captured rate {live}"
+                continue
+            if live != snapshot["target_rate_cad"]:
+                skipped[item_id] = f"moved since this plan wrote it (live {live}); left alone"
+                continue
+            before = Decimal(snapshot["before_rate"])
+            rate_value = float(before)
+            if Decimal(str(rate_value)) != before:
+                raise PriceToolError(f"Item {item_id} captured rate is not exactly representable.")
+            oauth_rate_write_allowed(
+                access_token, str(vault["api_domain"]), "PUT",
+                f"/inventory/v1/items/{item_id}", org_id,
+                {"name": snapshot["name"], "rate": rate_value},
+            )
+            verified = get_item(access_token, vault, item_id)
+            if money_text(live_rate(verified.get("rate"), "read-back rate")) != snapshot["before_rate"]:
+                raise PriceToolError(f"Item {item_id} read-back rate is not the restored rate.")
+            restored.append({"item_id": item_id, "sku": snapshot["sku"],
+                             "from": snapshot["target_rate_cad"], "to": snapshot["before_rate"]})
+        except Exception as exc:  # noqa: BLE001 - per line, the others still run
+            failed[item_id] = str(exc)[:1000]
+    zoho_tool.save_vault(vault)
+    result = {
+        "status": "RESTORED" if not failed else "RESTORE_PARTIAL",
+        "plan_sha256": plan["sha256"],
+        "restored": restored,
+        "skipped": skipped,
+        "failed": failed,
+        **go.as_record(),
+    }
+    owner_authority.record_restore(plan_path, result)
+    zoho_tool.append_receipt(
+        f"zoho_inventory_{ACTION}_restored",
+        f"restored={','.join(row['item_id'] for row in restored) or 'none'}; "
+        f"skipped={','.join(skipped) or 'none'}; failed={','.join(failed) or 'none'}; "
+        f"backup={owner_authority.live_state_path(plan_path)}; plan={plan_path}; sha256={plan['sha256']}",
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if failed:
+        raise PriceToolError(
+            "Restore did not complete for every line: " + "; ".join(f"{k}: {v}" for k, v in failed.items())
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -987,8 +1150,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.set_defaults(func=command_commit)
+    restore = commands.add_parser("restore", help="put back the live rates captured before this plan's PUTs")
+    restore.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore)
+    restore.set_defaults(func=command_restore)
     return parser
 
 

@@ -483,7 +483,8 @@ class StageCommitTests(unittest.TestCase):
                 change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
             write.assert_called_once()
         lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
     def test_stage_detects_trailing_parent_option_removal(self):
         plan_path, result, live, desired = self._stage_parent_option_removal()
@@ -507,7 +508,7 @@ class StageCommitTests(unittest.TestCase):
                 ))
             write.assert_called_once()
         lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
 
     def test_stage_creates_full_hash_expiring_plan(self):
         plan_path, result = self._stage_update()
@@ -539,10 +540,80 @@ class StageCommitTests(unittest.TestCase):
             change.load_plan(str(plan_path))
 
     def test_wrong_approval_rejected_before_service_access(self):
+        # 2026-08-21 (A1): a plain "yes" now counts; a conditional one, a
+        # question or a blank still refuses before the vault is touched.
         plan_path, _ = self._stage_update()
         with mock.patch.object(change.wc, "load_vault") as load:
-            with self.assertRaises(change.ChangeError):
-                change.command_commit(argparse.Namespace(plan=str(plan_path), approval="yes"))
+            for bad in ("yes but hold the price", "wait", "go ahead?", ""):
+                with self.assertRaises(change.ChangeError):
+                    change.command_commit(argparse.Namespace(plan=str(plan_path), approval=bad))
+            load.assert_not_called()
+
+    def test_a_plain_yes_commits_captures_and_restore_puts_the_values_back(self):
+        plan_path, _ = self._stage_update()
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(self.old, {}), (self.new, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(self.new, {})) as write:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval="yes go ahead"))
+            write.assert_called_once()
+        response = json.loads(output.getvalue())
+        self.assertTrue(response["plan_spent"])
+        backup = Path(response["live_state_backup"])
+        self.assertTrue(backup.is_file())
+        captured = json.loads(backup.read_text(encoding="utf-8"))["state"]
+        self.assertEqual(captured["before"], {"name": self.old["name"]})
+        self.assertEqual(captured["after"], {"name": "New name"})
+        lock = json.loads(change.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
+        self.assertEqual(lock["owner_go"], "yes go ahead")
+        self.assertFalse(lock["permanent_lock"])
+        # Restore: the product still carries the new name, so one PUT puts the old one back.
+        restored_live = {**self.new, "name": self.old["name"]}
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(self.new, {}), (restored_live, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(restored_live, {})) as write:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_restore(argparse.Namespace(plan=str(plan_path), approval="yes put it back"))
+            write.assert_called_once_with("PUT", "/products/7", payload={"name": self.old["name"]},
+                                          vault=self._vault())
+        result = json.loads(output.getvalue())
+        self.assertEqual(result["status"], "RESTORED")
+        with self.assertRaisesRegex(change.ChangeError, "already restored"):
+            change.command_restore(argparse.Namespace(plan=str(plan_path), approval="yes"))
+
+    def test_restore_leaves_a_resource_that_moved_since_alone_and_needs_his_go(self):
+        plan_path, _ = self._stage_update()
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", side_effect=[(self.old, {}), (self.new, {})]), \
+             mock.patch.object(change.wc, "api_request", return_value=(self.new, {})):
+            with contextlib.redirect_stdout(io.StringIO()):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
+        with self.assertRaises(change.ChangeError):
+            change.command_restore(argparse.Namespace(plan=str(plan_path), approval="wait"))
+        moved = {**self.new, "name": "Renamed by someone else"}
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", return_value=(moved, {})), \
+             mock.patch.object(change.wc, "api_request") as write:
+            output = io.StringIO()
+            with contextlib.redirect_stdout(output):
+                change.command_restore(argparse.Namespace(plan=str(plan_path), approval="yes"))
+            write.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())["status"], "NOT_RESTORED")
+
+    def test_a_failed_write_needs_restage_and_the_same_plan_is_refused(self):
+        plan_path, result = self._stage_update()
+        with mock.patch.object(change.wc, "load_vault", return_value=self._vault()), \
+             mock.patch.object(change.wc, "api_get", return_value=(self.old, {})), \
+             mock.patch.object(change.wc, "api_request", side_effect=change.wc.WooError("HTTP 502")):
+            with self.assertRaises(change.ChangeError) as caught:
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
+        self.assertIn("re-stage", str(caught.exception).casefold())
+        self.assertNotIn("permanent", str(caught.exception).casefold())
+        with mock.patch.object(change.wc, "load_vault") as load:
+            with self.assertRaisesRegex(change.ChangeError, "Re-stage"):
+                change.command_commit(argparse.Namespace(plan=str(plan_path), approval=result["approval"]))
             load.assert_not_called()
 
     def test_stale_record_rejected_without_write(self):

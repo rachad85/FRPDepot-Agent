@@ -94,6 +94,17 @@ from urllib.request import Request, urlopen
 
 import zoho_tool
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). Invoice
+# creation and revision are MONEY work: the two-step stays -- stage, then
+# Rachad's own unambiguous go to THAT plan, sent AFTER the plan was written.
+# Exact APPROVED is no longer REQUIRED ("yes go ahead" to the shown plan
+# counts); the plan-before-approval timestamp check needs the time of his
+# message (--approval-message-utc, required); a failed commit is reported and
+# re-staged (no silent retry, no permanent lock). Appended so the common
+# folder never shadows the stdlib.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Zoho Books Invoice Revision and Draft Creation Tool"
 SCHEMA_VERSION = 1
 ACTION = "invoice_revision"
@@ -467,14 +478,22 @@ def parse_time(value: Any, label: str) -> datetime:
     return parsed
 
 
-def require_rachad_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding."""
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise InvoiceRevisionError(
-            "Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). Building "
-            "or staging is not approval, and Dado cannot supply it."
+def require_rachad_approval(approval: Any, plan: dict[str, Any], *,
+                            lane: Any = None, sent_utc: Any = None) -> owner_authority.OwnerGo:
+    """Rachad's own unambiguous go to THIS plan, sent after it was written (A3).
+
+    Building or staging is not approval, and Dado cannot supply it. Until
+    2026-08-21 only the exact string APPROVED passed; it still does. The plan
+    is mandatory and ``sent_utc`` (--approval-message-utc) must be given: a
+    money check never falls back to the reversible rule.
+    """
+    try:
+        return owner_authority.require_owner_go_after_plan(
+            approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=sent_utc, lane=lane, what="this invoice plan",
         )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise InvoiceRevisionError(str(exc)) from exc
 
 
 def origin_record() -> dict[str, str]:
@@ -2666,10 +2685,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise InvoiceRevisionError(
-            "REFUSED: this plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(InvoiceRevisionError, owner_authority.read_json_if_exists(path),
+                                      what="invoice plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -3227,16 +3247,14 @@ def verify_created_invoice(after: dict[str, Any], evidence: dict[str, Any]) -> s
 # ---------------------------------------------------------------------------
 
 
-def commit_create(plan: dict[str, Any], evidence: dict[str, Any], plan_path: Path) -> None:
+def commit_create(plan: dict[str, Any], evidence: dict[str, Any], plan_path: Path,
+                  go: owner_authority.OwnerGo | None = None) -> None:
     payload = plan["payload"]
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": CREATE_ACTION,
-        "status": "in_flight",
-        "customer_id": payload["customer_id"],
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=CREATE_ACTION, go=go,
+        customer_id=payload["customer_id"], started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     invoice_id = ""
     invoice_number = ""
@@ -3317,46 +3335,37 @@ def commit_create(plan: dict[str, Any], evidence: dict[str, Any], plan_path: Pat
         invoice_number = verify_created_invoice(verified, evidence)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": CREATE_ACTION,
-            "status": status,
-            "invoice_id": invoice_id,
-            "plan_locked_indeterminate": write_attempted,
-            "write_attempted": write_attempted,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=CREATE_ACTION, go=go, reason=str(exc),
+            invoice_id=invoice_id, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            f"zoho_books_{CREATE_ACTION}_{status}_no_retry",
+            f"zoho_books_{CREATE_ACTION}_{status}",
             f"status={status}; customer={payload['customer_name']} ({payload['customer_id']}); "
             f"invoice_id={invoice_id or 'unknown'}; write_attempted={str(write_attempted).lower()}; "
             f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
         )
         raise InvoiceRevisionError(
-            f"Draft-invoice creation is {status} and this plan is permanently locked against "
-            f"retry. Customer: {payload['customer_name']} ({payload['customer_id']}). "
-            + (
-                "A POST was ISSUED. New invoice ID: "
-                + (invoice_id or "UNKNOWN -- Zoho did not return one")
-                + ". Its live state is unconfirmed; NOTHING was cleaned up, deleted, voided or "
-                "changed, and nothing will be retried."
-                if write_attempted else "No POST was issued and no invoice exists."
+            owner_authority.explain_outcome(
+                "Draft-invoice creation", status,
+                f"Customer: {payload['customer_name']} ({payload['customer_id']}). "
+                + (
+                    "A POST was ISSUED. New invoice ID: "
+                    + (invoice_id or "UNKNOWN -- Zoho did not return one")
+                    + ". Its live state is unconfirmed; NOTHING was cleaned up, deleted, voided or "
+                    "changed, and nothing is retried silently."
+                    if write_attempted else "No POST was issued and no invoice exists."
+                )
+                + f" No email was sent; this tool has no mail transport. Reason: {exc}",
+                money=True,
             )
-            + f" No email was sent; this tool has no mail transport. Reason: {exc} "
-            "Read the live invoice list in Zoho and reconcile before staging anything new."
+            + " The re-stage reads the live invoice list first and shows whether the draft landed."
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": CREATE_ACTION,
-        "status": "committed_verified",
-        "invoice_id": invoice_id,
-        "invoice_number": invoice_number,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=CREATE_ACTION, go=go,
+        invoice_id=invoice_id, invoice_number=invoice_number,
+    ))
     zoho_tool.append_receipt(
         f"zoho_books_{CREATE_ACTION}_committed_verified",
         f"invoice={invoice_number} ({invoice_id}); status=draft; "
@@ -3380,27 +3389,29 @@ def commit_create(plan: dict[str, Any], evidence: dict[str, Any], plan_path: Pat
         "email_sent": False,
         "atomic": True,
         "replay_locked": True,
+        "plan_spent": True,
+        "approval_message_utc": (go.sent_utc if go is not None else None) or "not stated",
     }, ensure_ascii=False, indent=2))
 
 
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan, evidence = load_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token, and the network.
-    require_rachad_approval(args.approval)
+    # His go is checked before the lock, the vault, the token, and the network.
+    go = require_rachad_approval(
+        args.approval, plan, lane=getattr(args, "approval_lane", None),
+        sent_utc=getattr(args, "approval_message_utc", None),
+    )
     if plan["action"] == CREATE_ACTION:
-        commit_create(plan, evidence, plan_path)
+        commit_create(plan, evidence, plan_path, go)
         return
     invoice_row = evidence["invoice"]
     invoice_id = invoice_row["invoice_id"]
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "in_flight",
-        "invoice_id": invoice_id,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        invoice_id=invoice_id, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     try:
         vault = zoho_tool.load_vault()
@@ -3475,39 +3486,31 @@ def command_commit(args: argparse.Namespace) -> None:
         verify_protected_unchanged(verified, invoice_row, evidence["unprotected_keys"])
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": ACTION,
-            "status": status,
-            "invoice_id": invoice_id,
-            "plan_locked_indeterminate": write_attempted,
-            "write_attempted": write_attempted,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=ACTION, go=go, reason=str(exc),
+            invoice_id=invoice_id, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            f"zoho_books_{ACTION}_{status}_no_retry",
+            f"zoho_books_{ACTION}_{status}",
             f"status={status}; invoice={invoice_row['invoice_number']} ({invoice_id}); "
             f"write_attempted={str(write_attempted).lower()}; plan={plan_path}; "
             f"sha256={plan['sha256']}; email_sent=false",
         )
         raise InvoiceRevisionError(
-            f"Invoice revision is {status} and this plan is permanently locked against retry. "
-            f"Invoice: {invoice_row['invoice_number']} ({invoice_id}). "
-            f"A PUT was {'ISSUED -- the live invoice state is unconfirmed' if write_attempted else 'NOT issued'}. "
-            f"No email was sent; this tool has no mail transport. Reason: {exc} "
-            "Read the live invoice in Zoho and reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "Invoice revision", status,
+                f"Invoice: {invoice_row['invoice_number']} ({invoice_id}). "
+                f"A PUT was {'ISSUED -- the live invoice state is unconfirmed' if write_attempted else 'NOT issued'}. "
+                f"No email was sent; this tool has no mail transport. Reason: {exc}",
+                money=True,
+            )
+            + " The re-stage reads the live invoice first and shows what landed."
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "committed_verified",
-        "invoice_id": invoice_id,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        invoice_id=invoice_id,
+    ))
     zoho_tool.append_receipt(
         f"zoho_books_{ACTION}_committed_verified",
         f"invoice={invoice_row['invoice_number']} ({invoice_id}); plan={plan_path}; "
@@ -3529,6 +3532,8 @@ def command_commit(args: argparse.Namespace) -> None:
         "email_sent": False,
         "atomic": True,
         "replay_locked": True,
+        "plan_spent": True,
+        "approval_message_utc": go.sent_utc or "not stated",
     }, ensure_ascii=False, indent=2))
 
 
@@ -5160,14 +5165,15 @@ def verify_shm_salesorder_unchanged(order: dict[str, Any], evidence: dict[str, A
 def command_commit_shm_correction(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan, evidence = load_shm_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_rachad_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_rachad_approval(
+        args.approval, plan, lane=getattr(args, "approval_lane", None),
+        sent_utc=getattr(args, "approval_message_utc", None),
+    )
     lock = lock_path(plan["sha256"])
     if lock.exists():
-        raise InvoiceRevisionError(
-            "REFUSED: this plan has already entered commit and cannot be replayed. "
-            "No Zoho call was made."
-        )
+        owner_authority.refuse_replay(InvoiceRevisionError, owner_authority.read_json_if_exists(lock),
+                                      what="INV-000051 correction plan")
     customer_id = evidence["customer"]["customer_id"]
     try:
         vault = zoho_tool.load_vault()
@@ -5225,13 +5231,10 @@ def command_commit_shm_correction(args: argparse.Namespace) -> None:
             "The INV-000051 correction was refused BEFORE any write and BEFORE the replay lock. "
             f"No PUT was issued and no email was sent. Reason: {exc}"
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": SHM_ACTION,
-        "status": "in_flight",
-        "invoice_id": SHM_INVOICE_ID,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=SHM_ACTION, go=go,
+        invoice_id=SHM_INVOICE_ID, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     try:
         write_attempted = True
@@ -5251,38 +5254,30 @@ def command_commit_shm_correction(args: argparse.Namespace) -> None:
         )
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": SHM_ACTION,
-            "status": "indeterminate",
-            "invoice_id": SHM_INVOICE_ID,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": True,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=SHM_ACTION, go=go,
+            reason=str(exc), invoice_id=SHM_INVOICE_ID, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            f"zoho_books_{SHM_ACTION}_indeterminate_no_retry",
+            f"zoho_books_{SHM_ACTION}_indeterminate_needs_restage",
             f"invoice={SHM_INVOICE_NUMBER} ({SHM_INVOICE_ID}); "
             f"write_attempted={str(write_attempted).lower()}; plan={plan_path}; "
             f"sha256={plan['sha256']}; email_sent=false",
         )
         raise InvoiceRevisionError(
-            "The INV-000051 correction is indeterminate and this plan is permanently locked "
-            "against retry. A PUT was ISSUED -- the live invoice state is unconfirmed. No email "
-            "was sent; this tool has no mail transport. No rollback, cleanup or second attempt "
-            f"was made. Reason: {exc} Read the live invoice and sales order in Zoho and reconcile "
-            "before staging anything new."
+            owner_authority.explain_outcome(
+                "The INV-000051 correction", owner_authority.STATUS_INDETERMINATE,
+                "A PUT was ISSUED -- the live invoice state is unconfirmed. No email was sent; this "
+                "tool has no mail transport. No rollback, cleanup or second attempt was made. "
+                f"Reason: {exc}",
+                money=True,
+            )
+            + " The re-stage reads the live invoice and sales order first and shows what landed."
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": SHM_ACTION,
-        "status": "committed_verified",
-        "invoice_id": SHM_INVOICE_ID,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=SHM_ACTION, go=go,
+        invoice_id=SHM_INVOICE_ID,
+    ))
     totals = evidence["totals"]["after"]
     zoho_tool.append_receipt(
         f"zoho_books_{SHM_ACTION}_committed_verified",
@@ -5328,7 +5323,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_create.set_defaults(func=command_stage_create)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     # No --invoice-id and no business argument of any kind: the invoice, the
     # customer name, the client PO, the tax and both lines are fixed in code.
@@ -5336,7 +5331,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_shm.set_defaults(func=command_stage_shm_correction)
     commit_shm = commands.add_parser("commit-inv000051-shm-correction")
     commit_shm.add_argument("--plan", required=True)
-    commit_shm.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_shm, money=True)
     commit_shm.set_defaults(func=command_commit_shm_correction)
     return parser
 

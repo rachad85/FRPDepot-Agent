@@ -3,8 +3,18 @@
 
 Commissioned by Rachad Homsi on 2026-08-09 (freight-policy capability).
 Commissioning authorises building and testing this tool. It is NOT approval of
-any store change: every write still needs Rachad's own one-word APPROVED against
-one exact staged plan.
+any store change: every write still needs Rachad's own go against one exact
+staged plan.
+
+AUTONOMY PROGRAMME, 2026-08-21 (Rachad: "Go on all of them"; spec A1/A2/A4).
+Shipping-class assignment is REVERSIBLE work, so this tool follows the shared
+owner authority in Dado/Tools/common/owner_authority.py: his clear go in his own
+message covers the plan (exact APPROVED still works; "yes" / "go ahead" count);
+a failed or unverified write reads "needs re-stage" (the re-stage reads every
+target again); nothing is permanently locked; a committed plan is spent. The
+restore route is the tool's own inverse action: `shipping_class_remove` undoes
+`shipping_class_assign` on the same targets and vice versa (stage it, he gives
+his go). A created class has no delete route.
 
 Exactly three write routes exist, all stage-then-commit:
 
@@ -190,6 +200,10 @@ from typing import Any
 
 import woocommerce_common as wc
 
+# Shared owner authority (2026-08-21). Appending keeps the stdlib ahead of it.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot WooCommerce Approved Shipping-Policy Tool"
 SCHEMA_VERSION = 5
 TOOL_VERSION = "5.0.0"
@@ -198,9 +212,11 @@ ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "woocommerce_shipping_plans"
 PLAN_LIFETIME_HOURS = 24
 
-# Rachad's approval is his own one-word reply to one exact staged plan. The plan
-# digest is an internal integrity control and is never part of the approval text.
-APPROVAL_WORD = "APPROVED"
+# Rachad's approval is his own reply to one exact staged plan. The plan digest
+# is an internal integrity control and is never part of the approval text.
+# Since 2026-08-21 (spec A1) any clear go of his counts; APPROVED is still the
+# word the plan names and still works.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 
 # The single shipping class this tool may ever create or assign. Hard-coded on
 # purpose: a caller cannot introduce another class, name or slug.
@@ -1579,22 +1595,23 @@ def find_freight_class(vault: dict[str, Any] | None = None) -> dict[str, Any] | 
     return None
 
 
-def require_rachad_approval(approval: Any) -> None:
-    """Only the exact string APPROVED. No trimming, no case folding, no variants.
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this shipping-policy plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1, 2026-08-21).
 
-    The earlier check stripped whitespace and case-folded, so `approved`,
-    ` APPROVED ` and `Approved` all passed. Rachad's standing rule is one plain
-    uppercase word, and a looser check is a looser guardrail: it lets a quoted,
-    echoed or auto-completed value stand in for a decision he made. This runs
-    before any vault load and before any network access.
+    Until 2026-08-21 this compared the exact string APPROVED with no trimming
+    and no case folding, because a looser check let a quoted, echoed or
+    auto-completed value stand in for a decision he made. The autonomy
+    programme moved that judgement into the one shared detector: a plain
+    "yes" / "go ahead" / "do it" from his own message counts, a question, a
+    condition ("yes but ...") or a non-string does not, and the relay never
+    does. APPROVED still works. This still runs before any vault load and
+    before any network access; workflow authorization is not change approval.
     """
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise ShippingPolicyError(
-            f"Rachad must answer this staged plan with the exact one-word approval: "
-            f"{APPROVAL_WORD}. It is compared exactly -- surrounding spaces, a different "
-            "case, punctuation or any other wording is refused. It must come from his own "
-            "message; workflow authorization is not change approval."
-        )
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise ShippingPolicyError(str(exc)) from exc
 
 
 def lock_path(plan_path: Path) -> Path:
@@ -1606,10 +1623,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise ShippingPolicyError(
-            "This plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(ShippingPolicyError, owner_authority.read_json_if_exists(path),
+                                      what="shipping-policy plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -2183,10 +2201,11 @@ def command_commit(args: argparse.Namespace) -> None:
     if PLAN_DIR.resolve() not in plan_path.parents:
         raise ShippingPolicyError("Plan must be inside Dado's WooCommerce shipping-plan folder.")
     plan = load_plan(str(plan_path))
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     lock = lock_path(plan_path)
     if lock.exists():
-        raise ShippingPolicyError("This plan has already entered commit and cannot be replayed.")
+        owner_authority.refuse_replay(ShippingPolicyError, owner_authority.read_json_if_exists(lock),
+                                      what="shipping-policy plan")
     vault = wc.load_vault()
     if vault.get("declared_permissions") != "read_write":
         raise ShippingPolicyError("Saved WooCommerce key is not declared Read/Write.")
@@ -2198,11 +2217,11 @@ def command_commit(args: argparse.Namespace) -> None:
         ) from exc
     if saved_origin != wc.ALLOWED_ORIGIN:
         raise ShippingPolicyError("Saved WooCommerce origin is not the exact FRP Depot origin.")
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"], "status": "in_flight",
-        "started_utc": utc_now().isoformat(), "attempted_endpoints": [],
-    }, exclusive=True)
     action = str(plan["action"])
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=action, go=go,
+        started_utc=utc_now().isoformat(), attempted_endpoints=[],
+    ), exclusive=True)
     try:
         if action == "shipping_class_create":
             outcome: Any = _commit_class_create(plan, vault)
@@ -2210,26 +2229,31 @@ def command_commit(args: argparse.Namespace) -> None:
             outcome = _commit_assignment(plan, vault, lock)
     except Exception as exc:
         record = failure_record(exc, vault)
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"], "status": "indeterminate",
-            "action": action, "updated_utc": utc_now().isoformat(), **record,
-        })
+        detail = str(exc) if isinstance(exc, ShippingPolicyError) else ""
+        extra = {key: value for key, value in record.items() if key != "reason"}
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=action, go=go,
+            reason=str(record.get("reason") or detail or type(exc).__name__), **extra,
+        ))
         wc.append_receipt(
-            "woocommerce_shipping_policy_indeterminate_no_retry",
+            "woocommerce_shipping_policy_indeterminate_needs_restage",
             f"action={action}; plan={plan_path}; sha256={plan['sha256']}; "
             + receipt_evidence(record),
         )
-        detail = str(exc) if isinstance(exc, ShippingPolicyError) else ""
         raise ShippingPolicyError(
-            (detail + " " if detail else "")
-            + "The write result is indeterminate or failed verification. This plan is locked "
-            "and will not retry. Reconcile the affected resources in WooCommerce before any "
-            "new plan."
+            owner_authority.explain_outcome(
+                f"Shipping policy {action}", owner_authority.STATUS_INDETERMINATE,
+                (detail + " " if detail else "")
+                + "The write result is indeterminate or failed verification.",
+            )
+            + " The re-stage reads every target again and shows which ones landed."
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"], "status": "committed_verified",
-        "updated_utc": utc_now().isoformat(), "outcome": outcome,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=action, go=go,
+        outcome=outcome,
+        restore=("stage the inverse action on the same targets (shipping_class_remove undoes "
+                 "shipping_class_assign and vice versa); a created class has no delete route"),
+    ))
     rows = outcome if isinstance(outcome, list) else []
     converged = [row for row in rows if isinstance(row, dict) and row.get("convergence_used")]
     modes = {mode: sum(1 for row in rows
@@ -2269,7 +2293,10 @@ def command_commit(args: argparse.Namespace) -> None:
             "pending_settled_confirmed_targets": settled_confirmed,
             "settlement_shapes": shapes,
         },
-        "plan_sha256": plan["sha256"], "replay_locked": True,
+        "plan_sha256": plan["sha256"], "replay_locked": True, "plan_spent": True,
+        "restore": ("stage the inverse action on the same targets: shipping_class_remove undoes "
+                    "shipping_class_assign and vice versa (2026-08-21, spec A2); a created class "
+                    "has no delete route"),
     }, indent=2, ensure_ascii=False))
 
 
@@ -2293,7 +2320,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.set_defaults(func=command_commit)
     blocked = commands.add_parser("deploy-checkout-guard")
     blocked.set_defaults(func=command_deploy_checkout_guard)

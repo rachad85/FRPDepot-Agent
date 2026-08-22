@@ -369,7 +369,7 @@ class PairedSkuToolTests(unittest.TestCase):
 
     def test_wrong_approval_rejected_before_subprocess_and_before_lock(self) -> None:
         plan_path = self._make_pair_plan()
-        for wrong in ("yes", "APPROVED NOW", "APPROVE", ""):
+        for wrong in ("approved but wait", "hold on", "APPROVED?", ""):
             with self.subTest(wrong=wrong), mock.patch.object(pair.subprocess, "run") as run:
                 with self.assertRaises(pair.PairToolError):
                     pair.command_commit(argparse.Namespace(plan=str(plan_path), approval=wrong))
@@ -404,6 +404,29 @@ class PairedSkuToolTests(unittest.TestCase):
         lock = json.loads(pair.pair_lock_path(plan_path).read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "committed_verified")
 
+    def test_the_lane_his_word_arrived_on_is_forwarded_to_both_children(self) -> None:
+        """A5: each writer's own lock and receipt must record the lane, so the
+        coordinator forwards --approval-lane to both named CLIs when it was
+        given. --approval-message-utc is not forwarded: both children are
+        reversible writers whose parsers do not take it."""
+        plan_path = self._make_pair_plan()
+        outputs = [
+            self._completed(self._zoho_commit_output()),
+            self._completed(self._woo_commit_output()),
+        ]
+        with mock.patch.object(pair.subprocess, "run", side_effect=outputs) as run, \
+             contextlib.redirect_stdout(io.StringIO()):
+            pair.command_commit(argparse.Namespace(
+                plan=str(plan_path), approval="yes go ahead", approval_lane="discord",
+            ))
+        self.assertEqual(run.call_count, 2)
+        for call in run.call_args_list:
+            command = call.args[0]
+            self.assertEqual(command[-4:], ["--approval", "yes go ahead", "--approval-lane", "discord"])
+            self.assertNotIn("--approval-message-utc", command)
+        lock = json.loads(pair.pair_lock_path(plan_path).read_text(encoding="utf-8"))
+        self.assertEqual(lock["owner_go_lane"], "discord")
+
     def test_exact_sku_output_verification_locks_indeterminate_and_stops(self) -> None:
         plan_path = self._make_pair_plan()
         with mock.patch.object(
@@ -414,8 +437,8 @@ class PairedSkuToolTests(unittest.TestCase):
                 pair.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
         self.assertEqual(run.call_count, 1)
         lock = json.loads(pair.pair_lock_path(plan_path).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
     def test_replay_rejected_without_another_subprocess(self) -> None:
         plan_path = self._make_pair_plan()
@@ -442,13 +465,13 @@ class PairedSkuToolTests(unittest.TestCase):
         self.assertEqual(run.call_count, 2)
         lock_path = pair.pair_lock_path(plan_path)
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "partial")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["completed_children"], ["zoho"])
-        self.assertTrue(lock["no_retry"])
+        self.assertFalse(lock["permanent_lock"])
         pair.zoho_tool.append_receipt.assert_called()
 
         with mock.patch.object(pair.subprocess, "run") as retry:
-            with self.assertRaisesRegex(pair.PairToolError, "cannot be replayed"):
+            with self.assertRaisesRegex(pair.PairToolError, "Re-stage"):
                 pair.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
             retry.assert_not_called()
 

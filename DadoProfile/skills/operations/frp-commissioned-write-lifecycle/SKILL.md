@@ -9,6 +9,18 @@ Use this skill whenever building, reviewing, testing, staging, committing, or di
 
 This skill adds **no write authority**. It only standardizes safety around a capability Rachad has already commissioned. The named tool's narrower commission always wins.
 
+## 0. Authority model (Rachad, 2026-08-21 - "Go on all of them")
+
+His word is the authority: a clear instruction from Rachad, in his own message on Telegram, Discord or the dashboard chat, authorises the WHOLE job - every plan it needs. Every named tool is one of two classes, listed tool by tool with its way back in `references/commissioned-write-tools.md`; the dated record of what is built and what landed is `references/status-ledger.md`.
+
+- **Reversible** (items, categories/classification, prices and rates, SKUs and names, draft estimates and their corrections, email templates, WooCommerce/WordPress content and media, catalogue publish/presentation, Google read-services config): stage shows the exact change; apply commits it on his instruction. The tool captures the live state before the write and keeps it beside the plan; the way back is a restore route where the tool carries one (the reference names them), otherwise the captured pre-write state and Drive/Zoho history, stated in the plan before he says go; one receipt per write (what, where, when, backup path).
+- **Money / irreversible** (invoice create or revise, payments, bank reconciliation, transfers, purchase orders, credit notes, sales orders that create financial records, ad spend, anything outward, deletions): stage, then Rachad's own unambiguous go to THAT plan, sent after the plan was written and referring to it. The exact word `APPROVED` is no longer required; "yes go ahead" to the shown plan counts. The plan-before-approval timestamp check stays.
+- **No permanent locks.** A failed commit leaves the plan "needs re-stage": re-read live, re-stage (diff shown), apply again under his original instruction unless the scope changed. Money tools re-stage and report; no silent retry.
+- **Batches:** one instruction covers the batch; per-line writes continue past a failed line; the failed lines are recorded and re-staged alone.
+- **Unchanged walls:** drafts only, no keys or tokens, no deletes in Zoho, the company walls in the SOUL, no new walls he did not ask for.
+
+Where the sections below say `APPROVED`, read "his go to that plan" on money tools and "his instruction for the job" on reversible tools. Where they say "one attempt only", "never retry" or "permanently locks", read "re-stage, then apply again". Everything else below (one eligibility predicate, free refusals before the attempt lock, the browser mutex, fresh read-back, receipts, drafts only) is correctness and stays. The verbatim pre-2026-08-21 rules are `DadoProfile\SOUL.md.bak_20260821_pre_autonomy_trim`.
+
 ## 1. Establish authority and scope
 
 1. Read the active SOUL Hard Rule 3 and the project context.

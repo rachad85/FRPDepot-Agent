@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from datetime import timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import io
 import json
@@ -394,9 +395,18 @@ class DraftCreationTestCase(unittest.TestCase):
         return plans[-1]
 
     def commit(self, plan: Path, approval: str = "APPROVED") -> str:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        try:
+            created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+            after = (invoice_tool.parse_time(created, "created_utc") + timedelta(minutes=1)).isoformat()
+        except (OSError, ValueError, KeyError, invoice_tool.InvoiceRevisionError):
+            after = invoice_tool.utc_now().isoformat()  # the tool refuses the path itself
         buffer = io.StringIO()
         with mock.patch("sys.stdout", buffer):
-            invoice_tool.command_commit(argparse.Namespace(plan=str(plan), approval=approval))
+            invoice_tool.command_commit(
+                argparse.Namespace(plan=str(plan), approval=approval, approval_message_utc=after)
+            )
         return buffer.getvalue()
 
     def rewrite_plan(self, plan: Path, mutate) -> Path:
@@ -850,7 +860,9 @@ class CreateApprovalTests(DraftCreationTestCase):
     def test_wrong_approval_refused_before_lock_token_or_network(self) -> None:
         plan_path = self.stage()
         self.api_get_mock.reset_mock()
-        for bad in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n", "", "YES"):
+        # 2026-08-21 (A3): a plain yes now counts; a condition, a question, a
+        # multi-line value or a blank still refuses before the lock and the network.
+        for bad in ("approved but wait", "hold on", "APPROVED?", "APPROVED\nnow", "", "YES?"):
             with self.subTest(bad=bad):
                 with self.assertRaises(invoice_tool.InvoiceRevisionError):
                     self.commit(plan_path, approval=bad)
@@ -1137,7 +1149,7 @@ class CreateCommitTests(DraftCreationTestCase):
         self.assertEqual([line["item_id"] for line in created["line_items"]], [ITEM_ONE, ITEM_TWO])
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
         receipt = self.append_receipt.call_args[0]
         self.assertIn("create_draft_invoice_committed_verified", receipt[0])
         self.assertIn("status=draft", receipt[1])
@@ -1169,7 +1181,7 @@ class CreateCommitTests(DraftCreationTestCase):
         self.commit(plan_path)
         with self.assertRaises(invoice_tool.InvoiceRevisionError) as caught:
             self.commit(plan_path)
-        self.assertIn("already entered commit", str(caught.exception))
+        self.assertIn("cannot be replayed", str(caught.exception))
         self.assertEqual(len(self.write_calls), 1, "a replay must not write again")
 
     def test_missing_create_scope_refused_before_write(self) -> None:
@@ -1219,7 +1231,7 @@ class CreateCommitTests(DraftCreationTestCase):
             self.commit(plan_path)
         self.assertNoWrites()
 
-    def test_no_retry_after_a_failed_post(self) -> None:
+    def test_a_failed_post_is_reported_and_needs_restage_not_a_permanent_lock(self) -> None:
         plan_path = self.stage()
 
         def fail(record):
@@ -1229,19 +1241,21 @@ class CreateCommitTests(DraftCreationTestCase):
         with self.assertRaises(invoice_tool.InvoiceRevisionError) as caught:
             self.commit(plan_path)
         message = str(caught.exception)
-        self.assertIn("permanently locked", message)
+        self.assertIn("re-stage", message.casefold())
+        self.assertIn("his go to the NEW plan", message)
+        self.assertNotIn("permanent", message.casefold())
         self.assertIn("POST was ISSUED", message)
         self.assertIn("NOTHING was cleaned up", message)
         self.assertEqual(len(self.write_calls), 1)
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertIs(lock["no_retry"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertIs(lock["permanent_lock"], False)
         self.allow_writes()
-        with self.assertRaises(invoice_tool.InvoiceRevisionError):
+        with self.assertRaisesRegex(invoice_tool.InvoiceRevisionError, "Re-stage"):
             self.commit(plan_path)
         self.assertEqual(len(self.write_calls), 1, "no second attempt is possible")
 
-    def test_timeout_is_indeterminate_and_locks(self) -> None:
+    def test_timeout_is_indeterminate_and_needs_restage(self) -> None:
         plan_path = self.stage()
 
         def timeout(record):
@@ -1252,7 +1266,7 @@ class CreateCommitTests(DraftCreationTestCase):
             self.commit(plan_path)
         self.assertIn("indeterminate", str(caught.exception))
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
-        self.assertIs(lock["plan_locked_indeterminate"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
 
     def test_missing_invoice_id_in_the_response_is_indeterminate(self) -> None:
         plan_path = self.stage()
@@ -1264,7 +1278,7 @@ class CreateCommitTests(DraftCreationTestCase):
         self.assertIn("POST was ISSUED", message)
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
         self.assertEqual(lock["invoice_id"], "")
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
 
     def test_readback_status_must_be_exactly_draft(self) -> None:
         for status in ("sent", "overdue", "void", "paid", "viewed", "unpaid", ""):
@@ -1281,11 +1295,11 @@ class CreateCommitTests(DraftCreationTestCase):
                 message = str(caught.exception)
                 self.assertIn("is NOT the Draft that was approved", message)
                 self.assertIn(NEW_INVOICE_ID, message)
-                self.assertIn("nothing will be retried", message)
+                self.assertIn("nothing is retried silently", message)
                 lock = json.loads(
                     (self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text()
                 )
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["invoice_id"], NEW_INVOICE_ID)
                 plan_path.unlink()
                 (self.plan_dir / ".commit-locks" / self.lock_files()[0]).unlink()

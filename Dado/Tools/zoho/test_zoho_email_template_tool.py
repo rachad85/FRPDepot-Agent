@@ -11,6 +11,7 @@ import contextlib
 from datetime import timedelta
 import hashlib
 import inspect
+import io
 import json
 from pathlib import Path
 import tempfile
@@ -551,20 +552,22 @@ class EmailTemplateToolTests(unittest.TestCase):
         return detail
 
     # -- approval --------------------------------------------------------
-    def test_approval_must_be_byte_exact(self) -> None:
-        for bad in ["approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n",
-                    "APPROVED PLEASE", "", "APPROVE", None, True, 1]:
+    def test_approval_is_his_clear_go_and_a_condition_is_not(self) -> None:
+        # 2026-08-21 (A1): a plain or padded yes now counts for this reversible
+        # work; a condition, a question, a blank or a non-string still refuses.
+        for bad in ["approved but wait", "hold on", "APPROVED?", "", None, True, 1]:
             with self.subTest(bad=bad):
                 with self.assertRaises(emailtool.EmailTemplateError):
                     emailtool.require_rachad_approval(bad)
-        emailtool.require_rachad_approval("APPROVED")
+        self.assertTrue(emailtool.require_rachad_approval("APPROVED").exact_word)
+        self.assertEqual(emailtool.require_rachad_approval("yes go ahead").kind, "reversible")
 
     def test_wrong_approval_refuses_before_any_plan_read_or_network(self) -> None:
         plan = self.stage()
         self.execute_get.reset_mock()
         self.load_vault.reset_mock()
         with self.assertRaises(emailtool.EmailTemplateError):
-            emailtool.command_commit(self.commit_args(plan, approval="approved"))
+            emailtool.command_commit(self.commit_args(plan, approval="approved but wait"))
         self.execute_get.assert_not_called()
         self.load_vault.assert_not_called()
 
@@ -1473,7 +1476,7 @@ class EmailTemplateToolTests(unittest.TestCase):
         lock = self.locks()[0]
         self.assertEqual(lock["status"], "committed_verified")
         self.assertEqual(lock["created_template_ids"], {"CC - All": "600"})
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
         self.assertIs(lock["email_sent"], False)
 
     def test_create_all_only_commits_through_exactly_one_validated_post(self) -> None:
@@ -1517,14 +1520,14 @@ class EmailTemplateToolTests(unittest.TestCase):
                 creator, self.commit_args(plan, action=emailtool.CREATE_ALL_ONLY))
         self.assertEqual(calls, ["CC - All"])
         lock = self.locks()[0]
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["write_in_flight_template"], "CC - All")
         self.assertEqual(lock["not_attempted"], [])
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
         # A second attempt is refused by the lock, and never reaches the creator.
         calls.clear()
         with self.assertRaisesRegex(emailtool.EmailTemplateError,
-                                    "already entered commit"):
+                                    "Re-stage"):
             self.run_with_create(
                 creator, self.commit_args(plan, action=emailtool.CREATE_ALL_ONLY))
         self.assertEqual(calls, [])
@@ -1557,7 +1560,7 @@ class EmailTemplateToolTests(unittest.TestCase):
                     self.run_with_create(
                         creator,
                         self.commit_args(plan, action=emailtool.CREATE_ALL_ONLY))
-                self.assertIs(self.locks()[-1]["no_retry"], True)
+                self.assertIs(self.locks()[-1]["permanent_lock"], False)
                 self.zoho.details.pop("600", None)
 
     def test_create_all_only_readback_accepts_only_attribute_reordering(self) -> None:
@@ -2662,7 +2665,57 @@ class EmailTemplateToolTests(unittest.TestCase):
         self.assertEqual(lock["status"], "committed_verified")
         self.assertEqual(lock["created_template_ids"], {"CC - Accounting": "600"})
         self.assertIs(lock["email_sent"], False)
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
+
+    def test_a_created_template_discloses_no_restore_route_and_never_calls_a_delete_one(self) -> None:
+        """Reviewer finding, 2026-08-21: stage-delete / commit-delete reaches ONE
+        fixed template behind its own gate; it is not a restore route for a
+        created template. The lock, the stdout receipt and the failure message
+        all make the same disclosure the item-create path makes: no restore
+        route, deletes are walled, the template stays and the receipt records
+        its ID."""
+        plan = self.stage()
+
+        def creator(org, source_id, name, cc, clone):
+            new_id = "600"
+            self.zoho.details[new_id] = clone_of(self.source, new_id, name, cc)
+            return new_id
+
+        patchers = self.enable_create(creator)
+        for patcher in patchers:
+            patcher.start()
+        try:
+            with contextlib.redirect_stdout(io.StringIO()) as out:
+                emailtool.command_commit(self.commit_args(plan))
+        finally:
+            for patcher in reversed(patchers):
+                patcher.stop()
+        result = json.loads(out.getvalue())
+        lock = [record for record in self.locks() if record["status"] == "committed_verified"][0]
+        for text in (result["restore"], lock["restore"]):
+            self.assertEqual(text, emailtool.CREATE_RESTORE_DISCLOSURE)
+            self.assertIn("no restore route for a created template", text)
+            self.assertIn("deletes are walled", text)
+            self.assertIn("records its ID", text)
+            self.assertNotIn("commit-delete", text)
+            self.assertNotIn("stage-delete", text)
+
+        source = Path(emailtool.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("restore route is stage-delete", source)
+        self.assertNotIn("stage-delete / commit-delete for a created template", source)
+        self.assertNotIn("restore route\n# for a created template is this tool's own stage-delete", source)
+
+    def test_a_failed_creation_makes_the_same_no_restore_disclosure(self) -> None:
+        plan = self.stage()
+
+        def failing_creator(org, source_id, name, cc, clone):
+            raise emailtool.EmailTemplateError("Zoho Save failed")
+
+        with self.assertRaises(emailtool.EmailTemplateError) as caught:
+            self.run_with_create(failing_creator, self.commit_args(plan))
+        self.assertIn(emailtool.CREATE_RESTORE_DISCLOSURE, str(caught.exception))
+        self.assertNotIn("restore route is stage-delete", str(caught.exception))
+        self.assertNotIn("commit-delete", str(caught.exception))
 
     def test_committed_plan_cannot_be_replayed(self) -> None:
         plan = self.stage()
@@ -2688,8 +2741,8 @@ class EmailTemplateToolTests(unittest.TestCase):
             self.run_with_create(creator, self.commit_args(plan))
         self.assertEqual(calls, ["CC - Accounting"])
         lock = self.locks()[0]
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertIs(lock["no_retry"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertIs(lock["permanent_lock"], False)
 
     def test_locked_plan_cannot_be_committed_again(self) -> None:
         plan = self.stage()
@@ -2699,7 +2752,7 @@ class EmailTemplateToolTests(unittest.TestCase):
 
         with self.assertRaises(emailtool.EmailTemplateError):
             self.run_with_create(creator, self.commit_args(plan))
-        with self.assertRaisesRegex(emailtool.EmailTemplateError, "already entered commit"):
+        with self.assertRaisesRegex(emailtool.EmailTemplateError, "Re-stage"):
             self.run_with_create(creator, self.commit_args(plan))
 
     def test_partial_multi_template_failure_reports_exactly_what_happened(self) -> None:
@@ -2724,11 +2777,11 @@ class EmailTemplateToolTests(unittest.TestCase):
         self.assertIn("CC - Logistics", message)
         self.assertIn("CC - All", message)
         lock = self.locks()[0]
-        self.assertEqual(lock["status"], "partial")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(list(lock["created_template_ids"]), ["CC - Logistics"])
         self.assertEqual(lock["write_in_flight_template"], "CC - Operations")
         self.assertEqual(lock["not_attempted"], ["CC - All"])
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
 
     def test_readback_failure_locks_the_plan(self) -> None:
         plan = self.stage()
@@ -2742,7 +2795,7 @@ class EmailTemplateToolTests(unittest.TestCase):
 
         with self.assertRaisesRegex(emailtool.EmailTemplateError, "partial|indeterminate"):
             self.run_with_create(creator, self.commit_args(plan))
-        self.assertIs(self.locks()[0]["no_retry"], True)
+        self.assertIs(self.locks()[0]["permanent_lock"], False)
 
     def test_created_template_that_became_default_is_rejected(self) -> None:
         plan = self.stage()

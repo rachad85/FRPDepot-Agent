@@ -253,6 +253,9 @@ class InvestmentsToolTests(unittest.TestCase):
                 two = tool.lock_path(digest)
                 self.assertEqual(one, two)
                 tool.write_lock(one, {"status": "in_flight"}, exclusive=True)
+                with self.assertRaisesRegex(tool.InvestmentsError, "already entered commit"):
+                    tool.write_lock(two, {"status": "in_flight"}, exclusive=True)
+                tool.write_lock(one, {"status": "committed_verified"})
                 with self.assertRaisesRegex(tool.InvestmentsError, "cannot be replayed"):
                     tool.write_lock(two, {"status": "in_flight"}, exclusive=True)
             finally:
@@ -262,6 +265,31 @@ class InvestmentsToolTests(unittest.TestCase):
         digest = "f" * 64
         self.assertEqual(tool.approval_phrase(digest), "APPROVED")
         self.assertNotIn(digest, tool.approval_phrase(digest))
+
+    def test_commit_requires_the_time_of_his_message(self):
+        """A3/A5: a money commit must carry --approval-message-utc so his go can
+        be shown to have come AFTER the plan; a go with no time is refused."""
+        parser = tool.build_parser()
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["commit", "--plan", "x.json", "--approval", "APPROVED"])
+        args = parser.parse_args(["commit", "--plan", "x.json", "--approval", "APPROVED",
+                                  "--approval-message-utc", "2026-08-21T10:01:00+00:00"])
+        self.assertEqual(args.approval_message_utc, "2026-08-21T10:01:00+00:00")
+        plan = {"created_utc": "2026-08-21T10:00:00+00:00", "expires_utc": "2026-08-22T10:00:00+00:00"}
+        with self.assertRaisesRegex(tool.owner_authority.OwnerAuthorityRefused, "--approval-message-utc"):
+            tool.owner_authority.require_owner_go_after_plan(
+                "yes go ahead", plan_created_utc=plan["created_utc"], plan_expires_utc=plan["expires_utc"],
+            )
+        with self.assertRaisesRegex(tool.owner_authority.OwnerAuthorityRefused, "BEFORE this plan"):
+            tool.owner_authority.require_owner_go_after_plan(
+                "yes go ahead", plan_created_utc=plan["created_utc"], plan_expires_utc=plan["expires_utc"],
+                sent_utc="2026-08-21T09:59:00+00:00",
+            )
+        go = tool.owner_authority.require_owner_go_after_plan(
+            "yes go ahead", plan_created_utc=plan["created_utc"], plan_expires_utc=plan["expires_utc"],
+            sent_utc="2026-08-21T10:01:00+00:00",
+        )
+        self.assertEqual(go.sent_utc, "2026-08-21T10:01:00+00:00")
 
 
 if __name__ == "__main__":

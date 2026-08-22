@@ -7,6 +7,16 @@ Only four write routes exist: product/variation create or update. Creation is
 forced to draft. No delete, batch, order, customer, payment, refund, coupon,
 webhook, settings, plugin/theme, user, stock, sale-price, image-source, or
 publication write is available.
+
+AUTONOMY PROGRAMME, 2026-08-21 (Rachad: "Go on all of them"; spec A1/A2/A4).
+Catalogue content is REVERSIBLE work, so this tool follows the shared owner
+authority in Dado/Tools/common/owner_authority.py: his clear go in his own
+message covers the change (APPROVED still works; "yes" / "go ahead" count);
+the live values an update is about to change are captured beside the plan
+BEFORE the PUT and `restore --plan` puts them back through the same update
+route; a failed or unverified write reads "needs re-stage"; nothing is
+permanently locked. A committed plan is spent. A CREATE has no restore route
+(there is no delete); it lands as a draft and the receipt records its ID.
 """
 from __future__ import annotations
 
@@ -23,6 +33,10 @@ from typing import Any
 
 import woocommerce_common as wc
 
+# Shared owner authority (2026-08-21). Appending keeps the stdlib ahead of it.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot WooCommerce Audit & Approved Catalog Change Tool"
 SCHEMA_VERSION = 2
 EXACT_ORIGIN = "https://frpdepots.com:443"
@@ -33,8 +47,9 @@ ACTIONS = {"product_create", "product_update", "variation_create", "variation_up
 # Rachad's explicit workflow authorization (2026-08-06): approval of a staged
 # WooCommerce plan is his own one-word reply.  The full plan digest remains an
 # internal integrity control and is never part of the approval text.  Building
-# this workflow is not approval of any catalog change.
-APPROVAL_WORD = "APPROVED"
+# this workflow is not approval of any catalog change. Since 2026-08-21 any
+# clear go of his counts (spec A1); APPROVED is still the word the plan names.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 PRODUCT_FIELDS = {
     "name", "type", "sku", "description", "short_description", "regular_price",
     "categories", "attributes", "images",
@@ -480,12 +495,14 @@ def assert_sku_unique(action: str, sku: str, resource_id: int | None,
         raise ChangeError(f"SKU already belongs to another WooCommerce resource: {conflicts[:10]}")
 
 
-def require_rachad_approval(approval: str) -> None:
-    if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
-        raise ChangeError(
-            f"Rachad must answer this staged plan with the one-word approval: {APPROVAL_WORD}. "
-            "It must come from his own message; workflow authorization is not change approval."
-        )
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this WooCommerce change plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1); workflow authorization is not
+    change approval and Dado never supplies it."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise ChangeError(str(exc)) from exc
 
 
 def lock_path(plan_path: Path) -> Path:
@@ -497,8 +514,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise ChangeError("This plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(ChangeError, owner_authority.read_json_if_exists(path),
+                                      what="WooCommerce change plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -641,9 +661,10 @@ def command_commit(args: argparse.Namespace) -> None:
     if PLAN_DIR.resolve() not in plan_path.parents:
         raise ChangeError("Plan must be inside Dado's WooCommerce plan folder.")
     plan = load_plan(str(plan_path))
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     if lock_path(plan_path).exists():
-        raise ChangeError("This plan has already entered commit and cannot be replayed.")
+        owner_authority.refuse_replay(ChangeError, owner_authority.read_json_if_exists(lock_path(plan_path)),
+                                      what="WooCommerce change plan")
     vault = wc.load_vault()
     if vault.get("declared_permissions") != "read_write":
         raise ChangeError("Saved WooCommerce key is not declared Read/Write.")
@@ -665,10 +686,22 @@ def command_commit(args: argparse.Namespace) -> None:
     assert_sku_unique(action, str(plan["payload"].get("sku") or ""), resource_id, parent_id, vault)
     method, endpoint = endpoint_for(action, resource_id, parent_id)
     validate_write_route(method, endpoint)
+    backup: Path | None = None
+    if existing:
+        # A2: keep the live values this update changes beside the plan, BEFORE the PUT.
+        backup = owner_authority.capture_live_state(
+            plan_path,
+            {"action": action, "method": method, "endpoint": endpoint, "resource_id": resource_id,
+             "parent_id": parent_id, "before": selected_state(current, plan["payload"]),
+             "after": plan["payload"], "before_date_modified_gmt": str(current.get("date_modified_gmt") or "")},
+            what=f"WooCommerce {action} fields {sorted(plan['payload'])}", where=f"{EXACT_ORIGIN} {endpoint}",
+            plan_sha256=plan["sha256"],
+        )
     lock = lock_path(plan_path)
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"], "status": "in_flight", "started_utc": utc_now().isoformat()
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=action, go=go,
+        started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     try:
         result, _ = wc.api_request(method, endpoint, payload=plan["payload"], vault=vault)
         if not isinstance(result, dict) or not int(result.get("id") or 0):
@@ -685,31 +718,118 @@ def command_commit(args: argparse.Namespace) -> None:
         if "images" in plan["payload"]:
             assert_image_gallery_exact(readback, plan["payload"]["images"], require_alt_match=True)
     except Exception as exc:
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"], "status": "indeterminate",
-            "updated_utc": utc_now().isoformat(), "reason": wc.scrub(str(exc), vault),
-        })
+        reason = wc.scrub(str(exc), vault)
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=action, go=go,
+            reason=reason, backup=str(backup) if backup else None,
+        ))
         wc.append_receipt(
-            "woocommerce_change_indeterminate_no_retry",
-            f"action={action}; plan={plan_path}; sha256={plan['sha256']}",
+            "woocommerce_change_indeterminate_needs_restage",
+            f"action={action}; backup={backup or 'none'}; plan={plan_path}; sha256={plan['sha256']}",
         )
         raise ChangeError(
-            "The write result is indeterminate or failed verification. This plan is locked and will not retry. "
-            "Reconcile the SKU/resource in WooCommerce before any new plan."
+            owner_authority.explain_outcome(
+                f"WooCommerce {action}", owner_authority.STATUS_INDETERMINATE,
+                "The write result is indeterminate or failed verification: " + reason,
+            )
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"], "status": "committed_verified",
-        "resource_id": result_id, "updated_utc": utc_now().isoformat(),
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=action, go=go,
+        resource_id=result_id, backup=str(backup) if backup else None,
+    ))
     wc.append_receipt(
         "woocommerce_approved_catalog_change_committed",
-        f"action={action}; id={result_id}; plan={plan_path}; sha256={plan['sha256']}",
+        f"action={action}; id={result_id}; backup={backup or 'none'}; plan={plan_path}; "
+        f"sha256={plan['sha256']}; go_lane={go.lane}",
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED", "action": action,
         "resource_id": result_id, "approved_payload": after,
-        "plan_sha256": plan["sha256"], "replay_locked": True,
+        "plan_sha256": plan["sha256"], "replay_locked": True, "plan_spent": True,
+        "live_state_backup": str(backup) if backup else None,
+        "restore": (f"restore --plan {plan_path} --approval <his go>" if backup
+                    else "not available for a create (no delete route); the draft stays and this receipt records its ID"),
     }, indent=2, ensure_ascii=False))
+
+
+def load_plan_for_restore(path: str) -> dict[str, Any]:
+    """The plan behind a restore: hash, schema and origin are checked; expiry is
+    not, because putting the previous values back is allowed after the 24-hour
+    plan window."""
+    plan = read_json(path)
+    saved = str(plan.pop("sha256", ""))
+    if not saved or not secrets.compare_digest(saved, digest_for(plan)):
+        raise ChangeError("Plan hash check failed. The plan changed after review.")
+    if (plan.get("schema_version") != SCHEMA_VERSION or plan.get("tool") != TOOL_NAME
+            or plan.get("action") not in ACTIONS or plan.get("origin") != EXACT_ORIGIN):
+        raise ChangeError("The plan schema, tool, action, or origin is invalid.")
+    plan["sha256"] = saved
+    return plan
+
+
+def command_restore(args: argparse.Namespace) -> None:
+    """A2: put back the values captured before this plan's PUT (one PUT, same route)."""
+    plan_path = Path(args.plan).resolve()
+    if PLAN_DIR.resolve() not in plan_path.parents:
+        raise ChangeError("Plan must be inside Dado's WooCommerce plan folder.")
+    plan = load_plan_for_restore(str(plan_path))
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="restoring the values this plan changed")
+    record = owner_authority.load_live_state(plan_path, ChangeError)
+    if record.get("plan_sha256") != plan["sha256"]:
+        raise ChangeError("The captured live state belongs to a different plan.")
+    restore_path = owner_authority.restore_record_path(plan_path)
+    if restore_path.exists():
+        raise ChangeError(
+            f"This plan's values were already restored ({restore_path.name}); stage a new plan "
+            "for any further change."
+        )
+    state = record["state"]
+    action = str(state["action"])
+    resource_id = state["resource_id"]
+    parent_id = state["parent_id"]
+    method, endpoint = endpoint_for(action, resource_id, parent_id)
+    validate_write_route(method, endpoint)
+    if method != "PUT" or endpoint != state["endpoint"]:
+        raise ChangeError("The captured route is not the plan's update route; refusing to restore.")
+    vault = wc.load_vault()
+    if vault.get("declared_permissions") != "read_write":
+        raise ChangeError("Saved WooCommerce key is not declared Read/Write.")
+    if wc.normalize_site_url(str(vault.get("site_url") or "")) != wc.ALLOWED_ORIGIN:
+        raise ChangeError("Saved WooCommerce origin is not the exact FRP Depot origin.")
+    before = state["before"]
+    after = state["after"]
+    current, _ = wc.api_get(endpoint, vault=vault)
+    if not isinstance(current, dict) or int(current.get("id") or 0) != int(resource_id):
+        raise ChangeError("Current resource verification returned an unexpected response.")
+    live = selected_state(current, after)
+    result: dict[str, Any] = {"plan_sha256": plan["sha256"], "action": action, "resource_id": resource_id,
+                              **go.as_record()}
+    if approved_readback_matches(live, before):
+        result.update(status="NOT_RESTORED", reason="already at the captured values")
+    elif not approved_readback_matches(live, after):
+        result.update(status="NOT_RESTORED",
+                      reason="moved since this plan wrote it (live values differ); left alone")
+    else:
+        try:
+            written, _ = wc.api_request(method, endpoint, payload=before, vault=vault)
+            if not isinstance(written, dict) or int(written.get("id") or 0) != int(resource_id):
+                raise ChangeError("WooCommerce returned an unexpected resource after the restore PUT.")
+            readback, _ = wc.api_get(endpoint, vault=vault)
+            if not approved_readback_matches(selected_state(readback, before), before):
+                raise ChangeError("Live readback after the restore did not match the captured values.")
+        except Exception as exc:
+            result.update(status="RESTORE_FAILED", reason=wc.scrub(str(exc), vault)[:1000])
+            owner_authority.record_restore(plan_path, result)
+            raise ChangeError(f"Restore of {action} {resource_id} did not verify: {wc.scrub(str(exc), vault)}") from exc
+        result.update(status="RESTORED", **{"from": after, "to": before})
+    owner_authority.record_restore(plan_path, result)
+    wc.append_receipt(
+        "woocommerce_catalog_change_restore",
+        f"status={result['status']}; action={action}; id={resource_id}; "
+        f"backup={owner_authority.live_state_path(plan_path)}; plan={plan_path}; sha256={plan['sha256']}",
+    )
+    print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -720,8 +840,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.set_defaults(func=command_commit)
+    restore = commands.add_parser("restore", help="put back the values captured before this plan's PUT")
+    restore.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore)
+    restore.set_defaults(func=command_restore)
     return parser
 
 

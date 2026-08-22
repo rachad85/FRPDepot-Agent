@@ -35,6 +35,15 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 import google_investments_auth as auth
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). The
+# investments workbook holds financial records, so this stays MONEY work: stage,
+# then Rachad's own unambiguous go to THAT plan, sent after the plan was
+# written. Exact APPROVED is no longer REQUIRED; a failed update is reported and
+# re-staged (no silent retry, no permanent lock). The workbook backup taken
+# before the upload is the recovery record; Drive version history remains.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Investments Workbook Approved Update Tool"
 SCHEMA_VERSION = 1
 ACTION = "pistavo_cash_profit_add"
@@ -628,8 +637,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise InvestmentsError("This plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(InvestmentsError, owner_authority.read_json_if_exists(path),
+                                      what="investments plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -808,12 +820,20 @@ def command_commit(args: argparse.Namespace) -> None:
     if PLAN_DIR.resolve() not in plan_path.parents:
         raise InvestmentsError("Plan must be inside Dado's investments plan folder.")
     plan = load_plan(plan_path)
-    expected = approval_phrase(str(plan["sha256"]))
-    if not secrets.compare_digest(str(args.approval).strip().casefold(), expected.casefold()):
-        raise InvestmentsError("Rachad must reply with the one-word approval: APPROVED.")
+    # His go is checked before Google is touched (A3): his own unambiguous go
+    # to THIS plan, sent after it was written (the message time is required).
+    try:
+        go = owner_authority.require_owner_go_after_plan(
+            args.approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=getattr(args, "approval_message_utc", None), lane=getattr(args, "approval_lane", None),
+            what="this investments plan",
+        )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise InvestmentsError(str(exc)) from exc
     lock = lock_path(str(plan["sha256"]))
     if lock.exists():
-        raise InvestmentsError("This plan has already entered commit and cannot be replayed.")
+        owner_authority.refuse_replay(InvestmentsError, owner_authority.read_json_if_exists(lock),
+                                      what="investments plan")
     service = auth.drive_service()
     item, etag = _file_metadata(service, EXPECTED_FILE_ID)
     item = _verify_exact_file(service, item)
@@ -830,12 +850,10 @@ def command_commit(args: argparse.Namespace) -> None:
         utc_now().strftime("%Y%m%dT%H%M%SZ_") + str(plan["file"]["md5_checksum"]) + "_Investements.xlsx"
     )
     backup.write_bytes(current)
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-        "backup": str(backup),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        started_utc=utc_now().isoformat(), backup=str(backup),
+    ), exclusive=True)
     try:
         # Re-check identity/state immediately before the one remote write, then
         # bind that write to Google's current ETag. If anything changes after
@@ -862,29 +880,26 @@ def command_commit(args: argparse.Namespace) -> None:
         if after.get("title") != WORKBOOK_NAME or content_sha256(readback) != content_sha256(updated):
             raise InvestmentsError("Live Drive readback does not match the approved workbook bytes.")
     except Exception as exc:
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "status": "indeterminate",
-            "updated_utc": utc_now().isoformat(),
-            "backup": str(backup),
-            "reason": scrub(str(exc)),
-        })
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=ACTION, go=go,
+            reason=scrub(str(exc)), backup=str(backup),
+        ))
         append_receipt(
-            "investments_update_indeterminate_no_retry",
+            "investments_update_indeterminate_needs_restage",
             f"plan={plan_path}; sha256={plan['sha256']}; backup={backup}",
         )
         raise InvestmentsError(
-            "The Drive update failed or could not be verified. The plan is locked and will not retry. "
-            "Use Drive version history and the local backup to reconcile it."
+            owner_authority.explain_outcome(
+                "The Drive update", owner_authority.STATUS_INDETERMINATE,
+                "It failed or could not be verified. Use Drive version history and the local backup "
+                "to reconcile it.", money=True,
+            )
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "status": "committed_verified",
-        "updated_utc": utc_now().isoformat(),
-        "backup": str(backup),
-        "new_md5_checksum": str(after.get("md5Checksum") or ""),
-        "new_version": str(after.get("version") or ""),
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        backup=str(backup), new_md5_checksum=str(after.get("md5Checksum") or ""),
+        new_version=str(after.get("version") or ""),
+    ))
     append_receipt(
         "investments_approved_update_committed_verified",
         f"plan={plan_path}; sha256={plan['sha256']}; workbook={WORKBOOK_NAME}; backup={backup}",
@@ -914,7 +929,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

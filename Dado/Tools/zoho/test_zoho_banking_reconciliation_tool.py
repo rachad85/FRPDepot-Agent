@@ -28,6 +28,18 @@ class FakeResponse:
         return json.dumps(self.payload).encode("utf-8")
 
 
+def commit_args(plan_path, approval: str = "APPROVED") -> argparse.Namespace:
+    """Commit arguments with his go timed one minute AFTER the plan was written
+    (A3/A5: --approval-message-utc is required on every money commit)."""
+    created = banking.parse_time(
+        json.loads(Path(plan_path).read_text(encoding="utf-8"))["created_utc"], "created_utc"
+    )
+    return argparse.Namespace(
+        plan=str(plan_path), approval=approval,
+        approval_message_utc=(created + timedelta(minutes=1)).isoformat(),
+    )
+
+
 class ZohoBankingReconciliationToolTests(unittest.TestCase):
     def setUp(self) -> None:
         here = Path(__file__).resolve().parent
@@ -661,7 +673,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         self.load_vault.reset_mock()
         with self.assertRaisesRegex(banking.BankingToolError, "hash check failed"):
             banking.command_commit(
-                argparse.Namespace(plan=str(tampered), approval="APPROVED"), "match"
+                commit_args(tampered), "match"
             )
         self.load_vault.assert_not_called()
 
@@ -674,21 +686,41 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         self.load_vault.reset_mock()
         with self.assertRaisesRegex(banking.BankingToolError, "expired"):
             banking.command_commit(
-                argparse.Namespace(plan=str(expired), approval="APPROVED"), "match"
+                commit_args(expired), "match"
             )
         self.load_vault.assert_not_called()
 
         approval_path, _ = self.stage_match()
         saved = json.loads(approval_path.read_text(encoding="utf-8"))["sha256"]
-        for approval in ("approved", " APPROVED", "APPROVED ", "APPROVED NOW", ""):
+        for approval in ("approved but wait", "hold", "APPROVED?", "not yet", ""):
             with self.subTest(approval=approval):
                 self.load_vault.reset_mock()
-                with self.assertRaisesRegex(banking.BankingToolError, "case-sensitive"):
-                    banking.command_commit(
-                        argparse.Namespace(plan=str(approval_path), approval=approval), "match"
-                    )
+                with self.assertRaisesRegex(banking.BankingToolError, "REFUSED"):
+                    banking.command_commit(commit_args(approval_path, approval), "match")
                 self.load_vault.assert_not_called()
                 self.assertFalse(banking.lock_path(saved).exists())
+        # A go with NO time cannot be shown to have come after the plan (A3/A5):
+        # refused before the vault and the lock, naming the flag to pass.
+        self.load_vault.reset_mock()
+        with self.assertRaisesRegex(banking.BankingToolError, "--approval-message-utc"):
+            banking.command_commit(
+                argparse.Namespace(plan=str(approval_path), approval="APPROVED"), "match"
+            )
+        self.load_vault.assert_not_called()
+        self.assertFalse(banking.lock_path(saved).exists())
+        # A go sent BEFORE the plan existed is refused the same way.
+        created = banking.parse_time(
+            json.loads(approval_path.read_text(encoding="utf-8"))["created_utc"], "created_utc"
+        )
+        with self.assertRaisesRegex(banking.BankingToolError, "BEFORE this plan was created"):
+            banking.command_commit(
+                argparse.Namespace(
+                    plan=str(approval_path), approval="APPROVED",
+                    approval_message_utc=(created - timedelta(minutes=1)).isoformat(),
+                ), "match"
+            )
+        self.load_vault.assert_not_called()
+        self.assertFalse(banking.lock_path(saved).exists())
 
     def test_transport_exposes_exactly_four_posts_and_closed_payloads(self) -> None:
         captured = []
@@ -768,7 +800,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             return_value={"code": 0, "banktransaction": produced},
         ) as post, contextlib.redirect_stdout(io.StringIO()) as stdout:
             banking.command_commit(
-                argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                commit_args(path), "categorize"
             )
         self.assertEqual(get_transaction.call_count, 1)
         get_result.assert_called_once()
@@ -842,14 +874,14 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         ), contextlib.redirect_stdout(io.StringIO()):
             with self.assertRaisesRegex(banking.BankingToolError, "indeterminate"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                    commit_args(path), "categorize"
                 )
         digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertTrue(lock["zoho_accepted_the_write"])
         self.assertEqual(lock["resulting_transaction_id"], "101")
-        self.assertTrue(lock["no_retry"])
+        self.assertFalse(lock["permanent_lock"])
 
     def test_categorized_result_id_reads_one_ID_and_refuses_ambiguity(self) -> None:
         for label, response in (
@@ -878,20 +910,20 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         with mock.patch.object(
             banking, "get_bank_transaction", return_value=changed
         ), mock.patch.object(banking, "api_post_allowed") as post:
-            with self.assertRaisesRegex(banking.BankingToolError, "aborted_before_write"):
+            with self.assertRaisesRegex(banking.BankingToolError, "needs_restage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                    commit_args(path), "categorize"
                 )
             post.assert_not_called()
         digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "aborted_before_write")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "needs_restage")
+        self.assertFalse(lock["permanent_lock"])
         self.load_vault.reset_mock()
         with mock.patch.object(banking, "api_post_allowed") as retry:
-            with self.assertRaisesRegex(banking.BankingToolError, "cannot be replayed"):
+            with self.assertRaisesRegex(banking.BankingToolError, "cannot be replayed|Re-stage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                    commit_args(path), "categorize"
                 )
             retry.assert_not_called()
         self.load_vault.assert_not_called()
@@ -988,9 +1020,9 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         ), mock.patch.object(
             banking, "get_account", side_effect=lambda token, vault, account_id: accounts[account_id]
         ), mock.patch.object(banking, "api_post_allowed") as post:
-            with self.assertRaisesRegex(banking.BankingToolError, "aborted_before_write"):
+            with self.assertRaisesRegex(banking.BankingToolError, "needs_restage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                    commit_args(path), "categorize"
                 )
             post.assert_not_called()
 
@@ -1085,7 +1117,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 banking, "api_post_allowed", return_value={"code": 0}
             ) as post, contextlib.redirect_stdout(io.StringIO()) as stdout:
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), action
+                    commit_args(path), action
                 )
                 post.assert_called_once()
                 self.assertEqual(post.call_args.args[2], action)
@@ -1376,7 +1408,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             banking, "api_post_allowed"
         ) as post, contextlib.redirect_stdout(io.StringIO()) as stdout:
             banking.command_commit(
-                argparse.Namespace(plan=str(path), approval="APPROVED"),
+                commit_args(path),
                 "update_transfer_accounts",
             )
         post.assert_not_called()
@@ -1416,17 +1448,17 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         ) as put, mock.patch.object(banking, "api_post_allowed") as post:
             with self.assertRaisesRegex(banking.BankingToolError, "indeterminate"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"),
+                    commit_args(path),
                     "update_transfer_accounts",
                 )
         put.assert_called_once()
         post.assert_not_called()
         digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
         self.assertIn(
-            "zoho_banking_commit_failed_permanently_locked",
+            "zoho_banking_commit_failed_needs_restage",
             [call.args[0] for call in self.append_receipt.call_args_list],
         )
 
@@ -1434,9 +1466,9 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         path, _ = self.stage_update()
         self.vault["scopes"] = [banking.READ_SCOPE, banking.CREATE_SCOPE]
         with mock.patch.object(banking, "api_put_transfer_accounts_allowed") as put:
-            with self.assertRaisesRegex(banking.BankingToolError, "aborted_before_write"):
+            with self.assertRaisesRegex(banking.BankingToolError, "needs_restage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"),
+                    commit_args(path),
                     "update_transfer_accounts",
                 )
             put.assert_not_called()
@@ -1445,26 +1477,32 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         with mock.patch.object(banking, "command_stage") as stage:
             stage_args.func(stage_args)
         self.assertEqual(stage.call_args.args[1], "update_transfer_accounts")
-        commit_args = parser.parse_args([
-            "commit-update-transfer-accounts", "--plan", "x.json", "--approval", "APPROVED"
+        # The time of his message is required on every money commit (A3/A5).
+        with self.assertRaises(SystemExit):
+            parser.parse_args([
+                "commit-update-transfer-accounts", "--plan", "x.json", "--approval", "APPROVED"
+            ])
+        parsed = parser.parse_args([
+            "commit-update-transfer-accounts", "--plan", "x.json", "--approval", "APPROVED",
+            "--approval-message-utc", "2026-08-21T10:00:00+00:00",
         ])
         with mock.patch.object(banking, "command_commit") as commit:
-            commit_args.func(commit_args)
+            parsed.func(parsed)
         self.assertEqual(commit.call_args.args[1], "update_transfer_accounts")
 
     def test_missing_scope_or_org_mismatch_is_locked_before_post(self) -> None:
         path, _ = self.stage_match()
         self.vault["scopes"] = [banking.READ_SCOPE]
         with mock.patch.object(banking, "api_post_allowed") as post:
-            with self.assertRaisesRegex(banking.BankingToolError, "aborted_before_write"):
+            with self.assertRaisesRegex(banking.BankingToolError, "needs_restage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "match"
+                    commit_args(path), "match"
                 )
             post.assert_not_called()
         digest = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         self.assertEqual(
             json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))["status"],
-            "aborted_before_write",
+            "needs_restage",
         )
 
     # ------------------------------------------------------------------
@@ -1891,14 +1929,12 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
     def test_recovery_commit_checks_exact_approval_before_any_network_or_lock(self) -> None:
         path, _ = self.stage_recovery()
         saved = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED NOW", ""):
+        for approval in ("approved but wait", "hold", "APPROVED?", "not yet", ""):
             with self.subTest(approval=approval):
                 self.load_vault.reset_mock()
                 with mock.patch.object(banking, "api_post_allowed") as post:
-                    with self.assertRaisesRegex(banking.BankingToolError, "case-sensitive"):
-                        banking.command_commit(
-                            argparse.Namespace(plan=str(path), approval=approval), "categorize"
-                        )
+                    with self.assertRaisesRegex(banking.BankingToolError, "REFUSED"):
+                        banking.command_commit(commit_args(path, approval), "categorize")
                     post.assert_not_called()
                 self.load_vault.assert_not_called()
                 self.assertFalse(banking.lock_path(saved).exists())
@@ -1937,7 +1973,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
             banking, "api_post_allowed", posted
         ), contextlib.redirect_stdout(io.StringIO()) as stdout:
             banking.command_commit(
-                argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                commit_args(path), "categorize"
             )
         return posted, stdout.getvalue()
 
@@ -1961,16 +1997,16 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
         self.assertTrue(result["replay_locked"])
         lock = json.loads(banking.lock_path(result["plan_sha256"]).read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertTrue(lock["no_retry"])
+        self.assertFalse(lock["permanent_lock"])
         self.assertIn(
             "zoho_banking_reconciliation_committed_verified",
             [call.args[0] for call in self.append_receipt.call_args_list],
         )
         # Replay is impossible even with a correct approval.
         with mock.patch.object(banking, "api_post_allowed") as retry:
-            with self.assertRaisesRegex(banking.BankingToolError, "cannot be replayed"):
+            with self.assertRaisesRegex(banking.BankingToolError, "cannot be replayed|Re-stage"):
                 banking.command_commit(
-                    argparse.Namespace(plan=str(path), approval="APPROVED"), "categorize"
+                    commit_args(path), "categorize"
                 )
             retry.assert_not_called()
 
@@ -1985,57 +2021,57 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
 
         cases = [
             (
-                "source line drift", "aborted_before_write",
+                "source line drift", "needs_restage",
                 {"reads": [self.recovery_source(amount=21642.72), readback]},
             ),
             (
-                "account drift", "aborted_before_write",
+                "account drift", "needs_restage",
                 {"reads": [source, readback], "accounts": drifted_accounts},
             ),
             (
-                "superseded transfer returned", "aborted_before_write",
+                "superseded transfer returned", "needs_restage",
                 {"reads": [source, readback], "superseded": self.transfer(
                     transaction_id="96274000001535012", amount=21642.71,
                     date="2026-07-23", currency_code="USD",
                 )},
             ),
             (
-                "api error", "indeterminate",
+                "api error", "indeterminate_needs_restage",
                 {"reads": [source, readback], "post": {
                     "side_effect": banking.BankingToolError("Zoho banking categorize failed")
                 }},
             ),
             (
-                "result still uncategorized", "indeterminate",
+                "result still uncategorized", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": self.recovery_result(transaction_type="uncategorized")},
             ),
             (
-                "result wrong type", "indeterminate",
+                "result wrong type", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": self.recovery_result(transaction_type="deposit")},
             ),
             (
-                "result amount drifted", "indeterminate",
+                "result amount drifted", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": self.recovery_result(amount=21642.72)},
             ),
             (
-                "result lost the approved account", "indeterminate",
+                "result lost the approved account", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": self.recovery_result(from_account_id="96274000000000999")},
             ),
             (
-                "result reference not preserved", "indeterminate",
+                "result reference not preserved", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": self.recovery_result(reference_number="something else")},
             ),
             (
-                "response carried no resulting ID", "indeterminate",
+                "response carried no resulting ID", "indeterminate_needs_restage",
                 {"reads": [source, readback], "post": {"return_value": {"code": 0}}},
             ),
             (
-                "response carried two different IDs", "indeterminate",
+                "response carried two different IDs", "indeterminate_needs_restage",
                 {"reads": [source, readback], "post": {"return_value": {
                     "code": 0,
                     "transaction_id": "96274000001558075",
@@ -2043,7 +2079,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 }}},
             ),
             (
-                "resulting record unreadable", "indeterminate",
+                "resulting record unreadable", "indeterminate_needs_restage",
                 {"reads": [source, readback],
                  "result": banking.BankingToolError("Zoho did not return resulting bank transaction")},
             ),
@@ -2057,15 +2093,15 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 )
                 with self.assertRaisesRegex(banking.BankingToolError, expected_status):
                     self.commit_recovery(path, posted=posted, **kwargs)
-                if expected_status == "aborted_before_write":
+                if expected_status == "needs_restage":
                     posted.assert_not_called()
                 else:
                     posted.assert_called_once()
                 lock = json.loads(banking.lock_path(digest).read_text(encoding="utf-8"))
                 self.assertEqual(lock["status"], expected_status)
-                self.assertTrue(lock["no_retry"])
+                self.assertFalse(lock["permanent_lock"])
                 self.assertIn(
-                    "zoho_banking_commit_failed_permanently_locked",
+                    "zoho_banking_commit_failed_needs_restage",
                     [call.args[0] for call in self.append_receipt.call_args_list],
                 )
 
@@ -2097,7 +2133,7 @@ class ZohoBankingReconciliationToolTests(unittest.TestCase):
                 with mock.patch.object(banking, "api_post_allowed") as post:
                     with self.assertRaises(banking.BankingToolError):
                         banking.command_commit(
-                            argparse.Namespace(plan=str(target), approval="APPROVED"), "categorize"
+                            commit_args(target), "categorize"
                         )
                     post.assert_not_called()
                 self.load_vault.assert_not_called()

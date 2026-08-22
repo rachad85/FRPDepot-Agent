@@ -377,7 +377,13 @@ class PlanTests(CatalogueToolTestCase):
         digest = "a" * 64
         path = tool.lock_path(digest)
         tool.write_json_exclusive(path, {"status": "in_flight"})
+        with self.assertRaisesRegex(tool.CataloguePublishError, "already entered commit"):
+            tool.write_json_exclusive(tool.lock_path(digest), {"status": "in_flight"})
+        tool.overwrite_json(path, {"status": "committed_verified"})
         with self.assertRaisesRegex(tool.CataloguePublishError, "cannot be replayed"):
+            tool.write_json_exclusive(tool.lock_path(digest), {"status": "in_flight"})
+        tool.overwrite_json(path, {"status": "needs_restage"})
+        with self.assertRaisesRegex(tool.CataloguePublishError, "Re-stage"):
             tool.write_json_exclusive(tool.lock_path(digest), {"status": "in_flight"})
         for bad in ("", "A" * 64, "a" * 63, "zz"):
             with self.subTest(bad=bad), self.assertRaises(tool.CataloguePublishError):
@@ -430,21 +436,85 @@ class FlowTests(CatalogueToolTestCase):
         self.assertEqual(len(locks), 1)
         lock = json.loads(locks[0].read_text(encoding="utf-8"))
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertFalse(lock["rollback_route"])
+        self.assertIn("restore --plan", lock["rollback_route"])
+        self.assertFalse(lock["permanent_lock"])
+        self.assertEqual(lock["owner_go"], "APPROVED")
         self.assertTrue(Path(lock["backup"]).is_file())
         self.assertTrue(Path(lock["result"]).is_file())
+        self.assertTrue(result["plan_spent"])
+        self.assertTrue(tool.owner_authority.live_state_path(plan_path).is_file())
 
-    def test_approval_is_byte_exact_and_checked_before_auth_or_write(self):
+    def test_a_conditional_word_is_refused_before_auth_and_a_plain_yes_is_not(self):
+        """2026-08-21 (A1): exact APPROVED still works, any clear go counts, a
+        condition, a question, a blank or a non-string still refuses before
+        Google is touched."""
         plan_path = self.write_plan()
-        for bad in ("approved", " APPROVED", "APPROVED ", "Approved", "APPROVED\n",
-                    "APPROVED\t", "APPROVED NOW", "ΑPPROVED", "", object()):
+        for bad in ("yes but wait for the new cover", "hold on", "APPROVED?", "", object(), "APPROVED\nnow"):
             with self.subTest(bad=repr(bad)):
                 with mock.patch.object(tool.auth, "drive_service") as auth_call:
-                    with self.assertRaisesRegex(tool.CataloguePublishError, "exact unpadded uppercase"):
+                    with self.assertRaises(tool.CataloguePublishError):
                         tool.command_commit(argparse.Namespace(plan=str(plan_path), approval=bad))
                     auth_call.assert_not_called()
                 self.assertEqual(len(self.fake.update_calls), 0)
                 self.assertFalse((self.plan_dir / ".commit-locks").exists())
+        self.patch_fixed_runtime()
+        output = io.StringIO()
+        with mock.patch("sys.stdout", output):
+            tool.command_commit(argparse.Namespace(plan=str(plan_path), approval="yes go ahead and publish"))
+        self.assertEqual(json.loads(output.getvalue())["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(len(self.fake.update_calls), 1)
+
+    def restore_after_commit(self, live_after_commit=None, live_after_restore=None, approval="yes put it back"):
+        """Commit, then restore, with the live file reading `after` (or the given state)."""
+        self.patch_fixed_runtime()
+        plan_path = self.write_plan()
+        with mock.patch("sys.stdout", io.StringIO()):
+            tool.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
+        backup = Path(json.loads(next((self.plan_dir / ".commit-locks").glob(f"{'[0-9a-f]' * 64}.json")).read_text(encoding="utf-8"))["backup"])
+        restored_state = copy.deepcopy(self.before)
+        restored_state.update({"etag": '"etag-restored"', "modified_time": "2026-08-17T00:00:00.000Z", "version": "29",
+                               "sha256": tool.sha256_bytes(b"old-live-pdf"), "md5": tool.md5_bytes(b"old-live-pdf"),
+                               "bytes": len(b"old-live-pdf"), "pages": 1, "page_headings": ["x"]})
+        after = copy.deepcopy(live_after_commit if live_after_commit is not None else self.after)
+        side_effect = [(after, self.artifact_bytes)]
+        if live_after_restore is not None:
+            side_effect.append((live_after_restore, b"old-live-pdf"))
+        else:
+            side_effect.append((restored_state, b"old-live-pdf"))
+        with mock.patch.object(tool, "live_projection", side_effect=side_effect), \
+             mock.patch.object(tool, "pdf_projection", return_value={"pages": 1, "page_headings": ["x"]}):
+            output = io.StringIO()
+            with mock.patch("sys.stdout", output):
+                tool.command_restore(argparse.Namespace(plan=str(plan_path), approval=approval))
+        return plan_path, backup, json.loads(output.getvalue())
+
+    def test_restore_reuploads_the_backed_up_previous_pdf_once(self):
+        # The plan's `before` must describe the backup bytes for the restore to match.
+        self.before.update({"sha256": tool.sha256_bytes(b"old-live-pdf"), "md5": tool.md5_bytes(b"old-live-pdf"),
+                            "bytes": len(b"old-live-pdf")})
+        self.after.update({"sha256": self.artifact["sha256"]})
+        plan_path, backup, result = self.restore_after_commit()
+        self.assertEqual(result["status"], "RESTORED")
+        self.assertEqual(backup.read_bytes(), b"old-live-pdf")
+        self.assertEqual(len(self.fake.update_calls), 2, "commit once, restore once")
+        self.assertEqual(self.fake.if_match[-1], {"If-Match": self.after["etag"]})
+        record = json.loads(tool.owner_authority.restore_record_path(plan_path).read_text(encoding="utf-8"))
+        self.assertEqual(record["owner_go"], "yes put it back")
+        with self.assertRaisesRegex(tool.CataloguePublishError, "cannot be replayed"):
+            with mock.patch.object(tool, "live_projection", return_value=(copy.deepcopy(self.after), self.artifact_bytes)):
+                tool.command_restore(argparse.Namespace(plan=str(plan_path), approval="yes"))
+        self.assertEqual(len(self.fake.update_calls), 2)
+
+    def test_restore_leaves_a_file_that_moved_since_alone_and_needs_his_go(self):
+        self.before.update({"sha256": tool.sha256_bytes(b"old-live-pdf"), "md5": tool.md5_bytes(b"old-live-pdf"),
+                            "bytes": len(b"old-live-pdf")})
+        moved = copy.deepcopy(self.after); moved["sha256"] = "9" * 64
+        plan_path, _, result = self.restore_after_commit(live_after_commit=moved)
+        self.assertEqual(result["status"], "NOT_RESTORED")
+        self.assertIn("moved since", result["reason"])
+        self.assertEqual(len(self.fake.update_calls), 1)
+        with self.assertRaises(tool.CataloguePublishError):
+            tool.command_restore(argparse.Namespace(plan=str(plan_path), approval="wait"))
 
     def test_live_drift_refuses_before_lock_and_update(self):
         drift = copy.deepcopy(self.before); drift["version"] = "28"
@@ -464,20 +534,24 @@ class FlowTests(CatalogueToolTestCase):
             auth_call.assert_not_called()
         self.assertFalse((self.plan_dir / ".commit-locks").exists())
 
-    def test_update_failure_locks_indeterminate_and_never_retries(self):
+    def test_update_failure_needs_restage_and_the_same_plan_is_not_retried(self):
+        """A4 (2026-08-21): no silent retry, no permanent lock. The SAME plan is
+        bound to stale live state and is refused; a re-stage reads Drive again."""
         self.patch_fixed_runtime(live_side_effect=[(copy.deepcopy(self.before), b"old")])
         self.fake.update_error = RuntimeError("simulated timeout")
-        with self.assertRaisesRegex(tool.CataloguePublishError, "permanently locked"):
+        with self.assertRaisesRegex(tool.CataloguePublishError, "re-stage") as caught:
             tool.command_commit(argparse.Namespace(plan=str(self.write_plan()), approval="APPROVED"))
+        self.assertNotIn("permanent", str(caught.exception).casefold())
         self.assertEqual(len(self.fake.update_calls), 1)
         lock_path = next((self.plan_dir / ".commit-locks").glob("*.json"))
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate_no_retry")
-        with self.assertRaisesRegex(tool.CataloguePublishError, "cannot be replayed"):
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
+        with self.assertRaisesRegex(tool.CataloguePublishError, "Re-stage"):
             tool.command_commit(argparse.Namespace(plan=str(self.plan_dir / "plan.json"), approval="APPROVED"))
         self.assertEqual(len(self.fake.update_calls), 1)
 
-    def test_http_412_is_authoritative_no_write_but_replay_locked(self):
+    def test_http_412_is_authoritative_no_write_and_needs_restage(self):
         self.patch_fixed_runtime(live_side_effect=[(copy.deepcopy(self.before), b"old")])
         self.fake.update_error = PreconditionFailed()
         with self.assertRaisesRegex(tool.CataloguePublishError, "authoritatively rejected"):
@@ -485,20 +559,21 @@ class FlowTests(CatalogueToolTestCase):
         self.assertEqual(len(self.fake.update_calls), 1)
         lock_path = next((self.plan_dir / ".commit-locks").glob("*.json"))
         lock = json.loads(lock_path.read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "failed_closed_no_write_authoritative")
-        with self.assertRaisesRegex(tool.CataloguePublishError, "cannot be replayed"):
+        self.assertEqual(lock["status"], "needs_restage")
+        self.assertTrue(lock["authoritative_no_write"])
+        with self.assertRaisesRegex(tool.CataloguePublishError, "Re-stage"):
             tool.command_commit(argparse.Namespace(plan=str(self.plan_dir / "plan.json"), approval="APPROVED"))
         self.assertEqual(len(self.fake.update_calls), 1)
 
-    def test_byte_mismatch_after_update_locks_indeterminate(self):
+    def test_byte_mismatch_after_update_is_indeterminate_and_needs_restage(self):
         self.patch_fixed_runtime(live_side_effect=[
             (copy.deepcopy(self.before), b"old"),
             (copy.deepcopy(self.after), b"wrong-readback"),
         ])
-        with self.assertRaisesRegex(tool.CataloguePublishError, "permanently locked"):
+        with self.assertRaisesRegex(tool.CataloguePublishError, "re-stage"):
             tool.command_commit(argparse.Namespace(plan=str(self.write_plan()), approval="APPROVED"))
         lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate_no_retry")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(len(self.fake.update_calls), 1)
 
     def test_protected_name_parent_or_share_link_change_locks_indeterminate(self):
@@ -518,10 +593,10 @@ class FlowTests(CatalogueToolTestCase):
                         with mock.patch.object(tool, "artifact_projection", return_value=(copy.deepcopy(self.artifact), self.artifact_bytes)), \
                              mock.patch.object(tool, "live_projection", side_effect=[(copy.deepcopy(self.before), b"old"), (damaged, self.artifact_bytes)]), \
                              mock.patch.object(tool.auth, "drive_service", return_value=fake.service()):
-                            with self.assertRaisesRegex(tool.CataloguePublishError, "permanently locked"):
+                            with self.assertRaisesRegex(tool.CataloguePublishError, "re-stage"):
                                 tool.command_commit(argparse.Namespace(plan=str(plan_path), approval="APPROVED"))
                         lock = json.loads(next((plan_dir / ".commit-locks").glob("*.json")).read_text(encoding="utf-8"))
-                        self.assertEqual(lock["status"], "indeterminate_no_retry")
+                        self.assertEqual(lock["status"], "indeterminate_needs_restage")
                         self.assertEqual(len(fake.update_calls), 1)
 
 
@@ -547,12 +622,18 @@ class StaticSurfaceTests(unittest.TestCase):
         for forbidden in ("InstalledAppFlow", "flow.run_local_server", "token.json", "grant.json", "SCOPES ="):
             self.assertNotIn(forbidden, source)
 
-    def test_write_contract_discloses_one_attempt_no_rollback_and_no_mail(self):
+    def test_write_contract_discloses_one_attempt_the_restore_route_and_no_mail(self):
         self.assertEqual(tool.WRITE_CONTRACT["remote_requests"], 1)
         self.assertEqual(tool.WRITE_CONTRACT["attempts"], 1)
         self.assertFalse(tool.WRITE_CONTRACT["retry"])
-        self.assertFalse(tool.WRITE_CONTRACT["rollback_route"])
+        self.assertIn("restore --plan", tool.WRITE_CONTRACT["rollback_route"])
         self.assertFalse(tool.WRITE_CONTRACT["email_or_notification"])
+
+    def test_parser_exposes_restore_with_the_shared_go_arguments(self):
+        parser = tool.build_parser()
+        args = parser.parse_args(["restore", "--plan", "x", "--approval", "yes", "--approval-lane", "discord"])
+        self.assertIs(args.func, tool.command_restore)
+        self.assertEqual(args.approval_lane, "discord")
 
 
 if __name__ == "__main__":

@@ -298,11 +298,13 @@ class ZohoInventoryItemGroupOptionTests(unittest.TestCase):
         self.assertEqual(reverted, before)
 
     def test_commit_requires_plain_approval_before_network_or_lock(self) -> None:
+        # 2026-08-21: a clear "yes" now counts; a conditional one still refuses
+        # before the vault, the network or the lock.
         plan, _ = self.stage()
         self.load_vault.reset_mock()
         with self.assertRaises(item_tool.ItemToolError):
             item_tool.command_commit_group_option_rename(
-                argparse.Namespace(plan=str(plan), approval="YES")
+                argparse.Namespace(plan=str(plan), approval="YES but wait for the 36 inch first")
             )
         self.load_vault.assert_not_called()
         self.assertFalse(item_tool.commit_lock_path(str(plan)).exists())
@@ -376,11 +378,16 @@ class ZohoInventoryItemGroupOptionTests(unittest.TestCase):
             "api_write_allowed",
             side_effect=item_tool.ItemToolError("indeterminate write failure"),
         ):
-            with self.assertRaises(item_tool.ItemToolError):
+            with self.assertRaises(item_tool.ItemToolError) as caught:
                 item_tool.command_commit_group_option_rename(
                     argparse.Namespace(plan=str(plan), approval="APPROVED")
                 )
         self.assertTrue(item_tool.commit_lock_path(str(plan)).exists())
+        # 2026-08-21 (A4): the record says re-stage, never permanent.
+        self.assertIn("re-stage", str(caught.exception).casefold())
+        lock = json.loads(item_tool.commit_lock_path(str(plan)).read_text(encoding="utf-8"))
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
         second_plan, _ = self.stage()
         with mock.patch.object(

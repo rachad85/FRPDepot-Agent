@@ -694,15 +694,16 @@ class CommitTests(CorrectionTestCase):
     def test_approval_must_be_exact_and_is_checked_before_anything_else(self) -> None:
         path = self.stage(QT29)
         digest = self.plan_json(path)["sha256"]
-        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n",
-                         "", "YES", digest, f"APPROVED {digest}", None, True):
+        # 2026-08-21 (A1): a plain or padded yes now counts; a condition, a
+        # question, a blank, a bare checksum or a non-string still refuses.
+        for approval in ("approved but wait", "hold on", "APPROVED?", "", digest, None, True):
             with self.subTest(approval=approval):
                 with patch.object(draft, "PLAN_DIR", self.plan_dir), patch.object(
                     draft.zoho_tool, "load_vault", side_effect=AssertionError("vault must not open")
                 ), patch.object(
                     draft.zoho_tool, "api_get", side_effect=AssertionError("no GET")
                 ), patch.object(draft, "urlopen", side_effect=AssertionError("no write")):
-                    with self.assertRaisesRegex(draft.DraftToolError, "APPROVED"):
+                    with self.assertRaisesRegex(draft.DraftToolError, "REFUSED"):
                         draft.command_commit_tds_discount_correction(
                             argparse.Namespace(plan=str(path), approval=approval)
                         )
@@ -717,7 +718,7 @@ class CommitTests(CorrectionTestCase):
         self.assertIn(draft.ESTIMATE_UPDATE_SCOPE, str(error))
         self.assertIn("REAUTHORIZE_DADO_ZOHO.bat", str(error))
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "aborted_before_write")
+        self.assertEqual(record["status"], "needs_restage")
         self.assertFalse(record["write_attempted"])
 
     def test_plan_hash_mismatch_is_refused(self) -> None:
@@ -798,7 +799,7 @@ class CommitTests(CorrectionTestCase):
         )
         self.assertIn("changed after review", str(error))
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "aborted_before_write")
+        self.assertEqual(record["status"], "needs_restage")
         self.assertFalse(record["write_attempted"])
 
     def test_only_estimate_url_may_regenerate_between_gets(self) -> None:
@@ -820,13 +821,13 @@ class CommitTests(CorrectionTestCase):
         drifted = live_estimate(QT29)
         drifted["status"] = "sent"
         self.commit_expecting_error(path, reads=[{"code": 0, "estimate": drifted}])
-        self.assertEqual(self.lock_record(path)["status"], "aborted_before_write")
+        self.assertEqual(self.lock_record(path)["status"], "needs_restage")
 
     def test_replay_is_refused_after_a_committed_plan(self) -> None:
         path = self.stage(QT29)
         self.commit(path)
         error = self.commit_expecting_error(path)
-        self.assertIn("already entered commit", str(error))
+        self.assertIn("cannot be replayed", str(error))
 
     def test_a_failed_put_leaves_the_plan_locked_with_no_retry(self) -> None:
         path = self.stage(QT29)
@@ -834,11 +835,11 @@ class CommitTests(CorrectionTestCase):
             path, put_error=URLError("connection reset")
         )
         self.assertIn("indeterminate", str(error))
-        self.assertIn("permanently locked", str(error))
+        self.assertIn("re-stage", str(error).casefold())
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "indeterminate")
+        self.assertEqual(record["status"], "indeterminate_needs_restage")
         self.assertTrue(record["write_attempted"])
-        self.assertTrue(record["no_retry"])
+        self.assertFalse(record["permanent_lock"])
         self.commit_expecting_error(path)
 
     def test_an_http_error_from_zoho_locks_the_plan(self) -> None:
@@ -848,8 +849,8 @@ class CommitTests(CorrectionTestCase):
             io.BytesIO(b'{"code":15,"message":"invalid"}'),
         )
         error = self.commit_expecting_error(path, put_error=failure)
-        self.assertIn("permanently locked", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertIn("re-stage", str(error).casefold())
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_only_one_put_is_ever_attempted(self) -> None:
         path = self.stage(QT29)
@@ -857,7 +858,7 @@ class CommitTests(CorrectionTestCase):
         # One attempt, then the lock. Nothing in this tool retries a write.
         self.assertEqual(len(self.last_calls["puts"]), 1)
         self.assertEqual(self.last_calls["gets"], 1)
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
 
 class ReadBackTests(CorrectionTestCase):
@@ -908,7 +909,7 @@ class ReadBackTests(CorrectionTestCase):
                     put_result={"code": 0, "estimate": corrected_estimate(QT29)},
                 )
                 self.assertIn("Fresh read-back", str(error))
-                self.assertEqual(self.lock_record(fresh_path)["status"], "indeterminate")
+                self.assertEqual(self.lock_record(fresh_path)["status"], "indeterminate_needs_restage")
 
     def test_a_wrong_put_response_stops_before_the_fresh_read(self) -> None:
         path = self.stage(QT29)
@@ -919,7 +920,7 @@ class ReadBackTests(CorrectionTestCase):
             put_result={"code": 0, "estimate": wrong},
         )
         self.assertIn("PUT response", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_a_correct_read_back_passes_every_rule(self) -> None:
         path = self.stage(QT29)
@@ -1188,15 +1189,15 @@ class CreatePathRegressionTests(unittest.TestCase):
                     draft.command_commit(
                         argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
                     )
-                with self.assertRaisesRegex(draft.DraftToolError, "already entered commit"):
+                with self.assertRaisesRegex(draft.DraftToolError, "Re-stage"):
                     draft.command_commit(
                         argparse.Namespace(plan=str(path), approval="APPROVED"), "quote"
                     )
             self.assertEqual(calls, [True])
             lock = plan_dir / draft.QUOTE_COMMIT_LOCK_DIRNAME / f"{plan['sha256']}.json"
             record = json.loads(lock.read_text(encoding="utf-8"))
-            self.assertEqual(record["status"], "indeterminate")
-            self.assertTrue(record["no_retry"])
+            self.assertEqual(record["status"], "indeterminate_needs_restage")
+            self.assertFalse(record["permanent_lock"])
             self.assertTrue(record["write_attempted"])
 
     def test_quote_card_wrong_operation_hash_expiry_and_nonexact_approval_are_refused(self) -> None:
@@ -1212,11 +1213,11 @@ class CreatePathRegressionTests(unittest.TestCase):
                 }],
             }, plan_dir)
             plan_path = next(plan_dir.glob("*_quote_*.json"))
-            for bad in ("approved", " APPROVED", "APPROVED ", "APPROVED\n", "APPROVED yes", ""):
+            for bad in ("approved but wait", "hold on", "APPROVED?", ""):
                 with self.subTest(approval=bad), patch.object(
                     draft.zoho_tool, "load_vault", side_effect=AssertionError("vault must not open")
                 ), patch.object(draft, "urlopen", side_effect=AssertionError("no network")):
-                    with self.assertRaisesRegex(draft.DraftToolError, "exact uppercase"):
+                    with self.assertRaisesRegex(draft.DraftToolError, "REFUSED"):
                         draft.command_commit(
                             argparse.Namespace(plan=str(plan_path), approval=bad), "quote"
                         )

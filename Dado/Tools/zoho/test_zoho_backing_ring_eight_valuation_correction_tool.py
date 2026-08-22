@@ -145,8 +145,13 @@ class ValueCorrectionCase(unittest.TestCase):
         self.urlopen_mock.side_effect = transport
 
     def commit(self, plan: Path, approval="APPROVED") -> str:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+        after = (tool.parse_utc(created, "created_utc") + timedelta(minutes=1)).isoformat()
         output = io.StringIO()
-        with mock.patch("sys.stdout", output): tool.command_commit(argparse.Namespace(plan=str(plan), approval=approval))
+        with mock.patch("sys.stdout", output):
+            tool.command_commit(argparse.Namespace(plan=str(plan), approval=approval, approval_message_utc=after))
         return output.getvalue()
 
 
@@ -221,9 +226,19 @@ class TestFixedContract(ValueCorrectionCase):
 class TestCommitSafety(ValueCorrectionCase):
     def test_approval_exact_before_vault_and_network(self):
         plan = self.stage(); self.load_mock.reset_mock()
-        for bad in ("approved", " APPROVED", "APPROVED ", "yes", ""):
+        for bad in ("approved but wait", "hold on", "APPROVED?", "not yet", ""):
             with self.subTest(bad=bad):
-                with self.assertRaisesRegex(tool.ValueCorrectionError, "exactly"): self.commit(plan, bad)
+                with self.assertRaisesRegex(tool.ValueCorrectionError, "REFUSED"): self.commit(plan, bad)
+        # A3/A5: a go with NO time cannot be shown to have come after the plan,
+        # and a go sent BEFORE the plan existed cannot approve it.
+        with self.assertRaisesRegex(tool.ValueCorrectionError, "--approval-message-utc"):
+            tool.command_commit(argparse.Namespace(plan=str(plan), approval="yes go ahead"))
+        created = tool.parse_utc(json.loads(plan.read_text(encoding="utf-8"))["created_utc"], "created")
+        with self.assertRaisesRegex(tool.ValueCorrectionError, "BEFORE this plan was created"):
+            tool.command_commit(argparse.Namespace(
+                plan=str(plan), approval="yes go ahead",
+                approval_message_utc=(created - timedelta(minutes=1)).isoformat(),
+            ))
         self.load_mock.assert_not_called(); self.urlopen_mock.assert_not_called()
 
     def test_missing_scope_refuses_before_refresh_and_lock(self):
@@ -264,7 +279,7 @@ class TestCommitSafety(ValueCorrectionCase):
         self.allow_write(fail=True); plan = self.stage()
         with self.assertRaises(tool.ValueCorrectionError): self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
-        with self.assertRaisesRegex(tool.ValueCorrectionError, "already commit-locked"): self.commit(plan)
+        with self.assertRaisesRegex(tool.ValueCorrectionError, "Re-stage"): self.commit(plan)
         self.assertEqual(len(self.write_calls), 1)
 
     def test_transport_rejects_any_payload_mutation(self):

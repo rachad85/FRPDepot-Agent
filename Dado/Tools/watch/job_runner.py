@@ -4,9 +4,13 @@ The 2026-07-24 failure: Dado started a 16-hour Google index, then sat in her own
 turn polling it with a blocking 600-second call, seventeen times, telling Rachad
 nothing for three hours, on course to hit her 60-call ceiling and die mid-job.
 
-The rule this enforces: a long job is NOT something you watch. You start it, you
-tell Rachad it started, and you END YOUR TURN so you stay reachable. The job
-reports itself when it finishes.
+The rule this enforces: a long job is NOT something you block on. Since the
+autonomy programme (2026-08-21, spec B1) an ordinary long step runs INSIDE the
+turn as a background process with one-line progress notes and its result
+reported on the lane that asked; job_runner is kept for work that must outlive
+a gateway restart. Either way you start it, tell Rachad it started, keep
+working or say what you are waiting on, and never sit in a blocking poll: the
+job reports itself when it finishes, on the originating lane.
 
     start   launch a job fully detached and return immediately
     status  one-line-per-job snapshot; costs milliseconds, never blocks
@@ -14,8 +18,20 @@ reports itself when it finishes.
 
 Usage:
     python job_runner.py start --name google-index -- <python.exe> <script.py> --mode drive
+    python job_runner.py start --name x --lane discord -- <cmd>   (result goes to Discord)
     python job_runner.py status
     python job_runner.py watch          (cron; silent when nothing changed)
+
+ORIGINATING LANE (autonomy programme, 2026-08-21, spec B1). The result of a job
+is reported on the lane the request came from -- Telegram, Discord or the
+dashboard chat -- instead of Telegram only. `start` learns the lane from the
+`--lane` argument, else from HERMES_SESSION_PLATFORM (Hermes bridges the
+session's HERMES_SESSION_* variables onto every local child process, so a
+`start` issued from Dado's terminal tool sees the platform of the chat that
+asked), else it defaults to Telegram. The dashboard (api_server) cannot receive
+a push, so a dashboard job's result is delivered on Telegram with a note saying
+why. job_runner is kept for work that must outlive a gateway restart; ordinary
+long steps now run inside the turn (SOUL LONG JOBS).
 
 Cron:
     hermes -p dado cron create "*/10 * * * *" --name dado-job-watch \
@@ -59,9 +75,58 @@ DEFAULT_TIMEOUT_HOURS = 6.0
 # session other tools depend on.
 SERVICE_JOB = "service"
 
+# Rachad's lanes (SOUL: Telegram, Discord, the dashboard chat) and the names
+# Hermes gives the same lanes in HERMES_SESSION_PLATFORM / state.db `source`.
+LANES = ("telegram", "discord", "dashboard")
+LANE_ALIASES = {"api_server": "dashboard", "webui": "dashboard", "web": "dashboard", "app": "dashboard"}
+DEFAULT_LANE = "telegram"
+DASHBOARD_NOTE = (" (Asked from the dashboard chat; delivered here because the dashboard "
+                  "has no push lane.)")
+
 # Windows detached-launch flags: the child must survive its parent, and must not
 # die when the launching console (or Dado's turn) goes away.
 DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP
+
+
+def normalize_lane(value) -> str:
+    """Plain lane name (argument form); the session-aware resolver is originating_lane()."""
+    return originating_lane(value, {})["lane"]
+
+
+def originating_lane(explicit: str | None = None, env: dict | None = None) -> dict:
+    """Which of Rachad's lanes asked for this job, and where its result goes.
+
+    Precedence: the `--lane` argument, then the session platform Hermes bridged
+    into this process's environment, then Telegram. For Discord the session's
+    own chat id (when this IS a Discord session) makes the target that DM;
+    otherwise the platform's home channel. Unknown names fall back to Telegram
+    rather than refusing -- a lane name is routing, not authority.
+    """
+    env = os.environ if env is None else env
+    platform = (env.get("HERMES_SESSION_PLATFORM") or "").strip().lower()
+    raw = (explicit or "").strip().lower() or platform
+    lane = LANE_ALIASES.get(raw, raw)
+    if lane not in LANES:
+        lane = DEFAULT_LANE
+    target = ""
+    if lane == "discord":
+        chat = (env.get("HERMES_SESSION_CHAT_ID") or "").strip()
+        if chat and platform == "discord" and ":" not in chat:
+            target = f"discord:{chat}"
+        else:
+            target = "discord"
+    source = "argument" if explicit else ("session" if platform else "default")
+    return {"lane": lane, "lane_target": target, "lane_source": source}
+
+
+def delivery_target(job: dict) -> tuple[str, str]:
+    """(`hermes send --to` value or '' for the default Telegram DM, note to append)."""
+    lane = str(job.get("lane") or DEFAULT_LANE)
+    if lane == "discord":
+        return str(job.get("lane_target") or "discord"), ""
+    if lane == "dashboard":
+        return "", DASHBOARD_NOTE
+    return "", ""
 
 
 def now() -> dt.datetime:
@@ -230,6 +295,7 @@ def cmd_start(args: argparse.Namespace) -> int:
         print("nothing to run: put the command after --")
         return 2
     job_id = f"{now():%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:6]}"
+    lane = originating_lane(getattr(args, "lane", None))
     job = {
         "id": job_id,
         "name": args.name,
@@ -245,6 +311,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         # alert. Everything else is finite and gets a ceiling.
         "kind": SERVICE_JOB if args.service else "job",
         "timeout_hours": None if args.service else float(args.timeout_hours),
+        # The lane the request came from; the watch tick reports there.
+        "lane": lane["lane"],
+        "lane_target": lane["lane_target"],
+        "lane_source": lane["lane_source"],
     }
     save(job)
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
@@ -263,8 +333,10 @@ def cmd_start(args: argparse.Namespace) -> int:
         "name": args.name,
         "status": "started",
         "log": str(log_path(job_id)),
-        "next": ("Job is running detached. END YOUR TURN and tell Rachad it started. "
-                 "Do NOT poll it. dado-job-watch will announce the result."),
+        "lane": lane["lane"],
+        "next": ("Job is running detached. Tell Rachad it started and carry on with the "
+                 "task list. Do NOT poll it in a loop. dado-job-watch will announce the "
+                 f"result on the lane the request came from ({lane['lane']})."),
     }, indent=1))
     return 0
 
@@ -371,7 +443,9 @@ def cmd_watch(_: argparse.Namespace) -> int:
     # marked reported until it survives the print cap below - jobs 6+ in one tick
     # used to be flagged on disk and then discarded, losing the announcement for
     # good.
-    pending: list[tuple[str, str | None, dict]] = []
+    # The 4th slot is the job record itself (None for a broken-file notice) so
+    # delivery below can route each line to the lane that asked for the job.
+    pending: list[tuple[str, str | None, dict, dict | None]] = []
     jobs, broken = all_jobs()
     for job in jobs:
         status = job.get("status")
@@ -386,7 +460,7 @@ def cmd_watch(_: argparse.Namespace) -> int:
             summary = summarize_output(job["id"])
             detail = f" {summary}" if summary else ""
             pending.append((f"Background job '{job['name']}' {verdict}.{detail}",
-                            job["id"], {"reported": True}))
+                            job["id"], {"reported": True}, job))
             continue
 
         if status in {"running", "starting"}:
@@ -406,13 +480,13 @@ def cmd_watch(_: argparse.Namespace) -> int:
                         summary = summarize_output(job["id"])
                         detail = f" {summary}" if summary else ""
                         pending.append((f"Background job '{job['name']}' {verdict}.{detail}",
-                                        job["id"], {"reported": True}))
+                                        job["id"], {"reported": True}, job))
                     continue
                 if not job.get("reported"):
                     pending.append((
                         f"Background job '{job['name']}' died without finishing "
                         f"(process gone, no exit code recorded). It may need restarting.",
-                        job["id"], {"status": "died", "reported": True}))
+                        job["id"], {"status": "died", "reported": True}, job))
                 continue
             age = heartbeat_age_minutes(job["id"])
             if (age is not None and age >= STALE_HEARTBEAT_MINUTES
@@ -425,13 +499,13 @@ def cmd_watch(_: argparse.Namespace) -> int:
                 pending.append((
                     f"Background job '{job['name']}' has produced no output for "
                     f"{age:.0f} min. It may be stuck.",
-                    job["id"], {"stall_reported": True}))
+                    job["id"], {"stall_reported": True}, job))
 
     # Broken-file notices go LAST. Appended first, five unparseable files refilled
     # the cap on every tick and permanently starved real job results.
     broken_msgs = [
         (f"A background job record could not be read ({name}). Whatever job it "
-         "tracked will never report its result — the backend should look.", None, {})
+         "tracked will never report its result — the backend should look.", None, {}, None)
         for name in broken
     ]
     pending.extend(broken_msgs)
@@ -439,7 +513,7 @@ def cmd_watch(_: argparse.Namespace) -> int:
     shown = pending[:MAX_WATCH_MESSAGES]
     held = len(pending) - len(shown)
     if shown:
-        lines = [text for text, _, _ in shown]
+        lines = [text for text, _, _, _ in shown]
         if held > 0:
             lines.append(f"({held} more job update(s) held for the next tick.)")
         message = "\n".join(lines)
@@ -458,14 +532,26 @@ def cmd_watch(_: argparse.Namespace) -> int:
         # Now the script owns delivery and the flag follows the CONFIRMED send.
         # queue_on_failure=False on purpose: this alert is re-derived from the
         # job records every 10 minutes, so leaving the flag unset IS the queue.
-        if _deliver(message):
-            for _, job_id, flags in shown:
-                if job_id and flags:
-                    save_flags(job_id, **flags)
-        else:
-            # Nothing persisted: the next tick re-derives and tries again.
-            print("(delivery not confirmed - these updates stay owed and will "
-                  "be re-sent on the next tick.)")
+        #
+        # ORIGINATING LANE (2026-08-21): one send per lane that has something
+        # to hear, each persisted on its own confirmation, so a Discord outage
+        # cannot leave a Telegram job marked "announced" or vice versa.
+        groups: dict[str, list[tuple[str, str | None, dict]]] = {}
+        for text, job_id, flags, job in shown:
+            target, note = delivery_target(job or {})
+            groups.setdefault(target, []).append((text + note, job_id, flags))
+        for target, entries in groups.items():
+            lane_lines = [text for text, _, _ in entries]
+            if held > 0:
+                lane_lines.append(f"({held} more job update(s) held for the next tick.)")
+            if _deliver("\n".join(lane_lines), target):
+                for _, job_id, flags in entries:
+                    if job_id and flags:
+                        save_flags(job_id, **flags)
+            else:
+                # Nothing persisted: the next tick re-derives and tries again.
+                print(f"(delivery not confirmed on {target or DEFAULT_LANE} - these updates "
+                      "stay owed and will be re-sent on the next tick.)")
     return 0
 
 
@@ -489,8 +575,11 @@ def _test_run_suppressed() -> bool:
         return bool(os.environ.get("PYTEST_CURRENT_TEST"))
 
 
-def _deliver(message: str) -> bool:
-    """Send an announcement and report whether Telegram actually took it.
+def _deliver(message: str, target: str = "") -> bool:
+    """Send an announcement and report whether the lane actually took it.
+
+    `target` is a `hermes send --to` value ("discord", "discord:<chat>"); the
+    empty string means the reasoner's default -- Rachad's Telegram DM.
 
     The reasoner import is LAZY and local on purpose: `job_runner start` is how
     Dado launches every long job, and a broken import in a sibling module must
@@ -513,6 +602,12 @@ def _deliver(message: str) -> bool:
               "this tick's updates stay owed.)")
         return False
     try:
+        if target:
+            return bool(send_clean(message, queue_on_failure=False, target=target))
+        # The default lane is called WITHOUT the `target` kwarg on purpose: the
+        # profile's scripts copy of dado_inbox_reasoner.py may predate the
+        # parameter (added 2026-08-21), and a Telegram announcement must never
+        # fail because a sibling copy is one revision behind.
         return bool(send_clean(message, queue_on_failure=False))
     except Exception as exc:  # noqa: BLE001
         print(f"(send raised - {type(exc).__name__}: {exc}; updates stay owed.)")
@@ -535,6 +630,11 @@ def build_parser() -> argparse.ArgumentParser:
         help="this job is SUPPOSED to run indefinitely (e.g. an authenticated "
              "browser session other tools attach to). Never timed out, never "
              "reported as stalled; still watched for death.")
+    start.add_argument(
+        "--lane", default=None, choices=list(LANES) + sorted(LANE_ALIASES),
+        help="the lane Rachad asked on (telegram, discord, dashboard); the result is "
+             "announced there. Default: the session platform Hermes passes in, else "
+             f"{DEFAULT_LANE}. A dashboard result comes via Telegram with a note (no push route).")
     start.add_argument("command", nargs=argparse.REMAINDER)
     start.set_defaults(func=cmd_start)
 

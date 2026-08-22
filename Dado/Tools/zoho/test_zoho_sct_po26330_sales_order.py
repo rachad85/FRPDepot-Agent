@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import ast
 import copy
+from datetime import datetime, timedelta
 from decimal import Decimal, ROUND_HALF_UP
 import hashlib
 import json
@@ -465,8 +466,14 @@ class SalesOrderTestCase(unittest.TestCase):
         return state
 
     def commit(self, plan_path: Path, approval: str = so_tool.APPROVAL_WORD) -> None:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        created = json.loads(plan_path.read_text(encoding="utf-8"))["created_utc"]
         so_tool.command_commit(
-            mock.Mock(plan=str(plan_path), approval=approval)
+            mock.Mock(
+                plan=str(plan_path), approval=approval, approval_lane=None,
+                approval_message_utc=(datetime.fromisoformat(created) + timedelta(minutes=1)).isoformat(),
+            )
         )
 
     def assert_no_write_attempted(self) -> None:
@@ -613,13 +620,29 @@ class SurfaceTests(unittest.TestCase):
             self.assertNotIn(forbidden, zoho_tool.SCOPES)
         self.assertTrue(all(scope.endswith(".READ") for scope in so_tool.REQUIRED_READ_SCOPES))
 
-    def test_approval_word_is_byte_exact(self) -> None:
+    def test_approval_is_his_unambiguous_go_after_the_plan(self) -> None:
+        """2026-08-21 (A3): APPROVED still works and is still the word the plan
+        names; "yes go ahead" to the shown plan counts; a condition, a question,
+        a blank or a non-string refuses; a word sent before the plan existed
+        cannot approve it."""
         self.assertEqual(so_tool.APPROVAL_WORD, "APPROVED")
-        for bad in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n", "", None, 1):
+        plan = {"created_utc": "2026-08-11T10:00:00+00:00", "expires_utc": "2026-08-12T10:00:00+00:00"}
+        after = "2026-08-11T10:01:00+00:00"
+        for bad in ("approved but wait", "hold", "APPROVED?", "APPROVED\nnow", "", None, 1):
             with self.assertRaises(so_tool.SalesOrderError):
-                so_tool.require_rachad_approval(bad)
-        self.assertIsNone(so_tool.require_rachad_approval("APPROVED"))
-        self.assertNotIn(".strip()", self.source.split("def require_rachad_approval")[1][:600])
+                so_tool.require_rachad_approval(bad, plan, sent_utc=after)
+        self.assertTrue(so_tool.require_rachad_approval("APPROVED", plan, sent_utc=after).exact_word)
+        self.assertEqual(so_tool.require_rachad_approval("yes go ahead", plan, sent_utc=after).kind, "money")
+        # A go with no time is refused: "after the plan" cannot be proven.
+        with self.assertRaisesRegex(so_tool.SalesOrderError, "--approval-message-utc"):
+            so_tool.require_rachad_approval("APPROVED", plan)
+        with self.assertRaisesRegex(so_tool.SalesOrderError, "BEFORE this plan was created"):
+            so_tool.require_rachad_approval("APPROVED", plan, sent_utc="2026-08-11T09:59:00+00:00")
+        go = so_tool.require_rachad_approval("APPROVED", plan, sent_utc=after)
+        self.assertEqual(go.sent_utc, after)
+        # The plan is mandatory: there is no reversible fallback on a money check.
+        with self.assertRaises(TypeError):
+            so_tool.require_rachad_approval("APPROVED")
 
     def test_the_fixed_transaction_constants_match_the_client_po(self) -> None:
         self.assertEqual(so_tool.CUSTOMER_ID, "96274000000186533")
@@ -1143,10 +1166,15 @@ class CommandLineTests(unittest.TestCase):
         parser = so_tool.build_parser()
         with self.assertRaises(SystemExit):
             parser.parse_args(["commit-sct-po26330", "--plan", "x.json"])
+        # The time of his message is required too (A3/A5).
+        with self.assertRaises(SystemExit):
+            parser.parse_args(["commit-sct-po26330", "--plan", "x.json", "--approval", "APPROVED"])
         args = parser.parse_args(
-            ["commit-sct-po26330", "--plan", "x.json", "--approval", "APPROVED"]
+            ["commit-sct-po26330", "--plan", "x.json", "--approval", "APPROVED",
+             "--approval-message-utc", "2026-08-11T10:01:00+00:00"]
         )
         self.assertEqual(args.approval, "APPROVED")
+        self.assertEqual(args.approval_message_utc, "2026-08-11T10:01:00+00:00")
 
     def test_stage_takes_no_arguments_so_nothing_can_be_redirected(self) -> None:
         parser = so_tool.build_parser()
@@ -1368,11 +1396,11 @@ class CommitRefusalTests(SalesOrderTestCase):
         self.plan_path = self.stage()
 
     def test_wrong_approval_refuses_before_lock_and_before_network(self) -> None:
-        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "yes", ""):
+        for approval in ("approved but wait", "hold on", "APPROVED?", "", "not yet"):
             with self.subTest(approval=approval):
                 with self.assertRaises(so_tool.SalesOrderError) as caught:
                     self.commit(self.plan_path, approval)
-                self.assertIn("one-word approval", str(caught.exception))
+                self.assertIn("unambiguous go" if approval else "no approval text", str(caught.exception))
                 self.assert_no_write_attempted()
 
     def test_missing_create_scope_refuses_before_lock_and_before_network(self) -> None:
@@ -1536,7 +1564,7 @@ class CommitSuccessTests(SalesOrderTestCase):
         self.allow_writes()
         with self.assertRaises(so_tool.SalesOrderError) as caught:
             self.commit(self.plan_path)
-        self.assertIn("already entered commit", str(caught.exception))
+        self.assertIn("cannot be replayed", str(caught.exception))
         self.assertEqual(self.write_calls, [])
 
     def test_the_receipt_records_the_verified_outcome(self) -> None:
@@ -1592,15 +1620,18 @@ class CommitFailureTests(SalesOrderTestCase):
         self.assertIn("indeterminate", message)
         self.assertIn(NEW_SALESORDER_ID, message)
         self.assertIn("NOTHING was cleaned up", message)
+        self.assertIn("re-stage", message.casefold())
+        self.assertNotIn("permanent", message.casefold())
         lock = self.lock_body()
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
         self.assertTrue(lock["create_attempted"])
         self.assertFalse(lock["attachment_attempted"])
         self.assertEqual(lock["salesorder_id"], NEW_SALESORDER_ID)
         # No cleanup call of any kind followed the failure.
         self.assertEqual(len(self.write_calls), 1)
 
-    def test_an_attachment_failure_after_create_locks_forever(self) -> None:
+    def test_an_attachment_failure_after_create_is_reported_and_needs_restage(self) -> None:
         self.allow_writes(
             on_attach=lambda record: (_ for _ in ()).throw(
                 HTTPError(record["url"], 400, "Bad Request", None, None)
@@ -1611,10 +1642,12 @@ class CommitFailureTests(SalesOrderTestCase):
         message = str(caught.exception)
         self.assertIn(NEW_SALESORDER_ID, message)
         self.assertIn("attachment POST was ALSO issued", message)
-        self.assertIn("nothing will be retried", message)
+        self.assertIn("nothing is retried silently", message)
+        self.assertIn("his go to the NEW plan", message)
         lock = self.lock_body()
         self.assertTrue(lock["attachment_attempted"])
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["stage_of_failure"], "after_create_and_attachment_attempt")
+        self.assertFalse(lock["permanent_lock"])
         self.assertEqual(len(self.write_calls), 2)
         # A second attempt is refused by the lock, not re-tried.
         with self.assertRaises(so_tool.SalesOrderError):
@@ -1651,7 +1684,8 @@ class CommitFailureTests(SalesOrderTestCase):
         self.assertIn("NO attachment was uploaded", message)
         lock = self.lock_body()
         self.assertEqual(lock["salesorder_id"], "")
-        self.assertTrue(lock["plan_locked_indeterminate"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
     def test_a_create_response_without_an_id_is_indeterminate(self) -> None:
         self.allow_writes(on_create=lambda record: {"code": 0, "message": "ok"})

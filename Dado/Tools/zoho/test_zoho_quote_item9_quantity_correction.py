@@ -399,7 +399,7 @@ class FixedTargetTests(Item9TestCase):
         args = parser.parse_args([
             "commit-tds-item9-quantity-correction", "--plan", "p", "--approval", "APPROVED"
         ])
-        self.assertEqual(set(vars(args)) - {"command", "func"}, {"plan", "approval"})
+        self.assertEqual(set(vars(args)) - {"command", "func"}, {"plan", "approval", "approval_lane"})
         self.assertIs(args.func, draft.command_commit_item9_quantity_correction)
 
     def test_independent_arithmetic_of_the_change(self) -> None:
@@ -781,7 +781,7 @@ class CommitTests(Item9TestCase):
         record = self.lock_record(path)
         self.assertEqual(record["status"], "committed_verified")
         self.assertEqual(record["kind"], draft.ITEM9_KIND)
-        self.assertTrue(record["no_retry"])
+        self.assertFalse(record["permanent_lock"])
 
     def test_the_committed_payload_changes_only_item_9(self) -> None:
         path = self.stage()
@@ -803,8 +803,9 @@ class CommitTests(Item9TestCase):
     def test_approval_must_be_exact_and_precedes_lock_vault_and_network(self) -> None:
         path = self.stage()
         digest = self.plan_json(path)["sha256"]
-        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n",
-                         "APPROVED\t", "", "YES", "OK", digest, f"APPROVED {digest}",
+        # 2026-08-21 (A1): a plain or padded yes now counts; a condition, a
+        # question, a blank, a bare checksum or a non-string still refuses.
+        for approval in ("approved but wait", "hold on", "APPROVED?", "", digest,
                          None, True, 1, ["APPROVED"]):
             with self.subTest(approval=approval):
                 with patch.object(draft, "PLAN_DIR", self.plan_dir), patch.object(
@@ -814,7 +815,7 @@ class CommitTests(Item9TestCase):
                 ), patch.object(
                     draft.zoho_tool, "api_get", side_effect=AssertionError("no GET")
                 ), patch.object(draft, "urlopen", side_effect=AssertionError("no write")):
-                    with self.assertRaisesRegex(draft.DraftToolError, "APPROVED"):
+                    with self.assertRaisesRegex(draft.DraftToolError, "REFUSED"):
                         draft.command_commit_item9_quantity_correction(
                             argparse.Namespace(plan=str(path), approval=approval)
                         )
@@ -1333,9 +1334,9 @@ class ReadBackTests(Item9TestCase):
             self.assertRegex(str(error), pattern)
         self.assertIn("indeterminate", str(error))
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "indeterminate")
+        self.assertEqual(record["status"], "indeterminate_needs_restage")
         self.assertTrue(record["write_attempted"])
-        self.assertTrue(record["no_retry"])
+        self.assertFalse(record["permanent_lock"])
 
     def test_a_status_change_after_the_write_is_caught(self) -> None:
         for status in ("draft", "accepted", "invoiced", "declined"):
@@ -1431,7 +1432,7 @@ class ReadBackTests(Item9TestCase):
             put_result={"code": 0, "estimate": good},
         )
         self.assertIn("indeterminate", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_a_wrong_put_response_is_caught_immediately(self) -> None:
         path = self.stage()
@@ -1444,7 +1445,7 @@ class ReadBackTests(Item9TestCase):
             put_result={"code": 0, "estimate": wrong},
         )
         self.assertIn("indeterminate", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
 
 # ---------------------------------------------------------------------------
@@ -1485,11 +1486,11 @@ class LockAndReplayTests(Item9TestCase):
                     error.read = lambda: b'{"code":15,"message":"nope"}'
                 raised = self.commit_expecting_error(path, put_error=error)
                 self.assertIn("indeterminate", str(raised))
-                self.assertIn("permanently locked", str(raised))
+                self.assertIn("re-stage", str(raised).casefold())
                 record = self.lock_record(path)
-                self.assertEqual(record["status"], "indeterminate")
+                self.assertEqual(record["status"], "indeterminate_needs_restage")
                 self.assertTrue(record["write_attempted"])
-                self.assertTrue(record["plan_locked_indeterminate"])
+                self.assertFalse(record["permanent_lock"])
                 # No retry: a second attempt is refused before any network call.
                 with patch.object(draft, "PLAN_DIR", self.plan_dir), patch.object(
                     draft.zoho_tool, "append_receipt"
@@ -1526,7 +1527,7 @@ class LockAndReplayTests(Item9TestCase):
                 draft.command_commit_item9_quantity_correction(
                     argparse.Namespace(plan=str(path), approval="APPROVED")
                 )
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_a_nonzero_zoho_code_is_indeterminate_and_locked(self) -> None:
         path = self.stage()
@@ -1534,7 +1535,7 @@ class LockAndReplayTests(Item9TestCase):
             path, put_result={"code": 15, "message": "attributes too long"}
         )
         self.assertIn("indeterminate", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_only_one_put_is_ever_issued(self) -> None:
         path = self.stage()
@@ -1600,8 +1601,11 @@ class SourceContainmentTests(unittest.TestCase):
         self.assertIn('"new_quantity": Decimal("1")', self.source)
         self.assertIn('"current_quantity": Decimal("4")', self.source)
 
-    def test_the_approval_word_is_compared_byte_exactly(self) -> None:
-        self.assertIn('approval != APPROVAL_WORD', self.source)
+    def test_the_approval_is_judged_by_the_one_shared_detector(self) -> None:
+        """2026-08-21: no hand-written comparator -- the shared owner-authority
+        module (a verbatim copy of Aze's detector) decides."""
+        self.assertIn("owner_authority.require_owner_go(", self.source)
+        self.assertNotIn('approval != APPROVAL_WORD', self.source)
         self.assertNotIn("approval.strip()", self.source)
         self.assertNotIn("approval.upper()", self.source)
         self.assertNotIn("approval.casefold()", self.source)

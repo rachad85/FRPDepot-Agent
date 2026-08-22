@@ -10,11 +10,20 @@ into the nightly bundle):
 1. conduct_collect.py builds the day's evidence bundle (deterministic).
 2. Headless Claude Code reviews the bundle against Dado's constitution
    (the repo mirror C:\\FRPDepot\\DadoProfile\\SOUL.md) and MAY apply
-   small, bounded fixes inside C:\\FRPDepot (acceptEdits, no Bash).
-3. A deterministic guard: if the reviewer changed the "## HARD RULES"
-   section of the SOUL mirror, the file is reverted from git and Rachad
-   is told. Otherwise a changed mirror is synced to the live profile
-   SOUL (Hermes re-reads SOUL per prompt build -- no restart needed).
+   small, bounded fixes inside C:\\FRPDepot (acceptEdits, no Bash):
+   the fit profile and tool bugs ONLY. Since 2026-08-21 it may NOT edit
+   the SOUL mirror at all (Rachad's autonomy programme, item B6: nightly
+   auto-fixes had grown the SOUL to 73 KB, past the 65,280-char context
+   cap, so the middle of her own constitution was being cut out).
+3. A deterministic guard: if the SOUL mirror changed AT ALL during the
+   review (any section, not only HARD RULES), its exact pre-review bytes
+   are written back and Rachad is told; a git checkout is the fallback
+   only when that write fails. The guard runs on EVERY exit path -- a
+   finished review, a timed-out reviewer and a failed or empty run alike
+   -- before main() returns, because a reviewer killed or crashed
+   mid-edit has still edited the mirror. Otherwise a changed mirror is
+   synced to the live profile SOUL (Hermes re-reads SOUL per prompt
+   build -- no restart needed).
 4. Everything dirty in C:\\FRPDepot is git-committed (rollback per night).
 5. Full report -> 30_Memory\\conduct_reviews\\<date>.md (the backend
    session reads the newest at session start).
@@ -90,16 +99,19 @@ Judge the DAY, not the transcript line by line. Look for:
 - touching Rachad more than needed, or ignoring something he asked.
 
 AUTO-FIX AUTHORITY -- you may fix small causes directly with Edit, only
-inside C:\\FRPDepot:
-- SOUL mirror wording in sections OTHER than "## HARD RULES";
+inside C:\\FRPDepot, and only these two things:
 - the fit profile (30_Memory\\fit_profile.md) when the day's messages
   contain a company fact Rachad stated that is missing from it;
 - obvious bugs in Dado's own tool scripts under Dado\\Tools\\.
-NEVER: the "## HARD RULES" section, any .env or key/token, anything
-outside C:\\FRPDepot, any new capability (no send paths, no write tools),
-and no big rewrites -- keep the whole night's diff under ~30 changed
-lines. A fix bigger than that becomes a finding for the backend, not an
-edit. Record every edit you make as an AUTO-FIXED line.
+NEVER: DadoProfile\\SOUL.md -- not one character, in ANY section. The SOUL
+is authored by Rachad and the backend; a rule that should change becomes a
+FINDING carrying the proposed wording, never an edit (any change you make
+there is reverted automatically and reported as a guard trip). Also never:
+any .env or key/token, anything outside C:\\FRPDepot, any new capability
+(no send paths, no write tools), and no big rewrites -- keep the whole
+night's diff under ~30 changed lines. A fix bigger than that becomes a
+finding for the backend, not an edit. Record every edit you make as an
+AUTO-FIXED line.
 
 Be strict about evidence: cite the exact log line or file section for
 every finding. Do not speculate beyond the bundle.
@@ -134,16 +146,71 @@ def git(*args: str) -> subprocess.CompletedProcess:
     )
 
 
+def collect_bundle(day: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [PYTHON, str(COLLECTOR), day],
+        capture_output=True, text=True, timeout=300,
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+def run_reviewer(prompt: str) -> subprocess.CompletedProcess:
+    return subprocess.run(
+        [str(CLAUDE), "-p", prompt,
+         "--output-format", "text",
+         "--permission-mode", "acceptEdits",
+         "--disallowedTools", "Bash,WebFetch,WebSearch,NotebookEdit"],
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
+        timeout=TIMEOUT_SECONDS, cwd=str(REPO),
+        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+    )
+
+
+GUARD_NOTE = ("GUARD TRIPPED: the reviewer modified Dado's SOUL mirror "
+              "(DadoProfile\\SOUL.md); the pre-review file was restored "
+              "byte for byte.")
+
+
+def write_mirror(data: bytes) -> None:
+    MIRROR_SOUL.write_bytes(data)
+
+
+def revert_reviewer_soul_changes(before: bytes) -> str:
+    """Deterministic guard (autonomy programme B6, 2026-08-21): ANY change to
+    the SOUL mirror during the review is undone, whatever section it touched.
+
+    The pre-review BYTES are written back rather than `git checkout`: a checkout
+    would also wipe a legitimate backend edit made earlier that day and not yet
+    committed (the CLAUDE.md warning of 2026-07-24 -- the nightly commit below
+    is what commits it). git is the fallback only when the write itself fails.
+    Returns the guard note for the report and the Telegram ping, or "" when the
+    mirror is untouched.
+    """
+    try:
+        after = MIRROR_SOUL.read_bytes()
+    except OSError:
+        after = None
+    if after == before:
+        return ""
+    try:
+        write_mirror(before)
+        restored = MIRROR_SOUL.read_bytes() == before
+    except OSError:
+        restored = False
+    if restored:
+        return GUARD_NOTE
+    git("checkout", "--", "DadoProfile/SOUL.md")
+    return (GUARD_NOTE + " (the byte restore FAILED, so the file was reverted "
+            "from git instead; an uncommitted backend edit may be lost -- "
+            "check git log.)")
+
+
 def main() -> int:
     day = sys.argv[1] if len(sys.argv) > 1 else (
         dt.date.today() - dt.timedelta(days=1)
     ).isoformat()
 
-    collected = subprocess.run(
-        [PYTHON, str(COLLECTOR), day],
-        capture_output=True, text=True, timeout=300,
-        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-    )
+    collected = collect_bundle(day)
     if collected.returncode != 0 or not collected.stdout.strip():
         say(f"Dado conduct review skipped: evidence collection failed for {day} "
             f"({(collected.stderr or 'no output').strip()[:200]}). "
@@ -152,7 +219,7 @@ def main() -> int:
     bundle = collected.stdout.strip().splitlines()[-1]
 
     try:
-        hard_before = hard_rules_section(MIRROR_SOUL.read_text(encoding="utf-8"))
+        mirror_before = MIRROR_SOUL.read_bytes()
         live_before = LIVE_SOUL.read_text(encoding="utf-8")
     except OSError as exc:
         say(f"Dado conduct review skipped: cannot read SOUL ({exc}).")
@@ -160,17 +227,6 @@ def main() -> int:
 
     prompt = PROMPT.format(bundle=bundle, constitution=str(MIRROR_SOUL),
                            clean_marker=CLEAN_MARKER)
-
-    def invoke_claude() -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [str(CLAUDE), "-p", prompt,
-             "--output-format", "text",
-             "--permission-mode", "acceptEdits",
-             "--disallowedTools", "Bash,WebFetch,WebSearch,NotebookEdit"],
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=TIMEOUT_SECONDS, cwd=str(REPO),
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
 
     # 2026-08-01 05:10 claude died in ~3s with exit 1 and an EMPTY stderr (its
     # startup errors mostly go to stdout, which the old message never showed),
@@ -184,11 +240,15 @@ def main() -> int:
     while True:
         started = time.monotonic()
         try:
-            review = invoke_claude()
+            review = run_reviewer(prompt)
         except subprocess.TimeoutExpired:
+            # B6 on this exit path too: a reviewer killed mid-run may already
+            # have edited the mirror, and nothing below this line would run.
+            guard_note = revert_reviewer_soul_changes(mirror_before)
             say(f"Dado conduct review for {day} timed out after "
                 f"{TIMEOUT_SECONDS // 60} min; the bundle is saved -- ask the "
-                "backend to review it in session.")
+                "backend to review it in session."
+                + (f" {guard_note}" if guard_note else ""))
             return 0
         elapsed = time.monotonic() - started
         if review.returncode == 0 and (review.stdout or "").strip():
@@ -212,26 +272,23 @@ def main() -> int:
             pass
     output = (review.stdout or "").strip()
     if review.returncode != 0 or not output:
+        # B6 on the failed / empty-run path: either attempt may have edited
+        # the mirror before it died; the guard below would never be reached.
+        guard_note = revert_reviewer_soul_changes(mirror_before)
         detail = ((review.stderr or "").strip()
                   or (review.stdout or "").strip() or "no output")[:200]
         say(f"Dado conduct review for {day} could not run "
             f"(claude exit {review.returncode}, {len(attempts)} attempt(s): "
             f"{detail}). Full detail in "
             f"Dado\\40_Logs\\conduct\\{day}-claude-failures.txt; "
-            "ask the backend in session.")
+            "ask the backend in session."
+            + (f" {guard_note}" if guard_note else ""))
         return 0
 
-    # Deterministic guard: HARD RULES must be untouched.
-    guard_note = ""
-    try:
-        hard_after = hard_rules_section(MIRROR_SOUL.read_text(encoding="utf-8"))
-    except OSError:
-        hard_after = ""
-    if hard_after != hard_before:
-        git("checkout", "--", "DadoProfile/SOUL.md")
-        guard_note = ("GUARD TRIPPED: the reviewer modified the HARD RULES "
-                      "section of Dado's SOUL; the change was reverted from git.")
-    else:
+    # Deterministic guard (B6): the SOUL mirror must be byte-identical to what
+    # it was before the reviewer ran -- any section, not only HARD RULES.
+    guard_note = revert_reviewer_soul_changes(mirror_before)
+    if not guard_note:
         # Sync a (safely) changed mirror to the live profile SOUL.
         try:
             mirror_now = MIRROR_SOUL.read_text(encoding="utf-8")

@@ -289,7 +289,9 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
     def test_wrong_or_multiword_approval_rejected_before_token_service_and_lock(self) -> None:
         path, _ = self.stage_create("Approval Test")
         saved = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-        for approval in ("YES", "APPROVED NOW", "APPROVE", "", "a" * 64):
+        # 2026-08-21 (A1): "YES" / "APPROVE" now count; a conditional, a
+        # question, a blank or a non-word still refuses before anything runs.
+        for approval in ("YES but rename it first", "wait", "APPROVED?", "", "a" * 64):
             with self.subTest(approval=approval):
                 self.load_vault.reset_mock()
                 with mock.patch.object(category, "api_write_allowed") as write:
@@ -338,7 +340,7 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
             category, "list_all_categories",
             return_value=[{"category_id": "202", "name": "appears later"}],
         ), mock.patch.object(category, "api_write_allowed") as write:
-            with self.assertRaisesRegex(category.CategoryToolError, "permanently locked"):
+            with self.assertRaisesRegex(category.CategoryToolError, "re-stage"):
                 category.command_commit_create(
                     argparse.Namespace(plan=str(path), approval="APPROVED")
                 )
@@ -346,8 +348,9 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
         lock = json.loads(category.lock_path(
             json.loads(path.read_text(encoding="utf-8"))["sha256"]
         ).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "aborted_before_write")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "needs_restage")
+        self.assertFalse(lock["write_attempted"])
+        self.assertFalse(lock["permanent_lock"])
 
     def test_explicit_write_allowlist_uses_only_exact_verbs_paths_and_payload_keys(self) -> None:
         captured = []
@@ -429,7 +432,7 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
         self.assertEqual(lock["status"], "committed_verified")
         self.assertTrue(result["replay_locked"])
 
-    def test_assignment_exact_live_precondition_blocks_write_and_permanently_locks(self) -> None:
+    def test_assignment_exact_live_precondition_blocks_write_and_needs_restage(self) -> None:
         original = self.item("1")
         path, _ = self.stage_assign([original])
         changed = self.item("1", stock_on_hand=8.0)
@@ -438,16 +441,17 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
         ), mock.patch.object(
             category, "get_item", return_value=changed
         ), mock.patch.object(category, "api_write_allowed") as write:
-            with self.assertRaisesRegex(category.CategoryToolError, "indeterminate"):
+            with self.assertRaisesRegex(category.CategoryToolError, "re-stage"):
                 category.command_commit_assign(
                     argparse.Namespace(plan=str(path), approval="APPROVED")
                 )
             write.assert_not_called()
         sha = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(category.lock_path(sha).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "needs_restage")
         self.assertEqual(lock["completed_item_ids"], [])
-        self.assertTrue(lock["no_retry"])
+        self.assertIn("1", lock["failed"])
+        self.assertFalse(lock["permanent_lock"])
 
     def test_assignment_readback_protects_every_noncategory_business_field(self) -> None:
         original = self.item("1")
@@ -470,9 +474,9 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
         self.assertEqual(write.call_count, 1)
         sha = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(category.lock_path(sha).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertEqual(lock["write_in_flight_item_id"], "1")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertEqual(lock["indeterminate"], ["1"])
+        self.assertFalse(lock["permanent_lock"])
 
     def commit_successful_assignment(self, count: int) -> tuple[Path, dict, mock.Mock]:
         originals = [self.item(str(index)) for index in range(1, count + 1)]
@@ -544,51 +548,107 @@ class ZohoInventoryCategoryToolTests(unittest.TestCase):
         self.load_vault.assert_not_called()
         self.assertTrue(result["replay_locked"])
 
-    def test_partial_or_indeterminate_failure_records_completed_ids_receipt_and_no_retry(self) -> None:
+    def test_a_failed_line_is_recorded_the_batch_goes_on_and_the_plan_needs_restage(self) -> None:
+        """A4/A6 (2026-08-21): one failed line does not stop the others and
+        nothing is permanently locked; the same plan is bound to stale state
+        and is refused, the re-stage carries only the failed lines."""
         originals = [self.item(str(index)) for index in range(1, 4)]
         path, _ = self.stage_assign(originals)
-        reads = [
-            originals[0],
-            {**originals[0], "category_id": "200", "category_name": "Target Category",
-             "last_modified_time": "2026-08-07T01:00:00-0400"},
-            originals[1],
-        ]
-        writes = [
-            {"code": 0},
-            category.CategoryToolError("synthetic indeterminate transport failure"),
-        ]
+        by_id = {row["item_id"]: row for row in originals}
+        assigned = lambda row: {**row, "category_id": "200", "category_name": "Target Category",  # noqa: E731
+                                "last_modified_time": "2026-08-07T01:00:00-0400"}
+        reads = {item_id: 0 for item_id in by_id}
+
+        def get_item(token, vault, item_id):
+            reads[item_id] += 1
+            return by_id[item_id] if reads[item_id] == 1 else assigned(by_id[item_id])
+
+        def write_allowed(token, domain, method, endpoint, org_id, payload):
+            if endpoint.endswith("/2"):
+                raise category.CategoryToolError("synthetic indeterminate transport failure")
+            return {"code": 0}
+
         with mock.patch.object(
             category, "list_all_categories", return_value=[self.target]
         ), mock.patch.object(
-            category, "get_item", side_effect=reads
+            category, "get_item", side_effect=get_item
         ), mock.patch.object(
-            category, "api_write_allowed", side_effect=writes
+            category, "api_write_allowed", side_effect=write_allowed
         ) as write:
-            with self.assertRaisesRegex(category.CategoryToolError, "partial"):
+            with self.assertRaisesRegex(category.CategoryToolError, "re-stage") as caught:
                 category.command_commit_assign(
-                    argparse.Namespace(plan=str(path), approval="APPROVED")
+                    argparse.Namespace(plan=str(path), approval="go ahead with all three")
                 )
-        self.assertEqual(write.call_count, 2)
+        self.assertNotIn("permanent", str(caught.exception).casefold())
+        self.assertEqual(write.call_count, 3, "the third line must still run")
         sha = json.loads(path.read_text(encoding="utf-8"))["sha256"]
         lock = json.loads(category.lock_path(sha).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "partial")
-        self.assertEqual(lock["completed_item_ids"], ["1"])
-        self.assertEqual(lock["write_in_flight_item_id"], "2")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertEqual(lock["completed_item_ids"], ["1", "3"])
+        self.assertEqual(lock["indeterminate"], ["2"])
+        self.assertEqual(list(lock["failed"]), ["2"])
+        self.assertEqual(lock["restage_only"], ["2"])
+        self.assertFalse(lock["permanent_lock"])
+        self.assertEqual(lock["owner_go"], "go ahead with all three")
+        backup = json.loads(Path(lock["backup"]).read_text(encoding="utf-8"))["state"]
+        self.assertEqual(set(backup), {"1", "2", "3"})
         receipt_actions = [call.args[0] for call in self.append_receipt.call_args_list]
-        self.assertIn(
-            "zoho_inventory_category_assignment_partial_or_indeterminate_no_retry",
-            receipt_actions,
-        )
+        self.assertIn("zoho_inventory_category_assignment_indeterminate_needs_restage", receipt_actions)
 
         self.load_vault.reset_mock()
         with mock.patch.object(category, "api_write_allowed") as retry:
-            with self.assertRaisesRegex(category.CategoryToolError, "cannot be replayed"):
+            with self.assertRaisesRegex(category.CategoryToolError, "Re-stage"):
                 category.command_commit_assign(
                     argparse.Namespace(plan=str(path), approval="APPROVED")
                 )
             retry.assert_not_called()
         self.load_vault.assert_not_called()
+
+    def test_restore_assign_puts_the_previous_categories_back(self) -> None:
+        path, result, _ = self.commit_successful_assignment(2)
+        live = {
+            "1": self.item("1", category_id="200", category_name="Target Category"),
+            "2": self.item("2", category_id="200", category_name="Target Category"),
+        }
+        backup = json.loads(Path(result["live_state_backup"]).read_text(encoding="utf-8"))["state"]
+        self.assertEqual(backup["1"]["before_category_id"], "")
+        # Give item 2 a previous category so one line is restorable and one is not.
+        backup_path = category.owner_authority.live_state_path(path)
+        record = json.loads(backup_path.read_text(encoding="utf-8"))
+        record["state"]["2"]["before_category_id"] = "150"
+        record["state_sha256"] = category.owner_authority.sha256_of(record["state"])
+        backup_path.write_text(json.dumps(record), encoding="utf-8")
+        writes = []
+
+        def write_allowed(token, domain, method, endpoint, org_id, payload):
+            writes.append((endpoint, payload))
+            item_id = endpoint.rsplit("/", 1)[-1]
+            live[item_id]["category_id"] = payload["category_id"]
+            return {"code": 0}
+
+        with mock.patch.object(
+            category, "get_item", side_effect=lambda token, vault, item_id: dict(live[item_id])
+        ), mock.patch.object(
+            category, "api_write_allowed", side_effect=write_allowed
+        ), contextlib.redirect_stdout(io.StringIO()) as stdout:
+            category.command_restore_assign(argparse.Namespace(plan=str(path), approval="yes put them back"))
+        restored = json.loads(stdout.getvalue())
+        self.assertEqual(restored["status"], "RESTORED")
+        self.assertEqual([row["item_id"] for row in restored["restored"]], ["2"])
+        self.assertEqual(writes, [("/inventory/v1/items/2", {"name": "Item 2", "category_id": "150"})])
+        self.assertIn("had no category before", restored["skipped"]["1"])
+        with self.assertRaisesRegex(category.CategoryToolError, "already restored"):
+            with contextlib.redirect_stdout(io.StringIO()):
+                category.command_restore_assign(argparse.Namespace(plan=str(path), approval="yes"))
+        with self.assertRaises(category.CategoryToolError):
+            category.command_restore_assign(argparse.Namespace(plan=str(path), approval="wait"))
+
+    def test_parser_exposes_restore_assign(self) -> None:
+        parser = category.build_parser()
+        args = parser.parse_args(["restore-assign", "--plan", "p.json", "--approval", "yes",
+                                  "--approval-lane", "discord"])
+        self.assertIs(args.func, category.command_restore_assign)
+        self.assertEqual(args.approval_lane, "discord")
 
     def test_list_categories_is_read_only_and_uses_confirmed_representation(self) -> None:
         with mock.patch.object(

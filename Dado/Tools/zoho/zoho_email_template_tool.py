@@ -624,14 +624,34 @@ def require_fixed_target(name: Any, cc: Any, label: str) -> tuple[str, tuple[str
     return name, expected
 
 
-def require_rachad_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding."""
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise EmailTemplateError(
-            "Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). Building, "
-            "testing or staging is not approval, and Dado cannot supply it."
-        )
+# Shared owner authority (autonomy programme 2026-08-21, spec A1/A2/A4). Email
+# templates are REVERSIBLE work: his clear go in his own message covers the
+# plan (exact APPROVED still works; "yes" / "go ahead" count); a failed or
+# partial creation reads "needs re-stage" with every created ID recorded --
+# nothing is permanently locked; a committed plan is spent. A CREATED template
+# has NO restore route: Zoho deletes are walled (Hard Rule 3), so the template
+# stays and the receipt records its ID. The commissioned stage-delete /
+# commit-delete below reaches ONE fixed template behind its own gate and is
+# not a restore. Appended so the common folder never shadows the stdlib.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
+# The same disclosure the item-create path makes (zoho_inventory_item_tool):
+# recorded in the lock, the stdout receipt and the failure message of every
+# creation, so nothing ever claims a delete is a way back.
+CREATE_RESTORE_DISCLOSURE = (
+    "not available: no restore route for a created template; Zoho deletes are walled "
+    "(Hard Rule 3); the template stays and this receipt records its ID"
+)
+
+
+def require_rachad_approval(approval: Any, lane: Any = None) -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1). Building, testing or staging
+    is not approval, and Dado cannot supply it."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what="this email-template plan")
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise EmailTemplateError(str(exc)) from exc
 
 
 def origin_record() -> dict[str, str]:
@@ -2525,10 +2545,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise EmailTemplateError(
-            "This plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(EmailTemplateError, owner_authority.read_json_if_exists(path),
+                                      what="email-template plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -2691,8 +2712,8 @@ def command_stage(args: argparse.Namespace) -> None:
 
 @holds_zoho_browser("Zoho email templates: clone Default into a fixed CC template")
 def command_commit(args: argparse.Namespace) -> None:
-    # Byte-exact approval is checked before any plan read, browser or network.
-    require_rachad_approval(args.approval)
+    # His go is checked before any plan read, browser or network.
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     plan_path = contained_plan(args.plan)
     vault = zoho_tool.load_vault()
     plan = load_plan(plan_path, args.action, vault)
@@ -2725,13 +2746,10 @@ def command_commit(args: argparse.Namespace) -> None:
         )
 
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": args.action,
-        "status": "in_flight",
-        "created_template_ids": {},
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=args.action, go=go,
+        created_template_ids={}, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
 
     created: dict[str, str] = {}
     verified: dict[str, Any] = {}
@@ -2761,34 +2779,29 @@ def command_commit(args: argparse.Namespace) -> None:
         _, final_detail, _ = read_live_state(org_id)
         verify_source_unchanged(final_detail, plan["live_evidence"]["source_detail"])
     except Exception as exc:
-        status = "partial" if created else ("indeterminate" if in_flight else "aborted_before_write")
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": args.action,
-            "status": status,
-            "created_template_ids": created,
-            "write_in_flight_template": in_flight,
-            "not_attempted": [
-                name for name in names if name not in created and name != in_flight
-            ],
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-            "email_sent": False,
-        })
+        status = (owner_authority.STATUS_INDETERMINATE if (created or in_flight)
+                  else owner_authority.STATUS_NEEDS_RESTAGE)
+        not_attempted = [name for name in names if name not in created and name != in_flight]
+        shape = "partial" if created else ("indeterminate" if in_flight else "nothing written")
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=args.action, go=go, reason=str(exc),
+            created_template_ids=created, write_in_flight_template=in_flight,
+            not_attempted=not_attempted, email_sent=False, shape=shape,
+        ))
         zoho_tool.append_receipt(
-            "zoho_email_template_create_partial_indeterminate_or_aborted_no_retry",
-            f"status={status}; created={','.join(created) or 'none'}; "
+            f"zoho_email_template_create_{status}",
+            f"status={status}; shape={shape}; created={','.join(created) or 'none'}; "
             f"in_flight={in_flight or 'none'}; plan={plan_path}; "
             f"sha256={plan['sha256']}; emails_sent=0",
         )
         raise EmailTemplateError(
-            f"Email-template creation is {status} and the whole plan is permanently "
-            f"locked against retry. This was never atomic. Live-verified: "
-            f"{sorted(verified) or 'none'}. In flight when it stopped: "
-            f"{in_flight or 'none'}. Not attempted: "
-            f"{[name for name in names if name not in created and name != in_flight]}. "
-            f"Reconcile live Zoho state before staging anything new. Reason: {exc}"
+            owner_authority.explain_outcome(
+                "Email-template creation", status,
+                f"Outcome shape: {shape}. This was never atomic. Live-verified: "
+                f"{sorted(verified) or 'none'}. In flight when it stopped: "
+                f"{in_flight or 'none'}. Not attempted: {not_attempted}. Restore "
+                f"{CREATE_RESTORE_DISCLOSURE}. Reason: {exc}",
+            )
         ) from exc
 
     exposure: dict[str, Any] = {"status": "not_requested"}
@@ -2805,17 +2818,11 @@ def command_commit(args: argparse.Namespace) -> None:
         except Exception as exc:  # verification only; creation already succeeded
             exposure = {"status": "not_verified", "reason": str(exc)[:500]}
 
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": args.action,
-        "status": "committed_verified",
-        "created_template_ids": created,
-        "exposure": exposure,
-        "clone_fidelity": fidelity,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-        "email_sent": False,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=args.action, go=go,
+        created_template_ids=created, exposure=exposure, clone_fidelity=fidelity, email_sent=False,
+        restore=CREATE_RESTORE_DISCLOSURE,
+    ))
     zoho_tool.append_receipt(
         "zoho_email_template_created_committed_verified",
         f"action={args.action}; created={json.dumps(created)}; plan={plan_path}; "
@@ -2832,6 +2839,8 @@ def command_commit(args: argparse.Namespace) -> None:
         "source_default_unchanged": True,
         "atomic": False,
         "replay_locked": True,
+        "plan_spent": True,
+        "restore": CREATE_RESTORE_DISCLOSURE,
         "emails_sent": 0,
     }, ensure_ascii=False, indent=2))
 
@@ -2942,11 +2951,21 @@ def command_stage_delete(_: argparse.Namespace) -> None:
 
 @holds_zoho_browser("Zoho email templates: commissioned delete of one fixed template")
 def command_commit_delete(args: argparse.Namespace) -> None:
-    # Byte-exact approval is checked before any plan read, browser or network.
-    require_rachad_approval(args.approval)
+    # His go is checked before any plan read, browser or network.
+    require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     plan_path = contained_plan(args.plan)
     vault = zoho_tool.load_vault()
     plan = load_delete_plan(plan_path, vault)
+    # A3: a delete is IRREVERSIBLE work, so the go must be his own unambiguous
+    # go to THIS plan, sent after it was written (the message time is required).
+    try:
+        go = owner_authority.require_owner_go_after_plan(
+            args.approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=getattr(args, "approval_message_utc", None), lane=getattr(args, "approval_lane", None),
+            what="this email-template delete plan",
+        )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise EmailTemplateError(str(exc)) from exc
     org_id = plan["organization"]["books_organization_id"]
 
     # Fresh live re-read: the plan's own record of the world is never trusted.
@@ -2968,13 +2987,10 @@ def command_commit_delete(args: argparse.Namespace) -> None:
     # The lock goes in LAST, immediately before the one irreversible action, so
     # every refusal above cost nothing and left the plan committable.
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": DELETE_ACCIDENTAL_ACCOUNTING,
-        "status": "in_flight",
-        "target_template_id": DELETE_TARGET_TEMPLATE_ID,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=DELETE_ACCIDENTAL_ACCOUNTING,
+        go=go, target_template_id=DELETE_TARGET_TEMPLATE_ID, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
 
     try:
         released = delete_template_via_ui(org_id)
@@ -2985,32 +3001,26 @@ def command_commit_delete(args: argparse.Namespace) -> None:
         if final_detail["email_template_id"] != plan["live_evidence"]["source_template_id"]:
             raise EmailTemplateError("The source Default template changed during the delete.")
     except Exception as exc:
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": DELETE_ACCIDENTAL_ACCOUNTING,
-            "status": "indeterminate",
-            "target_template_id": DELETE_TARGET_TEMPLATE_ID,
-            "reason": str(exc)[:2000],
-            "updated_utc": utc_now().isoformat(),
-            "no_retry": True,
-        })
+        write_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"],
+            action=DELETE_ACCIDENTAL_ACCOUNTING, go=go, reason=str(exc),
+            target_template_id=DELETE_TARGET_TEMPLATE_ID,
+        ))
         zoho_tool.append_receipt(
-            "zoho_email_template_delete_failed_permanently_locked",
+            "zoho_email_template_delete_indeterminate_needs_restage",
             f"plan={plan_path}; sha256={plan['sha256']}; target={DELETE_TARGET_TEMPLATE_ID}",
         )
         raise EmailTemplateError(
-            "Email-template delete is indeterminate and permanently locked against "
-            "replay. Reconcile live Zoho state before staging another plan: " + str(exc)
+            owner_authority.explain_outcome(
+                "Email-template delete", owner_authority.STATUS_INDETERMINATE,
+                "Reconcile live Zoho state before staging another plan: " + str(exc),
+            )
         ) from exc
 
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": DELETE_ACCIDENTAL_ACCOUNTING,
-        "status": "committed_verified",
-        "deleted_template_id": DELETE_TARGET_TEMPLATE_ID,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=DELETE_ACCIDENTAL_ACCOUNTING,
+        go=go, deleted_template_id=DELETE_TARGET_TEMPLATE_ID,
+    ))
     zoho_tool.append_receipt(
         "zoho_email_template_deleted_verified",
         f"template={DELETE_TARGET_TEMPLATE_ID} ({DELETE_TARGET_NAME}); plan={plan_path}",
@@ -3038,14 +3048,14 @@ def build_parser() -> argparse.ArgumentParser:
     commit = commands.add_parser("commit")
     commit.add_argument("--action", required=True, choices=list(ACTIONS))
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.add_argument("--verification-invoice-id", default="")
     commit.set_defaults(func=command_commit)
     stage_delete = commands.add_parser("stage-delete")
     stage_delete.set_defaults(func=command_stage_delete)
     commit_delete = commands.add_parser("commit-delete")
     commit_delete.add_argument("--plan", required=True)
-    commit_delete.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_delete, money=True)
     commit_delete.set_defaults(func=command_commit_delete)
     return parser
 

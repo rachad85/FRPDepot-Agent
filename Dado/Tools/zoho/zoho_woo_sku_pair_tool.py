@@ -27,6 +27,18 @@ from typing import Any
 
 import zoho_tool
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A1/A2/A4/A6). A
+# SKU correction is REVERSIBLE work: his clear go in his own message covers the
+# pair (exact APPROVED still works; "yes" / "go ahead" count) and is passed
+# through to both named writer CLIs; a failed child leaves the pair "needs
+# re-stage" with the landed half recorded -- nothing is permanently locked; a
+# committed pair is spent. Each writer keeps its own captured live state and
+# its own restore route (restore-name-sku / restore), so this coordinator
+# restores by pointing at them. Appended so the common folder never shadows
+# the stdlib.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Paired Zoho + WooCommerce SKU Correction Coordinator"
 SCHEMA_VERSION = 1
 ROOT = Path(r"C:\FRPDepot")
@@ -36,7 +48,8 @@ WOO_PLAN_DIR = ROOT / "Dado" / "20_Working" / "woocommerce_plans"
 ZOHO_TOOL = ROOT / "Dado" / "Tools" / "zoho" / "zoho_inventory_item_tool.py"
 WOO_TOOL = ROOT / "Dado" / "Tools" / "woocommerce" / "woocommerce_change_tool.py"
 PLAN_LIFETIME_HOURS = 24
-APPROVAL_WORD = "APPROVED"
+# Still the word the plan names; since 2026-08-21 any clear go of his counts.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 INPUT_FIELDS = {"zoho_item_id", "woo_parent_id", "woo_variation_id", "new_sku", "sources"}
 PLAN_FIELDS = {
     "schema_version", "tool", "created_utc", "expires_utc", "nonce",
@@ -95,12 +108,13 @@ def clean_nonempty_text(value: Any, label: str, maximum: int) -> str:
     return result
 
 
-def require_rachad_approval(approval: str) -> None:
-    if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
-        raise PairToolError(
-            f"Rachad must answer this paired staged plan with the one-word approval: {APPROVAL_WORD}. "
-            "It must come from his own message; workflow authorization is not SKU-change approval."
-        )
+def require_rachad_approval(approval: Any, lane: Any = None) -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1); workflow authorization is not
+    SKU-change approval and Dado never supplies it."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what="this paired SKU plan")
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise PairToolError(str(exc)) from exc
 
 
 def contained_file(raw_path: Any, folder: Path, label: str) -> Path:
@@ -472,8 +486,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise PairToolError("This paired plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(PairToolError, owner_authority.read_json_if_exists(path),
+                                      what="paired plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -502,7 +519,13 @@ def validate_woo_commit_output(result: dict[str, Any], plan: dict[str, Any]) -> 
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = contained_file(args.plan, PLAN_DIR, "Paired plan")
     plan = load_pair_plan(plan_path)
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
+    # The lane his word arrived on is forwarded to both children so each
+    # writer's own lock and receipt record it (A5). --approval-message-utc is
+    # NOT forwarded: both children are REVERSIBLE writers whose parsers do not
+    # take it (they would refuse the whole command line), and this coordinator's
+    # own parser does not define it either.
+    lane_args = ["--approval-lane", go.lane] if getattr(args, "approval_lane", None) else []
 
     zoho_child = contained_file(plan["children"]["zoho"]["plan"], ZOHO_PLAN_DIR, "Zoho child plan")
     woo_child = contained_file(
@@ -513,55 +536,54 @@ def command_commit(args: argparse.Namespace) -> None:
     validate_child_plan_semantics(zoho_child, woo_child, plan)
 
     lock = pair_lock_path(plan_path)
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action="sku_pair", go=go,
+        started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     completed_children: list[str] = []
     try:
         zoho_result = run_named_cli([
             sys.executable, str(ZOHO_TOOL), "commit-name-sku", "--plan", str(zoho_child),
-            "--approval", str(args.approval),
+            "--approval", str(args.approval), *lane_args,
         ], "Zoho child commit")
         validate_zoho_commit_output(zoho_result, plan)
         completed_children.append("zoho")
 
         woo_result = run_named_cli([
             sys.executable, str(WOO_TOOL), "commit", "--plan", str(woo_child),
-            "--approval", str(args.approval),
+            "--approval", str(args.approval), *lane_args,
         ], "WooCommerce child commit")
         validate_woo_commit_output(woo_result, plan)
         completed_children.append("woocommerce")
     except Exception as exc:
-        status = "partial" if completed_children else "indeterminate"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "status": status,
-            "completed_children": completed_children,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        # A child that did not verify may still have landed: the outcome is
+        # indeterminate; the re-stage reads both systems and shows what did.
+        status = owner_authority.STATUS_INDETERMINATE
+        half = ("partial: the " + " and ".join(completed_children) + " child landed; the other did not"
+                if completed_children else "neither child verified")
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action="sku_pair", go=go, reason=str(exc),
+            completed_children=completed_children, completed=completed_children,
+        ))
         zoho_tool.append_receipt(
-            "zoho_woo_sku_pair_partial_or_indeterminate_no_retry",
+            "zoho_woo_sku_pair_indeterminate_needs_restage",
             f"status={status}; completed={','.join(completed_children) or 'none'}; "
             f"plan={plan_path}; sha256={plan['sha256']}",
         )
         raise PairToolError(
-            f"Paired commit is {status} and permanently locked against retry. "
-            "Reconcile both systems before staging any new paired plan."
+            owner_authority.explain_outcome(
+                "Paired commit", status,
+                f"{half}. Reconcile both systems, then re-stage the pair; a landed half keeps its "
+                f"writer's own restore route. Reason: {exc}",
+            )
         ) from exc
 
     new_sku = plan["after"]["zoho"]["sku"]
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "status": "committed_verified",
-        "completed_children": completed_children,
-        "new_sku": new_sku,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action="sku_pair", go=go,
+        completed_children=completed_children, completed=completed_children, new_sku=new_sku,
+        restore="each writer's own route: zoho_inventory_item_tool restore-name-sku and woocommerce_change_tool restore",
+    ))
     zoho_tool.append_receipt(
         "zoho_woo_sku_pair_committed_verified",
         f"zoho_item_id={plan['identifiers']['zoho_item_id']}; "
@@ -578,6 +600,9 @@ def command_commit(args: argparse.Namespace) -> None:
             "woocommerce": {"sku": new_sku},
         },
         "replay_locked": True,
+        "plan_spent": True,
+        "restore": ("each writer's own route: zoho_inventory_item_tool restore-name-sku and "
+                    "woocommerce_change_tool restore, on his go"),
     }, ensure_ascii=False, indent=2))
 
 
@@ -589,7 +614,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.set_defaults(func=command_commit)
     return parser
 

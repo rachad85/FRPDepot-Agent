@@ -484,7 +484,9 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
     def test_wrong_or_multiword_approval_refuses_before_lock_vault_token_or_network(self) -> None:
         path, _ = self.stage_assign([self.item("7")])
         sha = json.loads(path.read_text(encoding="utf-8"))["sha256"]
-        for approval in ("YES", "APPROVED NOW", "APPROVE", "", "a" * 64, None):
+        # 2026-08-21 (A1): "YES" / "APPROVE" now count; a conditional, a
+        # question, a blank, a non-word or a non-string still refuses first.
+        for approval in ("YES but check item 7 first", "wait", "APPROVED?", "", "a" * 64, None):
             with self.subTest(approval=approval):
                 self.load_vault.reset_mock()
                 self.refresh_access_token.reset_mock()
@@ -817,21 +819,22 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         self.assertEqual(result["field"], self.target)
         lock = json.loads(classification.lock_path(result["plan_sha256"]).read_text())
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertTrue(lock["no_retry"])
+        self.assertFalse(lock["permanent_lock"])
 
-    def test_create_commit_prewrite_collision_and_postwrite_bad_readback_lock_permanently(self) -> None:
+    def test_create_commit_prewrite_collision_and_postwrite_bad_readback_need_restage(self) -> None:
         collision_path, _ = self.stage_create("collision source")
         with mock.patch.object(
             classification, "ui_list_fields", return_value=self.fields_response(self.target)
         ), mock.patch.object(classification, "ui_create_fixed_field") as write, \
-             self.assertRaisesRegex(classification.ClassificationToolError, "aborted_before_write"):
+             self.assertRaisesRegex(classification.ClassificationToolError, "No write was issued"):
             classification.command_commit_create(argparse.Namespace(
                 plan=str(collision_path), approval="APPROVED"
             ))
         write.assert_not_called()
         collision_sha = json.loads(collision_path.read_text())["sha256"]
         collision_lock = json.loads(classification.lock_path(collision_sha).read_text())
-        self.assertEqual(collision_lock["status"], "aborted_before_write")
+        self.assertEqual(collision_lock["status"], "needs_restage")
+        self.assertFalse(collision_lock["permanent_lock"])
 
         bad_path, _ = self.stage_create("bad readback source")
         with mock.patch.object(
@@ -846,10 +849,10 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
             ))
         bad_sha = json.loads(bad_path.read_text())["sha256"]
         bad_lock = json.loads(classification.lock_path(bad_sha).read_text())
-        self.assertEqual(bad_lock["status"], "indeterminate")
-        self.assertTrue(bad_lock["no_retry"])
+        self.assertEqual(bad_lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(bad_lock["permanent_lock"])
 
-    def test_assignment_stale_field_and_stale_item_abort_before_write_and_lock(self) -> None:
+    def test_assignment_stale_field_and_stale_item_abort_before_write_and_need_restage(self) -> None:
         field_path, _ = self.stage_assign([self.item("11")])
         changed_field = self.field(customfield_id="901")
         with mock.patch.object(
@@ -858,7 +861,7 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
             return_value=self.fields_response(changed_field),
         ), mock.patch.object(classification, "get_item") as get, \
              mock.patch.object(classification, "oauth_item_write_allowed") as write, \
-             self.assertRaisesRegex(classification.ClassificationToolError, "aborted_before_write"):
+             self.assertRaisesRegex(classification.ClassificationToolError, "re-stage"):
             classification.command_commit_assign(argparse.Namespace(
                 plan=str(field_path), approval="APPROVED"
             ))
@@ -867,7 +870,8 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         lock = json.loads(classification.lock_path(
             json.loads(field_path.read_text())["sha256"]
         ).read_text())
-        self.assertEqual(lock["status"], "aborted_before_write")
+        self.assertEqual(lock["status"], "needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
         original = self.item("12")
         item_path, _ = self.stage_assign([original])
@@ -881,7 +885,7 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         ), mock.patch.object(
             classification, "oauth_item_write_allowed"
         ) as write, self.assertRaisesRegex(
-            classification.ClassificationToolError, "aborted_before_write"
+            classification.ClassificationToolError, "re-stage"
         ):
             classification.command_commit_assign(argparse.Namespace(
                 plan=str(item_path), approval="APPROVED"
@@ -986,8 +990,8 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
                 lock = json.loads(classification.lock_path(
                     json.loads(path.read_text())["sha256"]
                 ).read_text())
-                self.assertEqual(lock["status"], "indeterminate")
-                self.assertEqual(lock["write_in_flight_item_id"], str(30 + index))
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
+                self.assertEqual(lock["indeterminate"], [str(30 + index)])
 
     def test_protected_state_ignores_derived_hash_but_keeps_other_custom_values(self) -> None:
         original = self.item("39", custom_field_hash={})
@@ -1009,45 +1013,55 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
             classification.protected_item_state(changed_other, "900"),
         )
 
-    def test_partial_and_indeterminate_failures_are_permanently_locked_no_retry(self) -> None:
-        originals = [self.item("41"), self.item("42")]
+    def test_a_failed_line_is_recorded_the_batch_goes_on_and_the_plan_needs_restage(self) -> None:
+        """A4/A6 (2026-08-21): a failed line does not stop the next one; nothing
+        is permanently locked; the same plan is refused (stale state) and the
+        re-stage carries only the failed line."""
+        originals = [self.item("41"), self.item("42"), self.item("43")]
         path, _ = self.stage_assign(originals)
-        reads = [
-            originals[0],
-            self.assigned_item(originals[0], "Website Catalog"),
-            originals[1],
-        ]
+        by_id = {row["item_id"]: row for row in originals}
+        reads = {item_id: 0 for item_id in by_id}
+
+        def get_item(token, vault, item_id):
+            reads[item_id] += 1
+            return by_id[item_id] if reads[item_id] == 1 else self.assigned_item(by_id[item_id], "Website Catalog")
+
+        def write_allowed(token, domain, method, endpoint, org_id, payload):
+            if endpoint.endswith("/42"):
+                raise ClassificationToolSyntheticError("disconnect")
+            return {"code": 0}
+
         with mock.patch.object(
             classification,
             "ui_list_fields",
             return_value=self.fields_response(self.target),
         ), mock.patch.object(
-            classification, "get_item", side_effect=reads
+            classification, "get_item", side_effect=get_item
         ), mock.patch.object(
-            classification,
-            "oauth_item_write_allowed",
-            side_effect=[{"code": 0}, ClassificationToolSyntheticError("disconnect")],
+            classification, "oauth_item_write_allowed", side_effect=write_allowed,
         ) as write, self.assertRaisesRegex(
-            classification.ClassificationToolError, "partial"
-        ):
+            classification.ClassificationToolError, "re-stage"
+        ) as caught:
             classification.command_commit_assign(argparse.Namespace(
-                plan=str(path), approval="APPROVED"
+                plan=str(path), approval="yes go ahead"
             ))
-        self.assertEqual(write.call_count, 2)
+        self.assertNotIn("permanent", str(caught.exception).casefold())
+        self.assertEqual(write.call_count, 3, "the third line must still run")
         sha = json.loads(path.read_text())["sha256"]
         lock = json.loads(classification.lock_path(sha).read_text())
-        self.assertEqual(lock["status"], "partial")
-        self.assertEqual(lock["completed_item_ids"], ["41"])
-        self.assertEqual(lock["write_in_flight_item_id"], "42")
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertEqual(lock["completed_item_ids"], ["41", "43"])
+        self.assertEqual(lock["indeterminate"], ["42"])
+        self.assertEqual(lock["restage_only"], ["42"])
+        self.assertFalse(lock["permanent_lock"])
+        backup = json.loads(Path(lock["backup"]).read_text(encoding="utf-8"))["state"]
+        self.assertEqual(set(backup), {"41", "42", "43"})
+        self.assertIsNone(backup["41"]["before_target_value"])
         actions = [call.args[0] for call in self.append_receipt.call_args_list]
-        self.assertIn(
-            "zoho_inventory_classification_assignment_partial_indeterminate_or_aborted_no_retry",
-            actions,
-        )
+        self.assertIn("zoho_inventory_classification_assignment_indeterminate_needs_restage", actions)
         self.load_vault.reset_mock()
         with mock.patch.object(classification, "oauth_item_write_allowed") as retry, \
-             self.assertRaisesRegex(classification.ClassificationToolError, "cannot be replayed"):
+             self.assertRaisesRegex(classification.ClassificationToolError, "Re-stage"):
             classification.command_commit_assign(argparse.Namespace(
                 plan=str(path), approval="APPROVED"
             ))
@@ -1073,9 +1087,58 @@ class ZohoInventoryClassificationToolTests(unittest.TestCase):
         lock = json.loads(classification.lock_path(
             json.loads(indeterminate_path.read_text())["sha256"]
         ).read_text())
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["completed_item_ids"], [])
-        self.assertEqual(lock["write_in_flight_item_id"], "43")
+        self.assertEqual(lock["indeterminate"], ["43"])
+
+    def test_restore_assign_puts_the_previous_classification_back(self) -> None:
+        previously = self.item("51")
+        previously["custom_fields"] = [
+            {"customfield_id": "800", "value": "preserve-me"},
+            {"customfield_id": "900", "value": "Review / Unclassified"},
+        ]
+        never = self.item("52")
+        path, _ = self.stage_assign([previously, never])
+        by_id = {"51": previously, "52": never}
+        reads = {"51": 0, "52": 0}
+
+        def get_item(token, vault, item_id):
+            reads[item_id] += 1
+            return by_id[item_id] if reads[item_id] == 1 else self.assigned_item(by_id[item_id], "Website Catalog")
+
+        with mock.patch.object(
+            classification, "ui_list_fields", return_value=self.fields_response(self.target),
+        ), mock.patch.object(classification, "get_item", side_effect=get_item), mock.patch.object(
+            classification, "oauth_item_write_allowed", return_value={"code": 0},
+        ), contextlib.redirect_stdout(io.StringIO()) as stdout:
+            classification.command_commit_assign(argparse.Namespace(plan=str(path), approval="go ahead"))
+        result = json.loads(stdout.getvalue())
+        self.assertEqual(result["completed_item_ids"], ["51", "52"])
+        live = {item_id: self.assigned_item(by_id[item_id], "Website Catalog") for item_id in by_id}
+        writes = []
+
+        def write_allowed(token, domain, method, endpoint, org_id, payload):
+            writes.append((endpoint, payload))
+            item_id = endpoint.rsplit("/", 1)[-1]
+            live[item_id] = {**live[item_id], "custom_fields": payload["custom_fields"]}
+            return {"code": 0}
+
+        with mock.patch.object(
+            classification, "get_item", side_effect=lambda token, vault, item_id: dict(live[item_id]),
+        ), mock.patch.object(
+            classification, "oauth_item_write_allowed", side_effect=write_allowed,
+        ), contextlib.redirect_stdout(io.StringIO()) as stdout:
+            classification.command_restore_assign(argparse.Namespace(plan=str(path), approval="yes put it back"))
+        restored = json.loads(stdout.getvalue())
+        self.assertEqual(restored["status"], "RESTORED")
+        self.assertEqual([row["item_id"] for row in restored["restored"]], ["51"])
+        self.assertEqual(writes[0][0], "/inventory/v1/items/51")
+        self.assertIn({"customfield_id": "900", "value": "Review / Unclassified"}, writes[0][1]["custom_fields"])
+        self.assertIn("had no classification before", restored["skipped"]["52"])
+        with self.assertRaisesRegex(classification.ClassificationToolError, "already restored"):
+            classification.command_restore_assign(argparse.Namespace(plan=str(path), approval="yes"))
+        with self.assertRaises(classification.ClassificationToolError):
+            classification.command_restore_assign(argparse.Namespace(plan=str(path), approval="wait"))
 
     def test_list_field_is_read_only_and_projects_only_metadata(self) -> None:
         raw = {

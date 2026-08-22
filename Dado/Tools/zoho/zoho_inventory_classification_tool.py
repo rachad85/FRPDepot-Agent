@@ -43,6 +43,12 @@ import zoho_tool
 # screen. Appended, never inserted first, so it cannot shadow a stdlib name.
 sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
 from ui_lane_lock import UiLaneBusy, UiLaneLockError, ui_browser_lock  # noqa: E402
+# Shared owner authority (autonomy programme 2026-08-21, spec A1/A2/A4/A6):
+# classification is REVERSIBLE work -- his clear go covers the batch, a failed
+# line does not stop the others, each item's previous value is captured beside
+# the plan before its PUT and `restore-assign` puts it back, and nothing is
+# permanently locked (a committed plan is spent).
+import owner_authority  # noqa: E402
 
 
 def holds_zoho_browser(purpose: str):
@@ -66,7 +72,8 @@ SCHEMA_VERSION = 1
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_classification_plans"
 PLAN_LIFETIME_HOURS = 24
-APPROVAL_WORD = "APPROVED"
+# Still the word the plan names; since 2026-08-21 any clear go of his counts.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 UPDATE_SCOPE = "ZohoInventory.items.UPDATE"
 CDP_ENDPOINT = "http://127.0.0.1:9228"
 UI_HOST = "inventory.zohocloud.ca"
@@ -255,16 +262,14 @@ def validate_assign_input(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def require_rachad_approval(approval: Any) -> None:
-    # Surrounding whitespace and case do not matter; a second word never does.
-    if (
-        not isinstance(approval, str)
-        or approval.strip().casefold() != APPROVAL_WORD.casefold()
-    ):
-        raise ClassificationToolError(
-            "Rachad must answer this exact staged plan with the one-word approval: "
-            "APPROVED. Building or staging is not approval, and Dado cannot supply it."
-        )
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this classification plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1). Building or staging is not
+    approval, and Dado cannot supply it."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise ClassificationToolError(str(exc)) from exc
 
 
 def contained_plan(raw_path: Any) -> Path:
@@ -1272,10 +1277,12 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise ClassificationToolError(
-            "This plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(ClassificationToolError,
+                                      owner_authority.read_json_if_exists(path),
+                                      what="classification plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -1376,15 +1383,14 @@ def command_stage_assign(args: argparse.Namespace) -> None:
 def command_commit_create(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path, "classification_field_create")
-    # Approval is checked before lock, vault, UI session, token, or network.
-    require_rachad_approval(args.approval)
+    # His go is checked before lock, vault, UI session, token, or network.
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="this classification-field create plan")
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": "classification_field_create",
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"],
+        action="classification_field_create", go=go, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     try:
         vault = zoho_tool.load_vault()
@@ -1394,33 +1400,26 @@ def command_commit_create(args: argparse.Namespace) -> None:
         ui_create_fixed_field(org_id)
         created = require_exact_target_field(ui_list_fields(org_id))
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": "classification_field_create",
-            "status": status,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action="classification_field_create", go=go,
+            reason=str(exc), write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            "zoho_inventory_classification_field_create_failed_permanently_locked",
+            f"zoho_inventory_classification_field_create_{status}",
             f"status={status}; plan={plan_path}; sha256={plan['sha256']}",
         )
         raise ClassificationToolError(
-            f"Classification-field creation is {status} and permanently locked against replay: {exc}"
+            owner_authority.explain_outcome("Classification-field create", status, str(exc))
+            + ("" if write_attempted else " No write was issued.")
         ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": "classification_field_create",
-        "status": "committed_verified",
-        "field": created,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"],
+        action="classification_field_create", go=go, field=created,
+    ))
     zoho_tool.append_receipt(
         "zoho_inventory_classification_field_created_committed_verified",
-        f"customfield_id={created['customfield_id']}; plan={plan_path}; sha256={plan['sha256']}",
+        f"customfield_id={created['customfield_id']}; plan={plan_path}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED",
@@ -1428,6 +1427,9 @@ def command_commit_create(args: argparse.Namespace) -> None:
         "plan_sha256": plan["sha256"],
         "field": created,
         "replay_locked": True,
+        "plan_spent": True,
+        "restore": "not available: the field is created through Zoho's native settings UI and "
+                   "no delete is commissioned (Hard Rule 3); the field stays",
     }, ensure_ascii=False, indent=2))
 
 
@@ -1435,18 +1437,44 @@ def command_commit_create(args: argparse.Namespace) -> None:
 def command_commit_assign(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan = load_plan(plan_path, "classification_assign")
-    # Approval is checked before lock, vault, UI session, token, or network.
-    require_rachad_approval(args.approval)
+    # His go is checked before lock, vault, UI session, token, or network.
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="this classification-assignment plan")
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": "classification_assign",
-        "status": "in_flight",
-        "completed_item_ids": [],
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action="classification_assign",
+        go=go, completed_item_ids=[], started_utc=utc_now().isoformat(),
+    ), exclusive=True)
+    rows = plan["live_evidence"]["items"]
+    progress = owner_authority.BatchProgress([row["item_id"] for row in rows])
     completed_item_ids: list[str] = []
-    write_in_flight_item_id = ""
+    indeterminate: list[str] = []
+    captured: dict[str, dict[str, Any]] = {}
+    backup = owner_authority.live_state_path(plan_path)
+
+    def finish_needs_restage(reason: str) -> None:
+        status = owner_authority.STATUS_INDETERMINATE if indeterminate else owner_authority.STATUS_NEEDS_RESTAGE
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action="classification_assign", go=go, reason=reason,
+            completed=completed_item_ids, failed=progress.failed, pending=progress.pending,
+            completed_item_ids=completed_item_ids, indeterminate=indeterminate,
+            backup=str(backup) if captured else None, restage_only=progress.summary()["restage_only"],
+        ))
+        zoho_tool.append_receipt(
+            f"zoho_inventory_classification_assignment_{status}",
+            f"status={status}; completed={','.join(completed_item_ids) or 'none'}; "
+            f"failed={','.join(progress.failed) or 'none'}; pending={','.join(progress.pending) or 'none'}; "
+            f"backup={backup if captured else 'none'}; plan={plan_path}; sha256={plan['sha256']}",
+        )
+        raise ClassificationToolError(
+            owner_authority.explain_outcome(
+                "Classification assignment", status, reason,
+                completed=completed_item_ids or None, failed=progress.failed or None,
+                pending=progress.pending or None,
+            )
+            + f" Re-stage only these item IDs: {progress.summary()['restage_only']}."
+        )
+
     try:
         vault = zoho_tool.load_vault()
         if UPDATE_SCOPE not in (vault.get("scopes") or []):
@@ -1455,23 +1483,41 @@ def command_commit_assign(args: argparse.Namespace) -> None:
         access_token, vault = zoho_tool.refresh_access_token(vault)
         staged_field = plan["live_evidence"]["field"]
         classification = plan["payload"]["classification"]
-        for evidence in plan["live_evidence"]["items"]:
+    except Exception as exc:
+        finish_needs_restage(str(exc))
+        raise  # unreachable
+    for evidence in rows:
+        item_id = evidence["item_id"]
+        in_flight = False
+        try:
             # Re-read exact field definition and exact full item state before
-            # every non-atomic PUT. A mismatch aborts this permanently locked plan.
+            # every non-atomic PUT. A mismatch fails THIS line; the others run.
             current_field = require_exact_target_field(ui_list_fields(org_id))
             if current_field != staged_field:
                 raise ClassificationToolError(
-                    "Catalog Classification changed after review. A new plan is required."
+                    "Catalog Classification changed after review. Re-stage for a new plan."
                 )
-            item_id = evidence["item_id"]
             current = get_item(access_token, vault, item_id)
             if not secrets.compare_digest(
                 digest_for(current), evidence["current_state_sha256"]
             ) or current != evidence["current_state"]:
                 raise ClassificationToolError(
-                    f"Item {item_id} changed after review. No PUT was issued for this item or any later item."
+                    f"Item {item_id} changed after review. No PUT was issued for this item."
                 )
-            write_in_flight_item_id = item_id
+            # A2: keep this item's previous value beside the plan BEFORE its PUT.
+            captured[item_id] = {
+                "item_id": item_id,
+                "name": evidence["name"],
+                "target_id": staged_field["customfield_id"],
+                "before_target_value": evidence["current_target_value"],
+                "before_custom_fields": json_copy(evidence["current_custom_fields"]),
+                "classification": classification,
+            }
+            owner_authority.capture_live_state(
+                plan_path, captured, what="Zoho Inventory item Catalog Classification",
+                where=f"{org_id} /inventory/v1/items", plan_sha256=plan["sha256"],
+            )
+            in_flight = True
             oauth_item_write_allowed(
                 access_token,
                 str(vault["api_domain"]),
@@ -1487,48 +1533,25 @@ def command_commit_assign(args: argparse.Namespace) -> None:
             verify_assignment_readback(
                 verified, evidence, staged_field, classification
             )
+            in_flight = False
             completed_item_ids.append(item_id)
-            write_in_flight_item_id = ""
-        zoho_tool.save_vault(vault)
-    except Exception as exc:
-        if completed_item_ids:
-            status = "partial"
-        elif write_in_flight_item_id:
-            status = "indeterminate"
-        else:
-            status = "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": "classification_assign",
-            "status": status,
-            "completed_item_ids": completed_item_ids,
-            "write_in_flight_item_id": write_in_flight_item_id,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
-        zoho_tool.append_receipt(
-            "zoho_inventory_classification_assignment_partial_indeterminate_or_aborted_no_retry",
-            f"status={status}; completed={','.join(completed_item_ids) or 'none'}; "
-            f"write_in_flight={write_in_flight_item_id or 'none'}; plan={plan_path}; sha256={plan['sha256']}",
-        )
-        raise ClassificationToolError(
-            f"Classification assignment is {status} and permanently locked against retry. "
-            f"Completed item IDs: {completed_item_ids}. Reconcile live Zoho state before any new plan."
-        ) from exc
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": "classification_assign",
-        "status": "committed_verified",
-        "completed_item_ids": completed_item_ids,
-        "classification": plan["payload"]["classification"],
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+            progress.done(item_id)
+        except Exception as exc:  # noqa: BLE001 - recorded per line, the batch goes on (A6)
+            progress.fail(item_id, str(exc))
+            if in_flight:
+                indeterminate.append(item_id)
+    zoho_tool.save_vault(vault)
+    if progress.status != owner_authority.STATUS_COMMITTED:
+        finish_needs_restage(next(iter(progress.failed.values()), "a line failed"))
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action="classification_assign", go=go,
+        completed=completed_item_ids, completed_item_ids=completed_item_ids,
+        classification=plan["payload"]["classification"], backup=str(backup),
+    ))
     zoho_tool.append_receipt(
         "zoho_inventory_classification_assignment_committed_verified",
         f"classification={plan['payload']['classification']}; completed={','.join(completed_item_ids)}; "
-        f"plan={plan_path}; sha256={plan['sha256']}",
+        f"backup={backup}; plan={plan_path}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
     print(json.dumps({
         "status": "COMMITTED_AND_VERIFIED",
@@ -1538,7 +1561,100 @@ def command_commit_assign(args: argparse.Namespace) -> None:
         "completed_item_ids": completed_item_ids,
         "atomic": False,
         "replay_locked": True,
+        "plan_spent": True,
+        "live_state_backup": str(backup),
+        "restore": f"restore-assign --plan {plan_path} --approval <his go>",
     }, ensure_ascii=False, indent=2))
+
+
+def command_restore_assign(args: argparse.Namespace) -> None:
+    """A2: put back the Catalog Classification each item carried before this
+    plan's PUT. One OAuth PUT per captured item, only while the item still
+    carries the value this plan assigned; an item that had no classification
+    before cannot be cleared through this transport and is reported as such.
+    """
+    plan_path = contained_plan(args.plan)
+    plan = read_json_object(plan_path, "Plan")
+    saved = str(plan.get("sha256") or "")
+    core = dict(plan)
+    core.pop("sha256", None)
+    if not HEX_64_RE.fullmatch(saved) or not secrets.compare_digest(saved, digest_for(core)):
+        raise ClassificationToolError("Plan hash check failed. The plan changed after review.")
+    if plan.get("tool") != TOOL_NAME or plan.get("action") != "classification_assign":
+        raise ClassificationToolError("Plan tool or action is invalid for a classification restore.")
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="restoring the previous classification of this plan's items")
+    record = owner_authority.load_live_state(plan_path, ClassificationToolError)
+    if record.get("plan_sha256") != saved:
+        raise ClassificationToolError("The captured live state belongs to a different plan.")
+    restore_path = owner_authority.restore_record_path(plan_path)
+    if restore_path.exists():
+        raise ClassificationToolError(
+            f"This plan's classifications were already restored ({restore_path.name}); stage a new "
+            "plan for any further change."
+        )
+    vault = zoho_tool.load_vault()
+    if UPDATE_SCOPE not in (vault.get("scopes") or []):
+        raise ClassificationToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
+    org_id = vault_organization_id(vault)
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    restored: list[dict[str, Any]] = []
+    skipped: dict[str, str] = {}
+    failed: dict[str, str] = {}
+    for item_id, snapshot in record["state"].items():
+        try:
+            target_id = snapshot["target_id"]
+            before_value = snapshot["before_target_value"]
+            current = get_item(access_token, vault, item_id)
+            rows = project_custom_fields(current)
+            live_rows = [row for row in rows if row["customfield_id"] == target_id]
+            live_value = live_rows[0]["value"] if live_rows else None
+            if live_value == before_value:
+                skipped[item_id] = "already at the captured classification"
+                continue
+            if live_value != snapshot["classification"]:
+                skipped[item_id] = f"moved since this plan wrote it (live value {live_value!r}); left alone"
+                continue
+            if before_value is None:
+                skipped[item_id] = ("had no classification before; clearing the field is not a "
+                                    "commissioned write")
+                continue
+            if before_value not in CLASSIFICATIONS:
+                skipped[item_id] = f"previous value {before_value!r} is not one of the three fixed values; left alone"
+                continue
+            payload = {
+                "name": snapshot["name"],
+                "custom_fields": assignment_custom_fields(rows, target_id, before_value),
+            }
+            oauth_item_write_allowed(
+                access_token, str(vault["api_domain"]), "PUT",
+                f"/inventory/v1/items/{item_id}", org_id, payload,
+            )
+            verified = get_item(access_token, vault, item_id)
+            back = [row for row in project_custom_fields(verified) if row["customfield_id"] == target_id]
+            if len(back) != 1 or back[0]["value"] != before_value:
+                raise ClassificationToolError(f"Item {item_id} read-back did not verify the restored value.")
+            restored.append({"item_id": item_id, "from": snapshot["classification"], "to": before_value})
+        except Exception as exc:  # noqa: BLE001 - per line, the others still run
+            failed[item_id] = str(exc)[:1000]
+    zoho_tool.save_vault(vault)
+    result = {
+        "status": "RESTORED" if not failed else "RESTORE_PARTIAL",
+        "plan_sha256": saved, "restored": restored, "skipped": skipped, "failed": failed,
+        **go.as_record(),
+    }
+    owner_authority.record_restore(plan_path, result)
+    zoho_tool.append_receipt(
+        "zoho_inventory_classification_assignment_restored",
+        f"restored={','.join(row['item_id'] for row in restored) or 'none'}; skipped={','.join(skipped) or 'none'}; "
+        f"failed={','.join(failed) or 'none'}; backup={owner_authority.live_state_path(plan_path)}; "
+        f"plan={plan_path}; sha256={saved}",
+    )
+    print(json.dumps(result, ensure_ascii=False, indent=2))
+    if failed:
+        raise ClassificationToolError(
+            "Restore did not complete for every item: " + "; ".join(f"{k}: {v}" for k, v in failed.items())
+        )
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -1551,15 +1667,20 @@ def build_parser() -> argparse.ArgumentParser:
     stage_create.set_defaults(func=command_stage_create)
     commit_create = commands.add_parser("commit-create")
     commit_create.add_argument("--plan", required=True)
-    commit_create.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_create)
     commit_create.set_defaults(func=command_commit_create)
     stage_assign = commands.add_parser("stage-assign")
     stage_assign.add_argument("--input", required=True)
     stage_assign.set_defaults(func=command_stage_assign)
     commit_assign = commands.add_parser("commit-assign")
     commit_assign.add_argument("--plan", required=True)
-    commit_assign.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_assign)
     commit_assign.set_defaults(func=command_commit_assign)
+    restore_assign = commands.add_parser(
+        "restore-assign", help="put back the classification captured before the PUTs")
+    restore_assign.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore_assign)
+    restore_assign.set_defaults(func=command_restore_assign)
     return parser
 
 

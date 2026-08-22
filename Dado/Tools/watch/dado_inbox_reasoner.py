@@ -498,7 +498,10 @@ def is_test_run():
     return False
 
 
-def _try_send(message):
+def _try_send(message, target=None):
+    """One attempt on the wire. `target` is a `hermes send --to` value; None means
+    Rachad's Telegram DM (TARGET). Added 2026-08-21 so job_runner can report a
+    job on the lane that asked for it (Discord) instead of Telegram only."""
     if is_test_run():
         # THE ONLY FUSE. Every send in this tree reaches the wire here, so one
         # guard covers every current and future caller. Reported as ACCEPTED so
@@ -514,7 +517,7 @@ def _try_send(message):
     env["PYTHONIOENCODING"] = "utf-8"
     try:
         proc = subprocess.run(
-            [hermes_exe(), "-p", PROFILE, "send", "-q", "-t", TARGET, message],
+            [hermes_exe(), "-p", PROFILE, "send", "-q", "-t", target or TARGET, message],
             cwd=WORKDIR,
             env=env,
             text=True,
@@ -534,11 +537,13 @@ def _try_send(message):
     return proc.returncode, (proc.stderr or proc.stdout or "").strip()
 
 
-def send_clean(message, queue_on_failure=True):
+def send_clean(message, queue_on_failure=True, target=None):
     """Send, retrying transient failures; queue for the next run if it never
     lands so an alert is never silently lost (the dropped-RFQ lesson).
 
-    Returns True ONLY when Telegram accepted the message.
+    Returns True ONLY when the lane accepted the message. `target` (a
+    `hermes send --to` value) defaults to Rachad's Telegram DM; job_runner
+    passes the originating lane's target (2026-08-21).
 
     queue_on_failure=False is for callers whose alert is RE-DERIVED from durable
     state on a short cadence - job_runner's 10-minute watch tick and
@@ -562,7 +567,7 @@ def send_clean(message, queue_on_failure=True):
     last = ""
     try:
         for attempt in range(1, 4):
-            rc, err = _try_send(message)
+            rc, err = _try_send(message, target) if target else _try_send(message)
             if rc == 0:
                 log(f"sent business message (attempt {attempt})")
                 return True

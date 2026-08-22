@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+from datetime import timedelta
 from decimal import Decimal
 import io
 import json
@@ -353,10 +354,17 @@ class RevisionToolTestCase(unittest.TestCase):
         return plans[-1]
 
     def commit(self, plan: Path, approval: str = "APPROVED") -> str:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        try:
+            created = json.loads(plan.read_text(encoding="utf-8"))["created_utc"]
+            after = (revision_tool.parse_time(created, "created_utc") + timedelta(minutes=1)).isoformat()
+        except (OSError, ValueError, KeyError, revision_tool.InvoiceRevisionError):
+            after = revision_tool.utc_now().isoformat()  # the tool refuses the path itself
         buffer = io.StringIO()
         with mock.patch("sys.stdout", buffer):
             revision_tool.command_commit(
-                argparse.Namespace(plan=str(plan), approval=approval)
+                argparse.Namespace(plan=str(plan), approval=approval, approval_message_utc=after)
             )
         return buffer.getvalue()
 
@@ -766,19 +774,36 @@ class StageTests(RevisionToolTestCase):
 
 
 class ApprovalTests(RevisionToolTestCase):
-    def test_only_exact_uppercase_unpadded_approved(self) -> None:
-        for bad in ("approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n", "",
-                    "YES", "APPROVE", None, 1, b"APPROVED", ["APPROVED"]):
+    def test_his_unambiguous_go_after_the_plan_is_accepted_and_a_condition_is_not(self) -> None:
+        """2026-08-21 (A3): exact APPROVED still works; "yes go ahead" to the
+        shown plan counts; a condition, a question, a blank or a non-string
+        refuses; a word sent before the plan existed cannot approve it."""
+        plan = {"created_utc": "2026-08-10T10:00:00+00:00", "expires_utc": "2026-08-11T10:00:00+00:00"}
+        after = "2026-08-10T10:01:00+00:00"
+        for bad in ("approved but wait", "hold on", "APPROVED?", "APPROVED\nnow", "",
+                    None, 1, b"APPROVED", ["APPROVED"]):
             with self.subTest(bad=bad):
                 with self.assertRaises(revision_tool.InvoiceRevisionError):
-                    revision_tool.require_rachad_approval(bad)
-        revision_tool.require_rachad_approval("APPROVED")
+                    revision_tool.require_rachad_approval(bad, plan, sent_utc=after)
+        self.assertTrue(revision_tool.require_rachad_approval("APPROVED", plan, sent_utc=after).exact_word)
+        self.assertEqual(revision_tool.require_rachad_approval("yes go ahead", plan, sent_utc=after).kind, "money")
+        # A go with no time is refused: "after the plan" cannot be proven.
+        with self.assertRaisesRegex(revision_tool.InvoiceRevisionError, "--approval-message-utc"):
+            revision_tool.require_rachad_approval("APPROVED", plan)
+        with self.assertRaisesRegex(revision_tool.InvoiceRevisionError, "BEFORE this plan was created"):
+            revision_tool.require_rachad_approval("APPROVED", plan, sent_utc="2026-08-10T09:59:00+00:00")
+        self.assertEqual(
+            revision_tool.require_rachad_approval("APPROVED", plan, sent_utc=after).sent_utc, after,
+        )
+        # The plan is mandatory: there is no reversible fallback on a money check.
+        with self.assertRaises(TypeError):
+            revision_tool.require_rachad_approval("APPROVED")
 
     def test_wrong_approval_refused_before_lock_token_or_network(self) -> None:
         plan_path = self.stage()
         self.api_get_mock.reset_mock()
         with self.assertRaises(revision_tool.InvoiceRevisionError):
-            self.commit(plan_path, approval="approved")
+            self.commit(plan_path, approval="approved but wait")
         self.assertNoWrites()
         self.assertEqual(self.lock_files(), [], "no lock may be created without approval")
         self.api_get_mock.assert_not_called()
@@ -1049,7 +1074,7 @@ class CommitTests(RevisionToolTestCase):
         self.assertEqual(self.invoice["total"], 1250.0)
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertIs(lock["no_retry"], True)
+        self.assertIs(lock["permanent_lock"], False)
         receipt = self.append_receipt.call_args[0]
         self.assertIn("committed_verified", receipt[0])
         self.assertIn("email_sent=false", receipt[1])
@@ -1084,7 +1109,7 @@ class CommitTests(RevisionToolTestCase):
         self.assertEqual(len(self.write_calls), 1)
         with self.assertRaises(revision_tool.InvoiceRevisionError) as caught:
             self.commit(plan_path)
-        self.assertIn("already entered commit", str(caught.exception))
+        self.assertIn("cannot be replayed", str(caught.exception))
         self.assertEqual(len(self.write_calls), 1, "a replay must not write again")
 
     def test_invoice_changed_after_review_refused_before_write(self) -> None:
@@ -1134,7 +1159,7 @@ class CommitTests(RevisionToolTestCase):
         self.assertIn(revision_tool.UPDATE_SCOPE, str(caught.exception))
         self.assertNoWrites()
 
-    def test_no_retry_after_a_failed_put(self) -> None:
+    def test_a_failed_put_is_reported_and_needs_restage_not_a_permanent_lock(self) -> None:
         plan_path = self.stage()
 
         def fail(record):
@@ -1143,18 +1168,21 @@ class CommitTests(RevisionToolTestCase):
         self.allow_writes(on_write=fail)
         with self.assertRaises(revision_tool.InvoiceRevisionError) as caught:
             self.commit(plan_path)
-        self.assertIn("permanently locked", str(caught.exception))
+        self.assertIn("re-stage", str(caught.exception).casefold())
+        self.assertIn("his go to the NEW plan", str(caught.exception))
+        self.assertNotIn("permanent", str(caught.exception).casefold())
         self.assertIn("PUT was ISSUED", str(caught.exception))
         self.assertEqual(len(self.write_calls), 1)
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertIs(lock["no_retry"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertIs(lock["permanent_lock"], False)
         self.allow_writes()
-        with self.assertRaises(revision_tool.InvoiceRevisionError):
+        # The SAME plan is bound to stale live state: refused, no silent second attempt.
+        with self.assertRaisesRegex(revision_tool.InvoiceRevisionError, "Re-stage"):
             self.commit(plan_path)
         self.assertEqual(len(self.write_calls), 1, "no second attempt is possible")
 
-    def test_timeout_is_indeterminate_and_locks(self) -> None:
+    def test_timeout_is_indeterminate_and_needs_restage(self) -> None:
         plan_path = self.stage()
 
         def timeout(record):
@@ -1165,7 +1193,7 @@ class CommitTests(RevisionToolTestCase):
             self.commit(plan_path)
         self.assertIn("indeterminate", str(caught.exception))
         lock = json.loads((self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text())
-        self.assertIs(lock["plan_locked_indeterminate"], True)
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
 
     def test_readback_identity_currency_and_status_are_enforced(self) -> None:
         cases = (
@@ -1194,8 +1222,8 @@ class CommitTests(RevisionToolTestCase):
                 lock = json.loads(
                     (self.plan_dir / ".commit-locks" / self.lock_files()[0]).read_text()
                 )
-                self.assertEqual(lock["status"], "indeterminate")
-                self.assertIs(lock["no_retry"], True)
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
+                self.assertIs(lock["permanent_lock"], False)
                 plan_path.unlink()
                 (self.plan_dir / ".commit-locks" / self.lock_files()[0]).unlink()
                 self.write_calls.clear()

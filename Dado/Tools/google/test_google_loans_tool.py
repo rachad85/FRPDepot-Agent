@@ -320,9 +320,15 @@ class LoansToolTestCase(unittest.TestCase):
         return plans[0]
 
     def commit(self, plan_path: Path, approval="APPROVED") -> dict:
+        # His go is timed one minute AFTER the plan was written (A3/A5:
+        # --approval-message-utc is required on every money commit).
+        created = json.loads(plan_path.read_text(encoding="utf-8"))["created_utc"]
+        after = (datetime.fromisoformat(created) + timedelta(minutes=1)).isoformat()
         buffer = io.StringIO()
         with mock.patch("sys.stdout", buffer):
-            tool.command_commit(argparse.Namespace(plan=str(plan_path), approval=approval))
+            tool.command_commit(
+                argparse.Namespace(plan=str(plan_path), approval=approval, approval_message_utc=after)
+            )
         return json.loads(buffer.getvalue())
 
     def locks(self) -> list[dict]:
@@ -714,6 +720,9 @@ class PlanTests(LoansToolTestCase):
         self.assertEqual(first, tool.lock_path(digest))
         self.assertNotEqual(first, tool.lock_path("b" * 64))
         tool.write_lock(first, {"status": "in_flight"}, exclusive=True)
+        with self.assertRaisesRegex(tool.LoansError, "already entered commit"):
+            tool.write_lock(tool.lock_path(digest), {"status": "in_flight"}, exclusive=True)
+        tool.write_lock(first, {"status": "committed_verified"})
         with self.assertRaisesRegex(tool.LoansError, "cannot be replayed"):
             tool.write_lock(tool.lock_path(digest), {"status": "in_flight"}, exclusive=True)
         for bad in ("", "zz", "A" * 64, "a" * 63):
@@ -1051,16 +1060,30 @@ class CommitFlowTests(LoansToolTestCase):
     def test_lock_is_taken_before_the_write_and_blocks_replay(self):
         path = self.stage()
         self.commit(path)
-        with self.assertRaisesRegex(tool.LoansError, "already entered commit"):
+        with self.assertRaisesRegex(tool.LoansError, "cannot be replayed"):
             self.commit(path)
         self.assertEqual(self.google.appends(), 1)
 
     def test_wrong_approval_word_never_reaches_the_write(self):
+        """2026-08-21 (A3): "yes" / "OK" / "approve" to the shown plan now count;
+        a condition, a question or a blank still never reaches the write, and a
+        word sent before the plan existed cannot approve it."""
         path = self.stage()
-        for bad in ("approve", "yes", "APPROVED NOW", "", "OK"):
+        for bad in ("approve but wait", "yes?", "hold", "not now"):
             with self.subTest(bad=bad):
-                with self.assertRaisesRegex(tool.LoansError, "one-word approval"):
+                with self.assertRaisesRegex(tool.LoansError, "unambiguous go"):
                     self.commit(path, approval=bad)
+        with self.assertRaises(tool.LoansError):
+            self.commit(path, approval="")
+        created = tool.load_plan(path)["created_utc"]
+        early = (datetime.fromisoformat(created) - timedelta(minutes=1)).isoformat()
+        with self.assertRaisesRegex(tool.LoansError, "BEFORE this plan was created"):
+            tool.command_commit(argparse.Namespace(plan=str(path), approval="yes go ahead",
+                                                   approval_message_utc=early))
+        # A go with NO time cannot be shown to have come after the plan: refused,
+        # naming the flag and the plan's creation time.
+        with self.assertRaisesRegex(tool.LoansError, "--approval-message-utc"):
+            tool.command_commit(argparse.Namespace(plan=str(path), approval="yes go ahead"))
         self.assertEqual(self.google.appends(), 0)
         self.assertEqual(self.locks(), [])
 
@@ -1101,11 +1124,13 @@ class CommitFlowTests(LoansToolTestCase):
         self.assertEqual(self.google.appends(), 1)
         locks = self.locks()
         self.assertEqual(len(locks), 1)
-        self.assertEqual(locks[0]["status"], "indeterminate")
+        self.assertEqual(locks[0]["status"], "indeterminate_needs_restage")
+        self.assertFalse(locks[0]["permanent_lock"])
         self.assertTrue(Path(locks[0]["backup"]).exists())
-        self.assertIn("loans_ccivs_payment_indeterminate_no_retry",
+        self.assertIn("loans_ccivs_payment_indeterminate_needs_restage",
                       self.receipts.read_text(encoding="utf-8"))
-        with self.assertRaisesRegex(tool.LoansError, "already entered commit"):
+        # The SAME plan is bound to stale live state: refused, no second append.
+        with self.assertRaisesRegex(tool.LoansError, "Re-stage"):
             self.commit(path)
         self.assertEqual(self.google.appends(), 1)
 
@@ -1122,7 +1147,7 @@ class CommitFlowTests(LoansToolTestCase):
         with self.assertRaisesRegex(tool.LoansError, "Reconciliation required"):
             self.commit(path)
         self.assertEqual(self.google.appends(), 1)
-        self.assertEqual(self.locks()[0]["status"], "indeterminate")
+        self.assertEqual(self.locks()[0]["status"], "indeterminate_needs_restage")
 
     def test_multi_row_append_response_is_refused(self):
         path = self.stage()
@@ -1135,7 +1160,7 @@ class CommitFlowTests(LoansToolTestCase):
         }
         with self.assertRaisesRegex(tool.LoansError, "Reconciliation required"):
             self.commit(path)
-        self.assertEqual(self.locks()[0]["status"], "indeterminate")
+        self.assertEqual(self.locks()[0]["status"], "indeterminate_needs_restage")
 
     def test_quoted_updated_range_from_sheets_is_accepted(self):
         path = self.stage()
@@ -1158,7 +1183,7 @@ class CommitFlowTests(LoansToolTestCase):
         with self.assertRaisesRegex(tool.LoansError, "Reconciliation required"):
             self.commit(path)
         self.assertEqual(self.google.appends(), 1)
-        self.assertEqual(self.locks()[0]["status"], "indeterminate")
+        self.assertEqual(self.locks()[0]["status"], "indeterminate_needs_restage")
 
     def test_errors_never_leak_tokens(self):
         message = "refresh_token: 1//0gSECRETVALUE and ya29.AnotherSecretValue end"

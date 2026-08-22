@@ -26,6 +26,20 @@ misread on 2026-08-13:
 
 The stage-create input shape is FLAT: every writable field sits at the ROOT of
 the JSON object beside "sources". A top-level "payload" wrapper is refused.
+
+AUTONOMY PROGRAMME, 2026-08-21 (Rachad: "Go on all of them"; spec A1/A2/A4).
+Item names, SKUs and the fixed group-option label are REVERSIBLE work, so this
+tool follows the shared owner authority in Dado/Tools/common/owner_authority.py:
+* his clear go in his own message covers the write -- exact APPROVED still
+  works, a plain "yes" / "go ahead" / "do it" counts;
+* the live state a rename is about to change is captured beside the plan
+  (<plan>.live-before.json) BEFORE the PUT, and `restore-name-sku` /
+  `restore-group-option-rename --plan` put it back;
+* a failed or unverified write reads "needs re-stage" (read live again, stage a
+  new plan, apply again); nothing is permanently locked. A committed plan is
+  spent (one plan, one write).
+* item CREATE has no restore: Zoho deletes are walled (Hard Rule 3), so a
+  created item stays and the receipt records its ID.
 """
 
 from __future__ import annotations
@@ -43,6 +57,10 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 import zoho_tool
+
+# Shared owner authority (2026-08-21). Appending keeps the stdlib ahead of it.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
 
 TOOL_NAME = "FRP Depot Zoho Inventory Item Catalog Tool"
 ROOT = Path(r"C:\FRPDepot")
@@ -105,7 +123,9 @@ GROUP_OPTION_BASELINE_ATTRIBUTES = [
 # is ONE PLAIN WORD, never a checksum — the plan digest stays internal and is
 # validated by load_plan. The word must come FROM RACHAD'S OWN MESSAGE
 # answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
-APPROVAL_WORD = "APPROVED"
+# 2026-08-21 (spec A1): any clear affirmative in his message counts for this
+# reversible work; APPROVED still works and is still the word the plan names.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 
 # Local plans that were staged but explicitly withdrawn before any approval or
 # commit. They are permanently refused by full digest so an old file cannot be
@@ -137,13 +157,13 @@ WITHDRAWN_ITEM_CREATE_PLAN_HASHES = {
 }
 
 
-def require_rachad_approval(approval: str) -> None:
-    if str(approval).strip().casefold() != APPROVAL_WORD.casefold():
-        raise ItemToolError(
-            f"Rachad must answer this staged plan with the one-word approval: "
-            f"{APPROVAL_WORD}. It must come from his own message (Hard Rule 3) — "
-            "never supplied by Dado."
-        )
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this item plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (Hard Rule 3; spec A1). Never supplied by Dado."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise ItemToolError(str(exc)) from exc
 
 CREATE_FIELDS = {
     "name", "sku", "unit", "unit_id", "item_type", "product_type",
@@ -481,23 +501,35 @@ def commit_lock_path(plan_path: str) -> Path:
     return Path(str(plan_path) + ".commit-lock.json")
 
 
-def create_commit_lock(plan_path: str, plan_sha256: str) -> Path:
+def create_commit_lock(plan_path: str, plan_sha256: str, go: owner_authority.OwnerGo,
+                       action: str = "group_option_rename") -> Path:
+    """The attempt record, created exclusively before the first write (A4).
+
+    A second attempt on the same plan is refused by what the record says:
+    spent (committed), or needs re-stage. Nothing is permanently locked.
+    """
     path = commit_lock_path(plan_path)
-    record = {
-        "tool": TOOL_NAME,
-        "plan": str(Path(plan_path)),
-        "sha256": plan_sha256,
-        "write_started_utc": datetime.now(timezone.utc).isoformat(),
-    }
+    record = owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan_sha256, action=action, go=go,
+        tool=TOOL_NAME, plan=str(Path(plan_path)),
+        write_started_utc=datetime.now(timezone.utc).isoformat(),
+    )
     try:
-        with path.open("x", encoding="utf-8") as handle:
-            json.dump(record, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-    except FileExistsError as exc:
-        raise ItemToolError(
-            "REFUSED: this item-group plan already has a write-attempt lock and cannot be replayed."
-        ) from exc
+        owner_authority.write_json_exclusive_or_replace(path, record, exclusive=True)
+    except FileExistsError:
+        owner_authority.refuse_replay(ItemToolError, owner_authority.read_json_if_exists(path),
+                                      what=f"{action.replace('_', ' ')} plan")
     return path
+
+
+def finish_attempt(plan_path: str, plan_sha256: str, go: owner_authority.OwnerGo, action: str,
+                   status: str, reason: str, **extra: Any) -> None:
+    owner_authority.write_json_exclusive_or_replace(
+        commit_lock_path(plan_path),
+        owner_authority.attempt_record(status, plan_sha256=plan_sha256, action=action, go=go,
+                                       reason=reason or None, tool=TOOL_NAME, **extra),
+        exclusive=False,
+    )
 
 
 def command_stage_create(args: argparse.Namespace) -> None:
@@ -750,8 +782,12 @@ def api_write_allowed(
             if path != expected_path:
                 raise ItemToolError("REFUSED: only the commissioned FRP FW PIPE group endpoint is allowed.")
             validate_group_update_payload(payload)
-            if payload != fixed_group_option_payload(GROUP_OPTION_TARGET["after_name"]):
-                raise ItemToolError("REFUSED: item-group payload is not the one fixed 30-inch label correction.")
+            # The one fixed correction, or its exact inverse for `restore` (2026-08-21, A2).
+            if payload not in (
+                fixed_group_option_payload(GROUP_OPTION_TARGET["after_name"]),
+                fixed_group_option_payload(GROUP_OPTION_TARGET["before_name"]),
+            ):
+                raise ItemToolError("REFUSED: item-group payload is not the one fixed 30-inch label correction or its restore.")
         else:
             raise ItemToolError("REFUSED: PUT endpoint is not an exact commissioned item or item-group endpoint.")
     else:
@@ -782,7 +818,12 @@ def api_write_allowed(
 
 def command_commit_create(args: argparse.Namespace) -> None:
     plan = load_plan(args.plan, "item_create")
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="this item-create plan")
+    lock = commit_lock_path(args.plan)
+    if lock.exists():
+        owner_authority.refuse_replay(ItemToolError, owner_authority.read_json_if_exists(lock),
+                                      what="item-create plan")
     vault = zoho_tool.load_vault()
     if CREATE_SCOPE not in (vault.get("scopes") or []):
         raise ItemToolError(f"Saved Zoho connection lacks {CREATE_SCOPE}.")
@@ -794,27 +835,51 @@ def command_commit_create(args: argparse.Namespace) -> None:
             raise ItemToolError(
                 f"SKU already exists on item {duplicate.get('item_id')} ({duplicate.get('name')}); no item was created."
             )
-    result = api_write_allowed(
-        access_token,
-        str(vault["api_domain"]),
-        "POST",
-        CREATE_PATH,
-        str(vault["inventory_organization_id"]),
-        plan["payload"],
-    )
+    create_commit_lock(args.plan, plan["sha256"], go, action="item_create")
+    try:
+        result = api_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "POST",
+            CREATE_PATH,
+            str(vault["inventory_organization_id"]),
+            plan["payload"],
+        )
+    except Exception as exc:
+        finish_attempt(args.plan, plan["sha256"], go, "item_create",
+                       owner_authority.STATUS_INDETERMINATE, str(exc))
+        zoho_tool.append_receipt(
+            "zoho_inventory_item_create_indeterminate_needs_restage",
+            f"plan={args.plan}; sha256={plan['sha256']}",
+        )
+        raise ItemToolError(
+            owner_authority.explain_outcome("Item create", owner_authority.STATUS_INDETERMINATE, str(exc))
+            + " The re-stage's live SKU walk shows whether the create landed."
+        ) from exc
     zoho_tool.save_vault(vault)
     item = result.get("item") or {}
     item_id = clean_text(item.get("item_id"), "Zoho item ID", required=True)
+    finish_attempt(args.plan, plan["sha256"], go, "item_create", owner_authority.STATUS_COMMITTED, "",
+                   item_id=item_id)
     zoho_tool.append_receipt(
         "zoho_inventory_item_created_by_named_tool",
-        f"item_id={item_id}; plan={args.plan}; sha256={plan['sha256']}",
+        f"item_id={item_id}; plan={args.plan}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
-    print(json.dumps({"created": "inventory_item", "item_id": item_id, "name": item.get("name"), "sku": item.get("sku")}, indent=2))
+    print(json.dumps({
+        "created": "inventory_item", "item_id": item_id, "name": item.get("name"), "sku": item.get("sku"),
+        "plan_spent": True,
+        "restore": "not available: Zoho deletes are walled (Hard Rule 3); the item stays and this receipt records its ID",
+    }, indent=2))
 
 
 def command_commit_name_sku(args: argparse.Namespace) -> None:
     plan = load_plan(args.plan, "item_name_sku")
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="this item name/SKU plan")
+    lock = commit_lock_path(args.plan)
+    if lock.exists():
+        owner_authority.refuse_replay(ItemToolError, owner_authority.read_json_if_exists(lock),
+                                      what="item name/SKU plan")
     vault = zoho_tool.load_vault()
     if UPDATE_SCOPE not in (vault.get("scopes") or []):
         raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
@@ -828,7 +893,10 @@ def command_commit_name_sku(args: argparse.Namespace) -> None:
         "sku": clean_text(current.get("sku"), "current sku"),
     }
     if current_pair != before:
-        raise ItemToolError("The item name or SKU changed after review. A new plan is required.")
+        raise ItemToolError(
+            "The item name or SKU changed after review. Re-stage: the live state is read "
+            "again and the new diff is shown; nothing was written."
+        )
     new_sku = clean_text(plan["summary"]["after"].get("sku"), "new sku")
     if new_sku:
         duplicate = exact_sku_match(list_all_items(access_token, vault), new_sku, exclude_item_id=item_id)
@@ -836,35 +904,133 @@ def command_commit_name_sku(args: argparse.Namespace) -> None:
             raise ItemToolError(
                 f"SKU already exists on item {duplicate.get('item_id')} ({duplicate.get('name')}); no change was made."
             )
-    result = api_write_allowed(
-        access_token,
-        str(vault["api_domain"]),
-        "PUT",
-        f"/inventory/v1/items/{item_id}",
-        str(vault["inventory_organization_id"]),
-        plan["payload"],
+    # A2: keep the live state this write changes beside the plan, BEFORE the PUT.
+    backup = owner_authority.capture_live_state(
+        Path(args.plan),
+        {"before": current_pair, "after": plan["summary"]["after"], "changed": plan["summary"]["changed"],
+         "payload_fields": sorted(plan["payload"]), "item": current},
+        what=f"Zoho Inventory item {item_id} name/SKU", where=f"/inventory/v1/items/{item_id}",
+        plan_sha256=plan["sha256"],
     )
+    create_commit_lock(args.plan, plan["sha256"], go, action="item_name_sku")
+    try:
+        result = api_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "PUT",
+            f"/inventory/v1/items/{item_id}",
+            str(vault["inventory_organization_id"]),
+            plan["payload"],
+        )
+    except Exception as exc:
+        finish_attempt(args.plan, plan["sha256"], go, "item_name_sku",
+                       owner_authority.STATUS_INDETERMINATE, str(exc), backup=str(backup))
+        zoho_tool.append_receipt(
+            "zoho_inventory_item_name_sku_indeterminate_needs_restage",
+            f"item_id={item_id}; backup={backup}; plan={args.plan}; sha256={plan['sha256']}",
+        )
+        raise ItemToolError(
+            owner_authority.explain_outcome(f"Item {item_id} name/SKU", owner_authority.STATUS_INDETERMINATE, str(exc))
+        ) from exc
     zoho_tool.save_vault(vault)
     updated = result.get("item") or {}
     updated_name = clean_text(updated.get("name"), "updated name", required=True)
     updated_sku = clean_text(updated.get("sku"), "updated sku")
     expected_after = plan["summary"]["after"]
     if updated_name != expected_after["name"] or updated_sku != expected_after["sku"]:
+        finish_attempt(args.plan, plan["sha256"], go, "item_name_sku",
+                       owner_authority.STATUS_INDETERMINATE,
+                       f"Zoho returned unexpected name/SKU for item {item_id}.", backup=str(backup))
         zoho_tool.append_receipt(
             "zoho_inventory_item_name_sku_unexpected_result",
-            f"item_id={item_id}; plan={args.plan}; sha256={plan['sha256']}",
+            f"item_id={item_id}; backup={backup}; plan={args.plan}; sha256={plan['sha256']}",
         )
-        raise ItemToolError(f"Zoho returned unexpected name/SKU for item {item_id}. No further action taken.")
+        raise ItemToolError(
+            owner_authority.explain_outcome(
+                f"Item {item_id} name/SKU", owner_authority.STATUS_INDETERMINATE,
+                f"Zoho returned unexpected name/SKU ({updated_name!r} / {updated_sku!r}).",
+            )
+        )
+    finish_attempt(args.plan, plan["sha256"], go, "item_name_sku", owner_authority.STATUS_COMMITTED, "",
+                   item_id=item_id, backup=str(backup))
     zoho_tool.append_receipt(
         "zoho_inventory_item_name_sku_updated_by_named_tool",
-        f"item_id={item_id}; plan={args.plan}; sha256={plan['sha256']}",
+        f"item_id={item_id}; backup={backup}; plan={args.plan}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
-    print(json.dumps({"updated": "item_name_sku", "item_id": item_id, "name": updated_name, "sku": updated_sku}, indent=2))
+    print(json.dumps({
+        "updated": "item_name_sku", "item_id": item_id, "name": updated_name, "sku": updated_sku,
+        "plan_spent": True, "live_state_backup": str(backup),
+        "restore": f"restore-name-sku --plan {args.plan} --approval <his go>",
+    }, indent=2))
+
+
+def command_restore_name_sku(args: argparse.Namespace) -> None:
+    """A2: put back the name/SKU captured before this plan's PUT (one PUT)."""
+    plan = load_plan(args.plan, "item_name_sku")
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="restoring this item's previous name/SKU")
+    plan_path = Path(args.plan)
+    record = owner_authority.load_live_state(plan_path, ItemToolError)
+    if record.get("plan_sha256") != plan["sha256"]:
+        raise ItemToolError("The captured live state belongs to a different plan.")
+    restore_path = owner_authority.restore_record_path(plan_path)
+    if restore_path.exists():
+        raise ItemToolError(
+            f"This plan's name/SKU were already restored ({restore_path.name}); stage a new plan "
+            "for any further change."
+        )
+    vault = zoho_tool.load_vault()
+    if UPDATE_SCOPE not in (vault.get("scopes") or []):
+        raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    before = record["state"]["before"]
+    after = record["state"]["after"]
+    item_id = str(before["item_id"])
+    current = get_item(access_token, vault, item_id)
+    current_pair = {
+        "item_id": item_id,
+        "name": clean_text(current.get("name"), "current name", required=True),
+        "sku": clean_text(current.get("sku"), "current sku"),
+    }
+    result: dict[str, Any] = {"plan_sha256": plan["sha256"], "item_id": item_id, **go.as_record()}
+    if current_pair == before:
+        result.update(status="NOT_RESTORED", reason="already at the captured name/SKU")
+    elif current_pair != after:
+        result.update(status="NOT_RESTORED",
+                      reason="moved since this plan wrote it (live name/SKU differ); left alone")
+    else:
+        payload: dict[str, Any] = {"name": before["name"]}
+        if "sku" in (record["state"].get("payload_fields") or []):
+            payload["sku"] = before["sku"]
+        try:
+            written = api_write_allowed(
+                access_token, str(vault["api_domain"]), "PUT",
+                f"/inventory/v1/items/{item_id}", str(vault["inventory_organization_id"]), payload,
+            )
+            updated = written.get("item") or {}
+            if clean_text(updated.get("name"), "restored name", required=True) != before["name"] or (
+                "sku" in payload and clean_text(updated.get("sku"), "restored sku") != before["sku"]
+            ):
+                raise ItemToolError(f"Zoho returned an unexpected name/SKU after restoring item {item_id}.")
+        except Exception as exc:
+            result.update(status="RESTORE_FAILED", reason=str(exc)[:1000])
+            owner_authority.record_restore(plan_path, result)
+            raise ItemToolError(f"Restore of item {item_id} did not verify: {exc}") from exc
+        result.update(status="RESTORED", **{"from": after, "to": before})
+    zoho_tool.save_vault(vault)
+    owner_authority.record_restore(plan_path, result)
+    zoho_tool.append_receipt(
+        "zoho_inventory_item_name_sku_restore",
+        f"status={result['status']}; item_id={item_id}; backup={owner_authority.live_state_path(plan_path)}; "
+        f"plan={args.plan}; sha256={plan['sha256']}",
+    )
+    print(json.dumps(result, indent=2))
 
 
 def command_commit_group_option_rename(args: argparse.Namespace) -> None:
     plan = load_plan(args.plan, "group_option_rename")
-    require_rachad_approval(args.approval)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="this group-option rename plan")
     expected_plan_keys = {
         "tool", "kind", "created_utc", "payload", "sources", "summary",
         "live_evidence", "sha256",
@@ -903,42 +1069,69 @@ def command_commit_group_option_rename(args: argparse.Namespace) -> None:
         raise ItemToolError("The protected expected state is not the one commissioned correction.")
     if evidence.get("expected_state_sha256") != state_sha256(expected_state):
         raise ItemToolError("The protected expected-state fingerprint is invalid.")
-    if commit_lock_path(args.plan).exists():
-        raise ItemToolError(
-            "REFUSED: this item-group plan already has a write-attempt lock and cannot be replayed."
-        )
+    lock = commit_lock_path(args.plan)
+    if lock.exists():
+        owner_authority.refuse_replay(ItemToolError, owner_authority.read_json_if_exists(lock),
+                                      what="item-group plan")
     vault = zoho_tool.load_vault()
     if UPDATE_SCOPE not in (vault.get("scopes") or []):
         raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
     access_token, vault = zoho_tool.refresh_access_token(vault)
     current = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
     if current != before_state:
-        raise ItemToolError("The item group changed after review. A new plan is required.")
-    create_commit_lock(args.plan, plan["sha256"])
-    api_write_allowed(
-        access_token,
-        str(vault["api_domain"]),
-        "PUT",
-        f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}",
-        str(vault["inventory_organization_id"]),
-        plan["payload"],
+        raise ItemToolError(
+            "The item group changed after review. Re-stage: the live state is read again and "
+            "the new diff is shown; nothing was written."
+        )
+    # A2: keep the live group beside the plan, BEFORE the PUT, for restore.
+    backup = owner_authority.capture_live_state(
+        Path(args.plan), {"group": current},
+        what=f"Zoho item group {GROUP_OPTION_TARGET['group_id']} option label",
+        where=f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}", plan_sha256=plan["sha256"],
     )
+    create_commit_lock(args.plan, plan["sha256"], go)
+    try:
+        api_write_allowed(
+            access_token,
+            str(vault["api_domain"]),
+            "PUT",
+            f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}",
+            str(vault["inventory_organization_id"]),
+            plan["payload"],
+        )
+    except Exception as exc:
+        finish_attempt(args.plan, plan["sha256"], go, "group_option_rename",
+                       owner_authority.STATUS_INDETERMINATE, str(exc), backup=str(backup))
+        zoho_tool.append_receipt(
+            "zoho_inventory_group_option_indeterminate_needs_restage",
+            f"group_id={GROUP_OPTION_TARGET['group_id']}; backup={backup}; plan={args.plan}; sha256={plan['sha256']}",
+        )
+        raise ItemToolError(
+            owner_authority.explain_outcome("Group-option rename", owner_authority.STATUS_INDETERMINATE, str(exc))
+        ) from exc
     zoho_tool.save_vault(vault)
     fresh = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
     if fresh != expected_state:
+        finish_attempt(args.plan, plan["sha256"], go, "group_option_rename",
+                       owner_authority.STATUS_INDETERMINATE,
+                       "Zoho returned an unexpected group/item state after the write.", backup=str(backup))
         zoho_tool.append_receipt(
             "zoho_inventory_group_option_unexpected_result",
-            f"group_id={GROUP_OPTION_TARGET['group_id']}; plan={args.plan}; sha256={plan['sha256']}; replay_locked=true",
+            f"group_id={GROUP_OPTION_TARGET['group_id']}; backup={backup}; plan={args.plan}; sha256={plan['sha256']}",
         )
         raise ItemToolError(
-            "Zoho returned an unexpected group/item state after the one write attempt. "
-            "The plan is replay-locked; no retry is allowed."
+            owner_authority.explain_outcome(
+                "Group-option rename", owner_authority.STATUS_INDETERMINATE,
+                "Zoho returned an unexpected group/item state after the one write.",
+            )
         )
+    finish_attempt(args.plan, plan["sha256"], go, "group_option_rename", owner_authority.STATUS_COMMITTED, "",
+                   backup=str(backup))
     zoho_tool.append_receipt(
         "zoho_inventory_group_option_renamed_by_named_tool",
         f"group_id={GROUP_OPTION_TARGET['group_id']}; option_id={GROUP_OPTION_TARGET['option_id']}; "
         f"before={GROUP_OPTION_TARGET['before_name']}; after={GROUP_OPTION_TARGET['after_name']}; "
-        f"plan={args.plan}; sha256={plan['sha256']}",
+        f"backup={backup}; plan={args.plan}; sha256={plan['sha256']}; go_lane={go.lane}",
     )
     print(json.dumps({
         "updated": "item_group_option_name",
@@ -950,7 +1143,66 @@ def command_commit_group_option_rename(args: argparse.Namespace) -> None:
         "after": GROUP_OPTION_TARGET["after_name"],
         "linked_item_ids": GROUP_OPTION_TARGET["linked_item_ids"],
         "replay_locked": True,
+        "plan_spent": True,
+        "live_state_backup": str(backup),
+        "restore": f"restore-group-option-rename --plan {args.plan} --approval <his go>",
     }, indent=2))
+
+
+def command_restore_group_option_rename(args: argparse.Namespace) -> None:
+    """A2: put the captured group state back (one PUT of the fixed before-label payload)."""
+    plan = load_plan(args.plan, "group_option_rename")
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="restoring the previous group-option label")
+    plan_path = Path(args.plan)
+    record = owner_authority.load_live_state(plan_path, ItemToolError)
+    if record.get("plan_sha256") != plan["sha256"]:
+        raise ItemToolError("The captured live state belongs to a different plan.")
+    restore_path = owner_authority.restore_record_path(plan_path)
+    if restore_path.exists():
+        raise ItemToolError(
+            f"This plan's group label was already restored ({restore_path.name}); stage a new plan "
+            "for any further change."
+        )
+    before_state = record["state"]["group"]
+    expected_state = plan["live_evidence"]["expected_state"]
+    vault = zoho_tool.load_vault()
+    if UPDATE_SCOPE not in (vault.get("scopes") or []):
+        raise ItemToolError(f"Saved Zoho connection lacks {UPDATE_SCOPE}.")
+    access_token, vault = zoho_tool.refresh_access_token(vault)
+    current = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
+    result: dict[str, Any] = {"plan_sha256": plan["sha256"], "group_id": GROUP_OPTION_TARGET["group_id"],
+                              **go.as_record()}
+    if current == before_state:
+        result.update(status="NOT_RESTORED", reason="already at the captured state")
+    elif current != expected_state:
+        result.update(status="NOT_RESTORED",
+                      reason="moved since this plan wrote it (live group differs); left alone")
+    else:
+        try:
+            api_write_allowed(
+                access_token, str(vault["api_domain"]), "PUT",
+                f"/inventory/v1/itemgroups/{GROUP_OPTION_TARGET['group_id']}",
+                str(vault["inventory_organization_id"]),
+                fixed_group_option_payload(GROUP_OPTION_TARGET["before_name"]),
+            )
+            fresh = get_item_group(access_token, vault, GROUP_OPTION_TARGET["group_id"])
+            if fresh != before_state:
+                raise ItemToolError("Zoho returned an unexpected group/item state after the restore.")
+        except Exception as exc:
+            result.update(status="RESTORE_FAILED", reason=str(exc)[:1000])
+            owner_authority.record_restore(plan_path, result)
+            raise ItemToolError(f"Restore of the group label did not verify: {exc}") from exc
+        result.update(status="RESTORED", **{"from": GROUP_OPTION_TARGET["after_name"],
+                                             "to": GROUP_OPTION_TARGET["before_name"]})
+    zoho_tool.save_vault(vault)
+    owner_authority.record_restore(plan_path, result)
+    zoho_tool.append_receipt(
+        "zoho_inventory_group_option_restore",
+        f"status={result['status']}; group_id={GROUP_OPTION_TARGET['group_id']}; "
+        f"backup={owner_authority.live_state_path(plan_path)}; plan={args.plan}; sha256={plan['sha256']}",
+    )
+    print(json.dumps(result, indent=2))
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -967,16 +1219,25 @@ def build_parser() -> argparse.ArgumentParser:
     stage_group_option.set_defaults(func=command_stage_group_option_rename)
     commit_create = commands.add_parser("commit-create")
     commit_create.add_argument("--plan", required=True)
-    commit_create.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_create)
     commit_create.set_defaults(func=command_commit_create)
     commit_change = commands.add_parser("commit-name-sku")
     commit_change.add_argument("--plan", required=True)
-    commit_change.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_change)
     commit_change.set_defaults(func=command_commit_name_sku)
     commit_group_option = commands.add_parser("commit-group-option-rename")
     commit_group_option.add_argument("--plan", required=True)
-    commit_group_option.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_group_option)
     commit_group_option.set_defaults(func=command_commit_group_option_rename)
+    restore_change = commands.add_parser("restore-name-sku", help="put back the name/SKU captured before the PUT")
+    restore_change.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore_change)
+    restore_change.set_defaults(func=command_restore_name_sku)
+    restore_group_option = commands.add_parser(
+        "restore-group-option-rename", help="put back the group-option label captured before the PUT")
+    restore_group_option.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore_group_option)
+    restore_group_option.set_defaults(func=command_restore_group_option_rename)
     return parser
 
 

@@ -477,14 +477,31 @@ def normalized_reference(value: Any) -> str:
     return NON_ALNUM_RE.sub("", str(value if value is not None else "").casefold())
 
 
-def require_rachad_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding."""
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise SalesOrderError(
-            "Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). Commissioning, "
-            "building and staging are not approval, and Dado cannot supply it."
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). A sales
+# order creates a financial record, so it keeps the two-step: stage, then his
+# own unambiguous go to THAT plan, sent after the plan was written. Exact
+# APPROVED is no longer REQUIRED; a failed commit is reported and re-staged, not
+# permanently locked. (Appended so the common folder never shadows the stdlib.)
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
+
+def require_rachad_approval(approval: Any, plan: dict[str, Any], *,
+                            lane: Any = None, sent_utc: Any = None) -> owner_authority.OwnerGo:
+    """Rachad's own unambiguous go to THIS plan, sent after it was written (A3).
+
+    Commissioning, building and staging are not approval, and Dado cannot
+    supply it. Until 2026-08-21 only the exact string APPROVED passed. The
+    plan is mandatory and ``sent_utc`` (--approval-message-utc) must be given:
+    a money check never falls back to the reversible rule.
+    """
+    try:
+        return owner_authority.require_owner_go_after_plan(
+            approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=sent_utc, lane=lane, what="this sales-order plan",
         )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise SalesOrderError(str(exc)) from exc
 
 
 def origin_record() -> dict[str, str]:
@@ -1735,10 +1752,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise SalesOrderError(
-            "REFUSED: this plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(SalesOrderError, owner_authority.read_json_if_exists(path),
+                                      what="sales-order plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
     # Durable: the lock must survive a crash between the lock and the POST.
@@ -2236,8 +2254,11 @@ def recheck_live_state(
 def command_commit(args: argparse.Namespace) -> None:
     plan_path = contained_plan(args.plan)
     plan, evidence = load_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_rachad_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_rachad_approval(
+        args.approval, plan, lane=getattr(args, "approval_lane", None),
+        sent_utc=getattr(args, "approval_message_utc", None),
+    )
     # The exact client PO must still be on disk, byte for byte, before anything.
     content = read_source_pdf()
 
@@ -2264,14 +2285,13 @@ def command_commit(args: argparse.Namespace) -> None:
     recheck_live_state(access_token, vault, evidence)
 
     lock = lock_path(plan["sha256"])
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "in_flight",
-        "customer_id": CUSTOMER_ID,
-        "reference_number": PO_REFERENCE,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    if lock.exists():
+        owner_authority.refuse_replay(SalesOrderError, owner_authority.read_json_if_exists(lock),
+                                      what="sales-order plan")
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        customer_id=CUSTOMER_ID, reference_number=PO_REFERENCE, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
 
     create_attempted = False
     attachment_attempted = False
@@ -2320,66 +2340,55 @@ def command_commit(args: argparse.Namespace) -> None:
         verify_no_second_copy(rows, salesorder_id)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        if attachment_attempted:
-            status = "indeterminate_after_create_and_attachment_attempt"
-        elif create_attempted:
-            status = "indeterminate"
-        else:  # pragma: no cover - the lock is taken immediately before the create
-            status = "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "action": ACTION,
-            "status": status,
-            "salesorder_id": salesorder_id,
-            "salesorder_number": salesorder_number,
-            "create_attempted": create_attempted,
-            "attachment_attempted": attachment_attempted,
-            "plan_locked_indeterminate": create_attempted,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        status = owner_authority.STATUS_INDETERMINATE if create_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        stage_of_failure = (
+            "after_create_and_attachment_attempt" if attachment_attempted
+            else ("after_create_attempt" if create_attempted else "before_write")
+        )
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=ACTION, go=go, reason=str(exc),
+            stage_of_failure=stage_of_failure, salesorder_id=salesorder_id,
+            salesorder_number=salesorder_number, create_attempted=create_attempted,
+            attachment_attempted=attachment_attempted,
+        ))
         zoho_tool.append_receipt(
-            f"zoho_books_{ACTION}_{status}_no_retry",
-            f"status={status}; salesorder_id={salesorder_id or 'unknown'}; "
+            f"zoho_books_{ACTION}_{status}",
+            f"status={status}; failure={stage_of_failure}; salesorder_id={salesorder_id or 'unknown'}; "
             f"salesorder_number={salesorder_number or 'unknown'}; "
             f"create_attempted={str(create_attempted).lower()}; "
             f"attachment_attempted={str(attachment_attempted).lower()}; plan={plan_path}; "
             f"sha256={plan['sha256']}; email_sent=false",
         )
         raise SalesOrderError(
-            f"The SCT PO26330 sales order is {status} and this plan is permanently locked against "
-            "retry. "
-            + (
-                "A create POST was ISSUED. Sales Order ID: "
-                + (salesorder_id or "UNKNOWN -- Zoho did not return one")
-                + (f" ({salesorder_number})" if salesorder_number else "")
-                + ". "
-                + (
-                    "An attachment POST was ALSO issued, so the client PO may or may not be "
-                    "attached. "
-                    if attachment_attempted else
-                    "NO attachment was uploaded, so the order may exist WITHOUT the client PO. "
+            owner_authority.explain_outcome(
+                "The SCT PO26330 sales order", status,
+                (
+                    "A create POST was ISSUED. Sales Order ID: "
+                    + (salesorder_id or "UNKNOWN -- Zoho did not return one")
+                    + (f" ({salesorder_number})" if salesorder_number else "")
+                    + ". "
+                    + (
+                        "An attachment POST was ALSO issued, so the client PO may or may not be "
+                        "attached. "
+                        if attachment_attempted else
+                        "NO attachment was uploaded, so the order may exist WITHOUT the client PO. "
+                    )
+                    + "Its live state is unconfirmed; NOTHING was cleaned up, deleted, voided, "
+                    "restatused or attached again, and nothing is retried silently."
+                    if create_attempted else
+                    "No POST was issued and no sales order exists."
                 )
-                + "Its live state is unconfirmed; NOTHING was cleaned up, deleted, voided, "
-                "restatused or attached again, and nothing will be retried."
-                if create_attempted else
-                "No POST was issued and no sales order exists."
+                + f" No email was sent; this tool has no mail transport. Reason: {exc}",
+                money=True,
             )
-            + f" No email was sent; this tool has no mail transport. Reason: {exc} "
-            "Read the live sales order in Zoho and reconcile before staging anything new."
+            + " The re-stage's duplicate walk shows whether the order landed."
         ) from exc
 
-    write_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "action": ACTION,
-        "status": "committed_verified",
-        "salesorder_id": salesorder_id,
-        "salesorder_number": salesorder_number,
-        "attachment_sha256": attachment_report["verified_sha256"],
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        salesorder_id=salesorder_id, salesorder_number=salesorder_number,
+        attachment_sha256=attachment_report["verified_sha256"],
+    ))
     zoho_tool.append_receipt(
         f"zoho_books_{ACTION}_committed_verified",
         f"salesorder={salesorder_number} ({salesorder_id}); status=draft; "
@@ -2407,6 +2416,8 @@ def command_commit(args: argparse.Namespace) -> None:
         "email_sent": False,
         "atomic": False,
         "replay_locked": True,
+        "plan_spent": True,
+        "approval_message_utc": go.sent_utc or "not stated",
     }, ensure_ascii=False, indent=2))
 
 
@@ -2417,7 +2428,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit-sct-po26330")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

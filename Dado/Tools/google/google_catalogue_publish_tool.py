@@ -8,9 +8,18 @@ FRP Depots Catalogue 2026.pdf / 1PqcjZf-SSCbBVp7quMri_ernaOPZDPz1.
 It can upload only one pinned, reviewed local PDF digest. It cannot create,
 delete, copy, rename, move, share, change permissions, publish another file,
 mail anything, or use a browser. Stage is read-only against Google. Commit
-requires a 24-hour immutable plan and Rachad's exact unpadded uppercase
-APPROVED. The one media update is attempted once and then read back byte for
-byte; any failure or uncertain verification permanently locks the plan.
+requires a 24-hour immutable plan and Rachad's own go to it. The one media
+update is attempted once and then read back byte for byte.
+
+AUTONOMY PROGRAMME, 2026-08-21 (Rachad: "Go on all of them"; spec A1/A2/A4).
+Catalogue publication is REVERSIBLE work, so this tool follows the shared owner
+authority in Dado/Tools/common/owner_authority.py: his clear go in his own
+message covers the publication (exact APPROVED still works; "yes" / "go ahead"
+count); the previous live PDF is downloaded to BACKUP_DIR before the media PUT
+(it always was) and `restore --plan` re-uploads those exact bytes through the
+same single conditional update route; a failed or unverified PUT reads "needs
+re-stage" (the re-stage reads Drive again and shows what is live); nothing is
+permanently locked. A committed plan is spent.
 """
 from __future__ import annotations
 
@@ -32,11 +41,16 @@ from googleapiclient.http import MediaIoBaseDownload, MediaIoBaseUpload
 
 import google_investments_auth as auth
 
+# Shared owner authority (2026-08-21). Appending keeps the stdlib ahead of it.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Fixed Catalogue Drive Publisher"
-TOOL_VERSION = "1.3.0"
+TOOL_VERSION = "1.4.0"
 SCHEMA_VERSION = 4
 ACTION = "replace_exact_catalogue_pdf"
-APPROVAL_WORD = "APPROVED"
+# Still the word the plan names; since 2026-08-21 any clear go of his counts.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 PLAN_LIFETIME_HOURS = 24
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "catalogue_publish_plans"
@@ -93,7 +107,9 @@ WRITE_CONTRACT = {
     "atomicity": "one content-replacement request; verification follows separately",
     "attempts": 1,
     "retry": False,
-    "rollback_route": False,
+    # 2026-08-21 (A2): `restore --plan` re-uploads the backed-up previous bytes
+    # through the same single conditional media update, on his go.
+    "rollback_route": "restore --plan (re-upload of the backed-up previous PDF, same route)",
     "email_or_notification": False,
     "preserves": ["file_id", "name", "mime_type", "parent_path", "share_links"],
     "forbids": ["create", "delete", "copy", "rename", "move", "permissions", "sharing", "mail", "browser"],
@@ -352,7 +368,11 @@ def read_json(path: Path) -> dict[str, Any]:
     return value
 
 
-def load_plan(path: Path) -> dict[str, Any]:
+def load_plan(path: Path, *, for_restore: bool = False) -> dict[str, Any]:
+    """Validate a plan. ``for_restore`` skips the 24-hour expiry and the
+    "artifact must not already be live" eligibility, because putting the
+    previous PDF back is allowed after the window and precisely when the
+    artifact IS live."""
     plan = read_json(path)
     saved = str(plan.pop("sha256", ""))
     if saved in SUPERSEDED_PLAN_SHA256:
@@ -384,7 +404,7 @@ def load_plan(path: Path) -> dict[str, Any]:
     now = utc_now()
     if created > now + timedelta(minutes=5):
         raise CataloguePublishError("Plan creation time is in the future.")
-    if now >= expires:
+    if now >= expires and not for_restore:
         raise CataloguePublishError("Plan expired. Stage a new plan.")
     if not re.fullmatch(r"[0-9a-f]{32}", str(plan.get("nonce") or "")):
         raise CataloguePublishError("Plan nonce is invalid.")
@@ -422,12 +442,19 @@ def lock_path(plan_digest: str) -> Path:
     return PLAN_DIR / ".commit-locks" / f"{plan_digest}.json"
 
 
+def restore_lock_path(plan_digest: str) -> Path:
+    return lock_path(plan_digest).with_name(f"{plan_digest}.restore.json")
+
+
 def write_json_exclusive(path: Path, value: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
         descriptor = os.open(str(path), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError as exc:
-        raise CataloguePublishError("This publication plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(CataloguePublishError, owner_authority.read_json_if_exists(path),
+                                      what="catalogue publication plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -437,11 +464,39 @@ def overwrite_json(path: Path, value: dict[str, Any]) -> None:
     path.write_text(json.dumps(value, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
 
 
+def restore_eligibility(live: dict[str, Any], plan: dict[str, Any], backup: dict[str, Any]) -> None:
+    """The predicate for putting the previous PDF back (A2): same fixed file,
+    the backup is byte-identical to what the plan captured as `before`, and the
+    live file still carries the artifact this plan published."""
+    fixed = {
+        "id": EXPECTED_FILE_ID,
+        "name": EXPECTED_FILE_NAME,
+        "mime_type": EXPECTED_MIME_TYPE,
+        "parent_ids": list(EXPECTED_PARENT_IDS),
+        "parent_path": list(EXPECTED_PARENT_PATH),
+        "editable": True,
+        "trashed": False,
+    }
+    for key, expected in fixed.items():
+        if live.get(key) != expected:
+            raise CataloguePublishError(f"The live catalogue failed the fixed {key} eligibility check.")
+    if backup["sha256"] != plan["before"]["sha256"] or backup["bytes"] != plan["before"]["bytes"]:
+        raise CataloguePublishError("The backup is not the previous catalogue this plan captured.")
+    if live["sha256"] == backup["sha256"]:
+        raise CataloguePublishError("already at the captured PDF")
+    if live["sha256"] != plan["artifact"]["sha256"]:
+        raise CataloguePublishError("moved since this plan published it (live PDF differs); left alone")
+
+
 def perform_one_update(service, live: dict[str, Any], artifact: dict[str, Any],
                        artifact_bytes: bytes, plan: dict[str, Any], lock: Path,
-                       lock_record: dict[str, Any]) -> dict[str, Any]:
-    """The only side-effect adapter. It reuses the shared eligibility predicate."""
-    eligibility(live, artifact, plan["before"])
+                       lock_record: dict[str, Any], *, precondition=None) -> dict[str, Any]:
+    """The only side-effect adapter. It reuses the shared eligibility predicate;
+    `restore` passes its own (restore_eligibility) through ``precondition``."""
+    if precondition is None:
+        eligibility(live, artifact, plan["before"])
+    else:
+        precondition(live, artifact)
     media = MediaIoBaseUpload(io.BytesIO(artifact_bytes), mimetype=EXPECTED_MIME_TYPE, resumable=False)
     request = service.files().update(
         fileId=EXPECTED_FILE_ID,
@@ -498,15 +553,11 @@ def command_commit(args: argparse.Namespace) -> None:
     if PLAN_DIR.resolve() not in plan_path.parents:
         raise CataloguePublishError("Plan must be inside Dado's catalogue publication plan folder.")
     plan = load_plan(plan_path)
-    if (
-        not isinstance(args.approval, str)
-        or not args.approval.isascii()
-        or not secrets.compare_digest(args.approval, APPROVAL_WORD)
-    ):
-        raise CataloguePublishError("Rachad must reply with exact unpadded uppercase APPROVED.")
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None))
     lock = lock_path(str(plan["sha256"]))
     if lock.exists():
-        raise CataloguePublishError("This publication plan has already entered commit and cannot be replayed.")
+        owner_authority.refuse_replay(CataloguePublishError, owner_authority.read_json_if_exists(lock),
+                                      what="catalogue publication plan")
 
     artifact, artifact_bytes = artifact_projection()
     if artifact != plan["artifact"]:
@@ -520,14 +571,17 @@ def command_commit(args: argparse.Namespace) -> None:
         utc_now().strftime("%Y%m%dT%H%M%SZ_") + str(live["sha256"]) + "_FRP_Depots_Catalogue_2026.pdf"
     )
     backup.write_bytes(current_bytes)
-    lock_record = {
-        "plan_sha256": plan["sha256"],
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-        "backup": str(backup),
-        "attempts_allowed": 1,
-        "rollback_route": False,
-    }
+    # A2: the captured live state next to the plan names the backup file.
+    owner_authority.capture_live_state(
+        plan_path, {"before": live, "backup": str(backup)},
+        what="Google Drive catalogue PDF bytes", where=f"Drive file {EXPECTED_FILE_ID}",
+        plan_sha256=plan["sha256"],
+    )
+    lock_record = owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        started_utc=utc_now().isoformat(), backup=str(backup), attempts_allowed=1,
+        rollback_route=WRITE_CONTRACT["rollback_route"],
+    )
 
     try:
         perform_one_update(
@@ -544,32 +598,35 @@ def command_commit(args: argparse.Namespace) -> None:
             getattr(getattr(exc, "resp", None), "status", 0) or 0
         ) == 412
         lock_status = (
-            "failed_closed_no_write_authoritative"
-            if authoritative_no_write else "indeterminate_no_retry"
+            owner_authority.STATUS_NEEDS_RESTAGE
+            if authoritative_no_write else owner_authority.STATUS_INDETERMINATE
         )
-        overwrite_json(lock, {
-            "plan_sha256": plan["sha256"],
-            "status": lock_status,
-            "updated_utc": utc_now().isoformat(),
-            "backup": str(backup),
-            "reason": scrub(str(exc)),
-            "attempts_allowed": 1,
-            "rollback_route": False,
-        })
+        overwrite_json(lock, owner_authority.attempt_record(
+            lock_status, plan_sha256=plan["sha256"], action=ACTION, go=go, reason=scrub(str(exc)),
+            backup=str(backup), authoritative_no_write=authoritative_no_write, attempts_allowed=1,
+            rollback_route=WRITE_CONTRACT["rollback_route"],
+        ))
         append_receipt(
             (
-                "catalogue_drive_publication_failed_closed_no_write"
+                "catalogue_drive_publication_failed_closed_no_write_needs_restage"
                 if authoritative_no_write else
-                "catalogue_drive_publication_indeterminate_no_retry"
+                "catalogue_drive_publication_indeterminate_needs_restage"
             ),
             f"plan={plan_path}; sha256={plan['sha256']}; backup={backup}",
         )
         if authoritative_no_write:
             raise CataloguePublishError(
-                "Google authoritatively rejected the conditional media PUT because the live file changed. No Drive write occurred; the plan is permanently locked."
+                owner_authority.explain_outcome(
+                    "Catalogue publication", lock_status,
+                    "Google authoritatively rejected the conditional media PUT because the live "
+                    "file changed. No Drive write occurred.",
+                )
             ) from exc
         raise CataloguePublishError(
-            "The Drive catalogue media PUT failed or could not be fully verified. The plan is permanently locked and will not retry."
+            owner_authority.explain_outcome(
+                "Catalogue publication", lock_status,
+                "The Drive catalogue media PUT failed or could not be fully verified.",
+            )
         ) from exc
 
     RESULT_DIR.mkdir(parents=True, exist_ok=True)
@@ -585,25 +642,115 @@ def command_commit(args: argparse.Namespace) -> None:
         "artifact": artifact,
         "downloaded_live_sha256": sha256_bytes(readback),
         "replay_locked": True,
+        "plan_spent": True,
         "backup": str(backup),
+        "restore": f"restore --plan {plan_path} --approval <his go>",
         "remote_write_requests": 1,
         "email_sent": False,
         "website_writes": 0,
         "zoho_writes": 0,
     }
     overwrite_json(result_path, result)
-    overwrite_json(lock, {
-        "plan_sha256": plan["sha256"],
-        "status": "committed_verified",
-        "updated_utc": utc_now().isoformat(),
-        "backup": str(backup),
-        "result": str(result_path),
-        "new_sha256": after["sha256"],
-        "new_version": after["version"],
-        "attempts_allowed": 1,
-        "rollback_route": False,
-    })
+    overwrite_json(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ACTION, go=go,
+        backup=str(backup), result=str(result_path), new_sha256=after["sha256"],
+        new_version=after["version"], attempts_allowed=1, rollback_route=WRITE_CONTRACT["rollback_route"],
+    ))
     append_receipt("catalogue_drive_publication_committed_verified", str(result_path))
+    print(json.dumps(result, indent=2, ensure_ascii=False))
+
+
+def require_rachad_approval(approval: Any, lane: Any = None,
+                            what: str = "this catalogue publication plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (spec A1). APPROVED still works."""
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise CataloguePublishError(str(exc)) from exc
+
+
+def command_restore(args: argparse.Namespace) -> None:
+    """A2: re-upload the previous catalogue bytes this plan backed up, once,
+    through the same single conditional media update, on his go."""
+    plan_path = Path(args.plan).resolve()
+    if PLAN_DIR.resolve() not in plan_path.parents:
+        raise CataloguePublishError("Plan must be inside Dado's catalogue publication plan folder.")
+    plan = load_plan(plan_path, for_restore=True)
+    go = require_rachad_approval(args.approval, getattr(args, "approval_lane", None),
+                                 what="restoring the previous catalogue PDF")
+    record = owner_authority.load_live_state(plan_path, CataloguePublishError)
+    if record.get("plan_sha256") != plan["sha256"]:
+        raise CataloguePublishError("The captured live state belongs to a different plan.")
+    restore_lock = restore_lock_path(str(plan["sha256"]))
+    if restore_lock.exists():
+        owner_authority.refuse_replay(CataloguePublishError, owner_authority.read_json_if_exists(restore_lock),
+                                      what="catalogue restore")
+    backup_path = Path(str(record["state"]["backup"]))
+    if not backup_path.is_file():
+        raise CataloguePublishError(f"The backed-up previous catalogue is missing: {backup_path}")
+    backup_bytes = backup_path.read_bytes()
+    backup = {
+        "path": str(backup_path),
+        "mime_type": EXPECTED_MIME_TYPE,
+        "bytes": len(backup_bytes),
+        "sha256": sha256_bytes(backup_bytes),
+        "md5": md5_bytes(backup_bytes),
+        **pdf_projection(backup_bytes, expected_pages=None, expected_headings=None),
+    }
+    service = auth.drive_service()
+    live, _ = live_projection(service)
+    result: dict[str, Any] = {"plan_sha256": plan["sha256"], "backup": str(backup_path), **go.as_record()}
+    try:
+        restore_eligibility(live, plan, backup)
+    except CataloguePublishError as exc:
+        text = str(exc)
+        if text.startswith(("already at", "moved since")):
+            result.update(status="NOT_RESTORED", reason=text)
+            owner_authority.record_restore(plan_path, result)
+            append_receipt("catalogue_drive_publication_restore_not_needed",
+                           f"plan={plan_path}; sha256={plan['sha256']}; reason={text}")
+            print(json.dumps(result, indent=2, ensure_ascii=False))
+            return
+        raise
+    lock_record = owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action="restore_previous_catalogue_pdf",
+        go=go, started_utc=utc_now().isoformat(), backup=str(backup_path),
+    )
+    try:
+        perform_one_update(
+            service, live, backup, backup_bytes, plan, restore_lock, lock_record,
+            precondition=lambda current, candidate: restore_eligibility(current, plan, candidate),
+        )
+        after, readback = live_projection(service)
+        if not secrets.compare_digest(sha256_bytes(readback), backup["sha256"]):
+            raise CataloguePublishError("The downloaded live PDF is not byte-identical to the backup.")
+        for key in ("id", "name", "mime_type", "parent_ids", "parent_path", "editable", "trashed",
+                    "alternate_link", "web_content_link"):
+            if after.get(key) != live.get(key):
+                raise CataloguePublishError(f"Protected catalogue field {key} changed during the restore.")
+    except Exception as exc:
+        if not restore_lock.exists():
+            raise
+        overwrite_json(restore_lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"],
+            action="restore_previous_catalogue_pdf", go=go, reason=scrub(str(exc)), backup=str(backup_path),
+        ))
+        result.update(status="RESTORE_FAILED", reason=scrub(str(exc)))
+        owner_authority.record_restore(plan_path, result)
+        append_receipt("catalogue_drive_publication_restore_indeterminate",
+                       f"plan={plan_path}; sha256={plan['sha256']}; backup={backup_path}")
+        raise CataloguePublishError(
+            "The restore media PUT failed or could not be fully verified: " + scrub(str(exc))
+        ) from exc
+    overwrite_json(restore_lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action="restore_previous_catalogue_pdf",
+        go=go, backup=str(backup_path), restored_sha256=after["sha256"], new_version=after["version"],
+    ))
+    result.update(status="RESTORED", **{"from": plan["artifact"]["sha256"], "to": after["sha256"]},
+                  after=after)
+    owner_authority.record_restore(plan_path, result)
+    append_receipt("catalogue_drive_publication_restored",
+                   f"plan={plan_path}; sha256={plan['sha256']}; backup={backup_path}; live_sha256={after['sha256']}")
     print(json.dumps(result, indent=2, ensure_ascii=False))
 
 
@@ -614,8 +761,12 @@ def build_parser() -> argparse.ArgumentParser:
     stage.set_defaults(func=command_stage)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit)
     commit.set_defaults(func=command_commit)
+    restore = commands.add_parser("restore", help="re-upload the previous catalogue PDF this plan backed up")
+    restore.add_argument("--plan", required=True)
+    owner_authority.add_owner_go_arguments(restore)
+    restore.set_defaults(func=command_restore)
     return parser
 
 

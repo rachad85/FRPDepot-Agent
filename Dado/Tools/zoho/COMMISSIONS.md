@@ -1250,3 +1250,236 @@ Build result: `Dado\20_Working\zoho_capability_repair_build_result_20260813.json
 Disclosed rather than reported as zero calls: the read-only contract rehearsals and
 `refresh_access_token`'s POST to the Zoho accounts token endpoint, which is credential
 refresh for an authenticated read and changes no business record.
+
+
+---
+
+## 2026-08-21 -- J26-403 fixed revision tool (`zoho_j26_403_revision_tool.py`)
+
+**STATUS: BUILT AND TESTED ONLY. No live plan staged, ZERO Zoho writes, ZERO emails,
+ZERO browser use, ZERO Inventory items created. `live_plans_staged=0`, `zoho_writes=0`,
+`emails_sent=0`, `browser_use=0`.**
+**AND IT CANNOT COMMIT AS DELIVERED -- deliberately. See "Blocker 1" below.**
+
+### What Rachad asked for
+On 2026-08-21 he said to modify the already-emailed D441 air purchase order sent to Fei by
+adding six dip tubes and twenty-four lifting lugs as non-standard items, and to add the same
+two items to the TDI quote at the supplier USD unit cost x 3.6. Told that no commissioned
+tool could do this -- `zoho_purchase_order_tool.py` only CREATES a Draft purchase order, and
+the general estimate revision in `zoho_customer_quote_tool.py` refuses an `accepted` estimate
+and refuses free-text lines outright -- he answered **"Proceed"** to the recommendation to
+build and test ONE fixed staged revision tool limited to PO-00010 and QT-000034.
+**"Proceed" authorized the BUILD. It is not approval of any plan and not authority for any
+Zoho write.** The tool says so in its own approval refusal text.
+
+### The reachable surface -- two independent fixed actions, never one plan
+```
+stage-purchase-order-revision  --input <json>
+commit-purchase-order-revision --plan <json> --approval APPROVED --approval-message-utc <iso>
+stage-estimate-revision        --input <json>
+commit-estimate-revision       --plan <json> --approval APPROVED --approval-message-utc <iso>
+```
+- `purchase_order_revision` -> ONE `PUT /books/v3/purchaseorders/96274000001598034` (PO-00010).
+- `estimate_revision` -> ONE `PUT /books/v3/estimates/96274000001602028` (QT-000034).
+- Each has its OWN plan kind, OWN approval and OWN permanent replay lock. `validate_plan`
+  refuses a plan whose `action` is not the command's own, so **one APPROVED can never move
+  both records and one plan can never carry both.** Pinned by
+  `FixedTargetTests::test_a_plan_for_one_action_cannot_be_committed_by_the_other`.
+- No POST/PATCH/DELETE verb exists anywhere in the module; no create, clone, void, cancel,
+  approve, accept, decline, reopen, convert, invoice, receive, bill, pay, attach, status or
+  template route; no browser path; no Inventory route; no mail transport. The read surface is
+  exactly three routes: the one purchase order, the one estimate, `settings/taxes`.
+
+### The two fixed additions -- non-catalog free-text lines, no Zoho item ever created
+Each PUT resends EVERY original line once in live order carrying its own `line_item_id` and
+`item_id`, then appends exactly two lines carrying `name`, `description`, `quantity`, `rate`,
+`unit` (and `tax_id` on the estimate) and **no `item_id`, no `line_item_id`, no SKU, no
+`item_order`, no stock field**. `FORBIDDEN_NEW_LINE_KEYS` refuses all of those by name at the
+transport gate, and the read-back refuses an appended line that came back linked to any item.
+Creating dummy catalog items as a workaround is refused in writing, in the module docstring
+and in the refusal text: it would be a silent permanent change to FRP Depot's item list that
+Rachad did not ask for.
+
+| | dip tube | lifting lug / anchor clip |
+|---|---|---|
+| quantity | 6 | 24 |
+| supplier USD unit cost | 460.00 (fixed, from the Fei workbook) | **NOT KNOWN -- caller-supplied with evidence** |
+| PO rate | USD 460.00 | the supplied cost, unmultiplied |
+| estimate rate | CAD 1,656.00 (= 460.00 x 3.6) | cost x 3.6, Decimal `ROUND_HALF_UP` to two decimals |
+
+The plan prints the input cost, the multiplier, the **unrounded** product and the posted rate
+so the arithmetic is checkable by eye. Half-up, never banker's rounding, is pinned by
+`RoundingTests::test_bankers_rounding_is_not_used` (1.1125 x 3.6 -> 4.01, not 4.00).
+
+### The lifting-lug price is never guessed
+The ONLY caller-supplied business value in the whole tool is
+`lifting_lug_supplier_unit_cost_usd`, and it is admitted only as
+`{value, source, artifact_path, artifact_sha256}`:
+- the artifact must be an absolute, non-symlinked, nonempty file **inside the one fixed
+  source folder**, and its real SHA-256 must equal the stated one byte-for-byte;
+- it is **re-hashed again at commit** (`require_live_lug_artifact`), so a source that changed
+  or vanished after review refuses for free, before the lock;
+- the three pinned J26-403 sources are refused as a lug-price artifact by digest, because
+  none of them carries a lug price -- two are drawings and the workbook prices only the dip
+  tube;
+- blank, generic (`supplier`, `the quote`, `as discussed`, ...) and **asserted-only** sources
+  (`assumed`, `approx`, `verbal`, `TBD`, `from memory`, ...) are refused by name, as is a
+  source carrying no date, amount or document number.
+**Without it NEITHER plan stages -- not even the purchase order one** -- because both records
+must move together or the quote misprices the job.
+
+### Disclosed rather than invented -- what the sources do NOT establish
+Every one of these is carried in BOTH plans and printed by stage:
+1. **The air-shipment cut is in no source.** `DIP TUBE.pdf` carries no cut, section count,
+   joint or shipping-split note anywhere, and the Fei workbook prices one line of 6 tubes with
+   no sectioning. The cut is therefore NOT represented: quantity stays 6, the description
+   states the single 164.00 inch length the drawing gives, and no price was adjusted.
+   Inventing a changed quantity to represent it is exactly what is refused.
+2. **The workbook contradicts itself on freight.** Row 5 carries unit price USD 2,500.00 in
+   E5 while its own line total F5 is USD 1,800.00 with no formula, and the sheet note reads
+   "The above shipping cost $1,800 is assuming that the tubes will be shipped together with
+   other air shipping fittings." `=SUM(F4:F5)` uses 1,800, giving USD 4,560.00.
+   **No freight line is added and no freight figure is multiplied.** The PO's existing notes
+   already state an estimated USD 5,000 air freight; that header is resent verbatim.
+3. **SS316L vs SS 316.** The request says SS316L; the drawing itself says `QTY: 24, SS 316`.
+   Both are recorded verbatim in the line description and neither was rewritten to match the
+   other. The business label uses SS316L, as commissioned, and keeps the drawing reference.
+4. **The 22-inch bar length is from the Operations email of 2026-08-21 14:08 UTC**, not the
+   drawing. Every other lug dimension is read off `ANCHOR CLIPS.pdf`.
+5. **Both drawings print "DIMENSIONS ARE IN MILLIMETERS" while their own figures are inches**
+   (2.00 ID, 164.00 long, radius R 3' 6"). Descriptions state inches, matching the figures.
+   Nothing was converted.
+6. **The 3.6 multiplier is a pricing rule, not an FX conversion.** No exchange rate is read or
+   applied; the record's own live exchange rate is resent unchanged.
+7. **Appended-line ordering is left to Zoho.** The new lines carry no `item_order`; every
+   original resends its own. The read-back proves each appended line appears EXACTLY ONCE and
+   all seven originals are unchanged in their original order.
+8. **Both appended lines carry unit `pcs`** -- the workbook says PCS, the drawing says
+   `QTY: 24`.
+
+### Immutable sources, re-hashed at stage AND commit
+```
+DIP TUBE.pdf                        5f9ac494770c7c0193a2c08a32c47300ba927b2e339362ed8edd17e06d65df04
+Quotation of Dip Tube - revised.xlsx d066ac0ab0a500623c9e46a45ba9beefa82bbb1f939ed647dadf0171ad5bb5fd
+ANCHOR CLIPS.pdf                    0e919b082b43cdb6201c1f9236dec85d4d94e4df7bc968ba50f8fb4c4f340364
+```
+All three verified present and matching on 2026-08-21.
+
+### Protected state, drift and verification
+- **Identity gate:** record id, number, reference, party, currency, exact status, and (PO)
+  `is_emailed` must all match the pinned live baseline, or nothing stages.
+- **Original lines are hard-protected:** every `line_item_id`, `item_id`, order, quantity and
+  rate is pinned in `TARGET_LINES`. A dropped, reordered, substituted, repriced or
+  requantified original line refuses at staging -- before a lock exists.
+- **Lifecycle:** any invoice, sales order, package, shipment, payment, credit note, bill,
+  purchase receipt, `invoiced_amount`, non-`unbilled` `billed_status`, non-pending
+  `received_status`, or `is_deleted`/`is_void`/`is_cancelled` flag refuses before a lock or
+  write. The same check re-runs on the read-back, so a conversion appearing across the write
+  locks the plan indeterminate.
+- **No status field is ever sent.** `require_put_allowed` refuses a payload carrying one.
+  The read-back proves the estimate stayed `accepted` and the PO stayed `open` + emailed.
+- **Tax is settled by evidence, not preference.** On QT-000034 the per-bucket method gives
+  CAD 2,780.86 and the per-line method CAD 2,780.85 for the unchanged record; Zoho's own live
+  `tax_total` is 2,780.86, so the per-bucket method is CORROBORATED and only then is the
+  expected figure asserted. If neither method reproduced Zoho's own figure, nothing is
+  asserted and the plan says so. Appended estimate lines reuse the live ON HST id
+  `96274000000035516` at 13%; appended PO lines carry no tax at all.
+- **Byte-exact protected fingerprint** over everything Zoho returns except the figures it
+  recomputes and the secure record URL it regenerates between GETs.
+- **Plan integrity:** canonical SHA-256, 24-hour lifetime, and `validate_plan` re-derives the
+  ENTIRE projection from the staged live state, intent, tax rows and re-hashed sources. A
+  resigned total, rate, endpoint, source digest, risk note, contract claim or intent cannot
+  survive it.
+- **One PUT, one attempt:** permanent replay lock written BEFORE the PUT, never removed.
+  Failure/timeout/indeterminate = permanently locked, `no_retry: true`, no rollback, no
+  cleanup, no second PUT, no delete, no restatus.
+- **Approval:** exact unpadded uppercase `APPROVED`, checked BEFORE the contract gate, the
+  lock, the vault, the token and the network. The refusal says outright that commissioning,
+  the word "Proceed" and staging are not approval. Each plan carries an `approval_binding`
+  recording `plan_created_utc` and stating the caller-side duty to compare the approval
+  message time; `--approval-message-utc` (required on every money commit since
+  2026-08-21) re-checks it and refuses a word timestamped before the plan existed or
+  after it expired, or a go whose time was not given.
+
+---
+
+## OPEN BLOCKERS -- both are Rachad's call, neither is worked around
+
+### Blocker 1: the Zoho contract for these two writes is NOT PROVEN, so COMMIT REFUSES
+Five facts this action depends on are unproven in this tree, and the tool refuses to invent a
+payload shape around any of them. `CONTRACT_FACTS` records each one with why it is unproven
+and what would prove it:
+
+| fact | why unproven |
+|---|---|
+| `purchase_order_update_route` | No FRP Depot tool has ever issued a purchase-order PUT; nothing here records the accepted request or response shape. |
+| `emailed_open_purchase_order_in_place_update` | PO-00010 was already emailed to Fei. Whether Zoho re-mails, re-opens, re-statuses or clears `is_emailed` on update is not established by anything measured here. |
+| `purchase_order_free_text_line_append` | Every PO line this organization has ever carried names an existing Zoho item. No free-text PO line has been observed, accepted or rejected. |
+| `accepted_estimate_in_place_update` | The general revision action restricts itself to `draft`/`sent` because no accepted-state behaviour was ever measured. Zoho may refuse, may silently drop the record to `draft`, or may accept cleanly. |
+| `estimate_free_text_line_append` | `revision_live_lines` refuses a line with no `item_id` outright, so no free-text estimate line has ever been sent or observed. |
+
+**Staging is GET-only, so it runs and discloses all of this in the plan it writes. COMMIT
+REFUSES -- before the replay lock, before the vault, before the token and before any network
+call -- while any required fact is unproven.** Pinned by
+`ContractProofTests::test_the_shipped_build_refuses_commit_before_lock_vault_token_and_network`,
+which asserts the vault is never opened. Proving these needs a live capture or Zoho's own
+published contract; this build was explicitly not authorized to do either.
+A plan staged while the contract is unproven also cannot be committed once it becomes proven,
+because the disclosed contract block is part of the canonical projection -- a plan whose own
+text says "commit will refuse" must never silently become committable. Restage instead.
+
+### Blocker 2: `ZohoBooks.purchaseorders.UPDATE` is prepared but NOT LIVE -- and granting it
+### DISABLES nothing, but it DID force one change to `zoho_purchase_order_tool.py`
+`ZohoBooks.purchaseorders.UPDATE` was added to `zoho_tool.ALLOWED_WRITE_SCOPES`, so
+`PREPARE_DADO_ZOHO_ACCESS.bat` (which copies exactly `tool.SCOPES`) now emits it. The .bat
+itself needed no edit. To make it live: `PREPARE_DADO_ZOHO_ACCESS.bat`, create the grant in
+the Zoho API Console, then `REAUTHORIZE_DADO_ZOHO.bat` and `CHECK_DADO_ZOHO.bat`. Until then
+both stage and commit refuse with those exact steps.
+
+**THE FORCED CHANGE, RECORDED IN FULL BECAUSE IT TOUCHED ANOTHER COMMISSIONED TOOL'S
+GUARDRAIL.** `zoho_purchase_order_tool.FORBIDDEN_PURCHASE_ORDER_SCOPES` listed
+`ZohoBooks.purchaseorders.UPDATE`, and that tool refuses to run AT ALL while the saved
+connection holds a listed scope. Leaving it there would have meant that the moment Rachad
+makes the grant, the draft-PO creator dies completely -- silently, and discovered at the worst
+possible time. The choice was never "keep both guardrails"; it was "which tool stops working".
+`ZohoBooks.purchaseorders.UPDATE` was therefore removed **from that one list and nothing
+else**. `DELETE`, `ALL`, every `ZohoInventory.purchaseorders.*` and every fullaccess scope
+remain forbidden there.
+**Nothing about that tool's own containment changed, and the scope list was always the weaker
+of its two defences:** `ALLOWED_METHODS` is `("GET", "POST")`, `CREATE_PATH_RE` pins the one
+create route, `require_create_allowed` refuses any verb that is not POST by name, and there is
+no PUT/PATCH/DELETE transport in the module at all. It still cannot update, delete, void,
+cancel, submit, approve, receive, bill, pay or mail a purchase order, with or without the
+scope. Pinned by
+`test_zoho_purchase_order_tool.ScopeTests::test_this_tool_cannot_update_even_while_the_connection_holds_update`.
+If Rachad would rather keep the old guardrail and lose the draft-PO tool while the grant is
+live, that is a one-line revert -- it is his call, not an agent's.
+
+### Scope integrity in the new tool
+`require_update_scopes` refuses the whole tool if the connection holds
+`ZohoBooks.purchaseorders.DELETE/ALL`, `ZohoBooks.estimates.DELETE/ALL`, any
+`ZohoInventory.purchaseorders.*` or `ZohoInventory.estimates.*` write, or any fullaccess
+scope; and refuses with the reauthorization steps if the action's own narrow UPDATE scope is
+absent. Commit fails closed on both, before the lock and before any network call. The three
+connector status lines (`connect`, `reauthorize`, `check`) were corrected: they used to claim
+purchase-order UPDATE was ABSENT, which is now false, and the narration test was updated to
+pin the new wording rather than relaxed.
+
+### Verification for this build
+`python -m py_compile` clean on `zoho_j26_403_revision_tool.py`, `zoho_tool.py`,
+`zoho_purchase_order_tool.py` and the three changed/added test files.
+Focused: **131** in `test_zoho_j26_403_revision_tool.py` (all passing, 0 skips).
+Regression: `test_zoho_tool.py` 15 passing, `test_zoho_purchase_order_tool.py` 93 passing
+(one test added, three exact-set/narration assertions EXTENDED or re-pointed, never relaxed).
+**Full Zoho suite: 1,664 tests, all passing, 4 pre-existing environment skips** (2 missing
+cached workbook, 2 symlink privilege) -- up from a 1,533-test baseline measured before this
+change on the same tree. Also re-run clean: `Dado\Tools\orders` 57, `Dado\Tools\watch` 218.
+`Dado\Tools\woocommerce` runs 1,420 with 2 loader errors that are PRE-EXISTING and unrelated:
+`test_wordpress_fixed_origin_file_cleanup_tool.py` and
+`test_wordpress_fixed_origin_cleanup_plugin_recovery_tool.py` are untracked in-flight work
+whose `from Dado.Tools.woocommerce import ...` import does not resolve under that directory's
+own test discovery. Not touched here.
+Build result: `Dado\20_Working\pricing_requests\d441\j26_403_revision_tool_build_result.json`.
+Disclosed rather than reported as zero calls: nothing in this build contacted Zoho at all --
+every read is a mocked `api_get` and every write a mocked `urlopen`, and staging patches
+`urlopen` to raise so a stray write could not pass unnoticed.

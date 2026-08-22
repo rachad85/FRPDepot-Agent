@@ -33,6 +33,16 @@ from typing import Any
 
 import google_investments_auth as auth
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A3/A4/A5). Loan
+# repayments and adjustments are bank-record MONEY work: the two-step stays --
+# stage, then Rachad's own unambiguous go to THAT plan, sent after the plan was
+# written. Exact APPROVED is no longer REQUIRED ("yes go ahead" to the shown
+# plan counts); a failed append is reported and re-staged (no silent retry, no
+# permanent lock). The pre-write range backup the tool always took is the
+# recovery record; appending a financial row has no commissioned undo.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Loans Spreadsheet Approved Repayment Tool"
 SCHEMA_VERSION = 1
 ACTION = "ccivs_repayment_append"  # Backward-compatible CCIVS action.
@@ -863,8 +873,11 @@ def write_lock(path: Path, value: dict[str, Any], *, exclusive: bool = False) ->
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise LoansError("This plan has already entered commit and cannot be replayed.") from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(LoansError, owner_authority.read_json_if_exists(path),
+                                      what="loans plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
 
@@ -1309,12 +1322,19 @@ def command_commit(args: argparse.Namespace) -> None:
         raise LoansError("Plan must be inside Dado's loans plan folder.")
     plan = load_plan(plan_path)
     digest = str(plan["sha256"])
-    expected = approval_phrase(digest)
-    if not secrets.compare_digest(str(args.approval).strip().casefold(), expected.casefold()):
-        raise LoansError("Rachad must reply with the one-word approval: APPROVED.")
+    # His go is checked before Google is touched (A3): his own unambiguous go
+    # to THIS plan, sent after it was written (the message time is required).
+    try:
+        go = owner_authority.require_owner_go_after_plan(
+            args.approval, plan_created_utc=plan.get("created_utc"), plan_expires_utc=plan.get("expires_utc"),
+            sent_utc=getattr(args, "approval_message_utc", None), lane=getattr(args, "approval_lane", None),
+            what="this loans plan",
+        )
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise LoansError(str(exc)) from exc
     lock = lock_path(digest)
     if lock.exists():
-        raise LoansError("This plan has already entered commit and cannot be replayed.")
+        owner_authority.refuse_replay(LoansError, owner_authority.read_json_if_exists(lock), what="loans plan")
     drive = auth.drive_service()
     sheets = sheets_service()
     entry = plan["entry"]
@@ -1351,12 +1371,10 @@ def command_commit(args: argparse.Namespace) -> None:
         "values": before,
     }, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
-    write_lock(lock, {
-        "plan_sha256": digest,
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-        "backup": str(backup),
-    }, exclusive=True)
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=digest, action=action, go=go,
+        started_utc=utc_now().isoformat(), backup=str(backup),
+    ), exclusive=True)
 
     write_attempted = False
     try:
@@ -1401,37 +1419,36 @@ def command_commit(args: argparse.Namespace) -> None:
         }:
             raise LoansError("The Sheets identity no longer matches after the append.")
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_lock(lock, {
-            "plan_sha256": digest,
-            "status": status,
-            "updated_utc": utc_now().isoformat(),
-            "backup": str(backup),
-            "reason": scrub(str(exc)),
-        })
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        write_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=digest, action=action, go=go, reason=scrub(str(exc)),
+            backup=str(backup), write_attempted=write_attempted,
+        ))
         append_receipt(
-            f"{receipt_prefix}_{status}_no_retry",
+            f"{receipt_prefix}_{status}",
             f"plan={plan_path}; sha256={digest}; backup={backup}",
         )
         if write_attempted:
             raise LoansError(
-                f"The {tab_title} append failed or could not be verified. The plan is locked and will "
-                f"not retry. Reconciliation required: compare the live {tab_title} tab against the "
-                f"local backup {backup} and Google Sheets version history."
+                owner_authority.explain_outcome(
+                    f"The {tab_title} append", status,
+                    f"It failed or could not be verified. Reconciliation required: compare the live "
+                    f"{tab_title} tab against the local backup {backup} and Google Sheets version history.",
+                    money=True,
+                )
             ) from exc
         raise LoansError(
-            "Stopped before writing anything; the spreadsheet is unchanged. The plan is locked "
-            "and will not retry. Stage a new plan. Reason: " + scrub(str(exc))
+            owner_authority.explain_outcome(
+                f"The {tab_title} append", status,
+                "Stopped before writing anything; the spreadsheet is unchanged. Reason: " + scrub(str(exc)),
+                money=True,
+            )
         ) from exc
 
-    write_lock(lock, {
-        "plan_sha256": digest,
-        "status": "committed_verified",
-        "updated_utc": utc_now().isoformat(),
-        "backup": str(backup),
-        "row": int(entry["row"]),
-        "resulting_balance_cad": str(entry["resulting_balance_cad"]),
-    })
+    write_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=digest, action=action, go=go,
+        backup=str(backup), row=int(entry["row"]), resulting_balance_cad=str(entry["resulting_balance_cad"]),
+    ))
     append_receipt(
         f"{receipt_prefix}_committed_verified",
         f"plan={plan_path}; sha256={digest}; range={entry['range']}; backup={backup}",
@@ -1467,7 +1484,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_in_laws.set_defaults(func=command_stage_in_laws)
     commit = commands.add_parser("commit")
     commit.add_argument("--plan", required=True)
-    commit.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit, money=True)
     commit.set_defaults(func=command_commit)
     return parser
 

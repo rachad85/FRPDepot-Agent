@@ -50,6 +50,19 @@ from urllib.request import Request, urlopen
 
 import zoho_tool
 
+# Shared owner authority (autonomy programme 2026-08-21, spec A1/A2/A4). A
+# customer record, a DRAFT estimate and its corrections/revisions are
+# REVERSIBLE work: his clear go in his own message covers the plan (exact
+# APPROVED still works; "yes" / "go ahead" count); a failed write reads "needs
+# re-stage" and nothing is permanently locked; a committed plan is spent. The
+# approval CARD binding for quotes and revisions stays -- it is what ties a
+# bare word to THE plan he was shown (A5), not a second wording rule. The live
+# estimate is captured beside a revision plan before its PUT; the restore route
+# is `stage-estimate-revision` with those captured values. Creates (customer,
+# draft quote) have no delete route, so they have no restore.
+sys.path.append(str(Path(__file__).resolve().parent.parent / "common"))
+import owner_authority  # noqa: E402
+
 TOOL_NAME = "FRP Depot Zoho Customer & Quote Draft Tool"
 ROOT = Path(r"C:\FRPDepot")
 PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_plans"
@@ -57,7 +70,9 @@ PLAN_DIR = ROOT / "Dado" / "20_Working" / "zoho_plans"
 # is ONE PLAIN WORD, never a checksum — the plan digest stays internal and is
 # validated by load_verified_plan. The word must come FROM RACHAD'S OWN MESSAGE
 # answering the staged plan (Hard Rule 3); Dado relays it, never supplies it.
-APPROVAL_WORD = "APPROVED"
+# 2026-08-21 (spec A1): any clear affirmative of his counts; APPROVED is still
+# the word the plan names and still works.
+APPROVAL_WORD = owner_authority.EXACT_WORD
 APPROVAL_CARD_VERSION = 1
 APPROVAL_CARD_HASH_PLACEHOLDER = ""
 APPROVAL_CARD_ID_PLACEHOLDER = ""
@@ -451,10 +466,11 @@ def _write_json_durable(path: Path, value: dict[str, Any], *, exclusive: bool = 
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise DraftToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(path),
+                                      what="quote plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
         handle.flush()
@@ -1281,16 +1297,15 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
                 "approved. Stage a fresh Draft quote plan."
             )
     digest = plan["sha256"]
-    require_exact_approval(args.approval)
+    go = require_exact_approval(args.approval, getattr(args, "approval_lane", None),
+                                what=f"this {kind} plan")
     quote_lock: Path | None = None
     if kind == "quote":
         require_active_approval_card(plan)
         quote_lock = quote_commit_lock_path(digest)
         if quote_lock.exists():
-            raise DraftToolError(
-                "REFUSED: this displayed Draft quote plan has already entered commit and cannot "
-                "be replayed. No Zoho write was attempted."
-            )
+            owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(quote_lock),
+                                          what="displayed Draft quote plan")
     vault = zoho_tool.load_vault()
     zoho_tool.validate_scopes([str(scope) for scope in vault.get("scopes") or []])
     required_scope = "ZohoBooks.contacts.CREATE" if kind == "customer" else "ZohoBooks.estimates.CREATE"
@@ -1314,12 +1329,10 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
                 "REFUSED: customer, item, tax, currency or calculated quote totals changed after "
                 "review. No POST was issued and the plan remains unlocked; stage a fresh card."
             )
-        _write_json_durable(quote_lock, {
-            "plan_sha256": digest,
-            "kind": "quote",
-            "status": "in_flight",
-            "started_utc": utc_now().isoformat(),
-        }, exclusive=True)
+        _write_json_durable(quote_lock, owner_authority.attempt_record(
+            owner_authority.STATUS_IN_FLIGHT, plan_sha256=digest, action="quote", go=go,
+            kind="quote", started_utc=utc_now().isoformat(),
+        ), exclusive=True)
         try:
             result = api_post_allowed(
                 access_token,
@@ -1336,29 +1349,25 @@ def command_commit(args: argparse.Namespace, kind: str) -> None:
             verify_created_quote(verified, plan)
             zoho_tool.save_vault(vault)
         except Exception as exc:
-            _write_json_durable(quote_lock, {
-                "plan_sha256": digest,
-                "kind": "quote",
-                "status": "indeterminate",
-                "write_attempted": True,
-                "no_retry": True,
-                "reason": str(exc)[:2000],
-                "updated_utc": utc_now().isoformat(),
-            })
+            _write_json_durable(quote_lock, owner_authority.attempt_record(
+                owner_authority.STATUS_INDETERMINATE, plan_sha256=digest, action="quote", go=go,
+                reason=str(exc), kind="quote", write_attempted=True,
+            ))
             raise
-        _write_json_durable(quote_lock, {
-            "plan_sha256": digest, "kind": "quote", "status": "committed_verified",
-            "estimate_id": record_id, "no_retry": True, "updated_utc": utc_now().isoformat(),
-        })
+        _write_json_durable(quote_lock, owner_authority.attempt_record(
+            owner_authority.STATUS_COMMITTED, plan_sha256=digest, action="quote", go=go,
+            kind="quote", estimate_id=record_id,
+        ))
         mark_active_card_attempted(plan)
         zoho_tool.append_receipt(
             "zoho_draft_estimate_created_by_named_tool",
-            f"estimate_id={record_id}; status=draft; plan={args.plan}; sha256={digest}",
+            f"estimate_id={record_id}; status=draft; plan={args.plan}; sha256={digest}; go_lane={go.lane}",
         )
         print(json.dumps({
             "created": "draft_estimate", "estimate_id": record_id,
             "estimate_number": verified.get("estimate_number"), "status": "draft",
-            "sent": False, "fresh_read_back_verified": True,
+            "sent": False, "fresh_read_back_verified": True, "plan_spent": True,
+            "restore": "not available: a created draft has no delete route (Hard Rule 3); it stays a draft",
         }, indent=2))
         return
     result = api_post_allowed(
@@ -1447,18 +1456,20 @@ def parse_plan_time(value: Any, label: str) -> datetime:
     return parsed
 
 
-def require_exact_approval(approval: Any) -> None:
-    """Exact, unpadded, uppercase APPROVED. No strip(), no case folding.
+def require_exact_approval(approval: Any, lane: Any = None,
+                           what: str = "this plan") -> owner_authority.OwnerGo:
+    """His clear go in his own message (Hard Rule 3; spec A1, 2026-08-21).
 
-    Deliberately stricter than the create-path comparator, matching the
-    price and invoice tools: this word changes a live customer-facing record.
+    Until 2026-08-21 this compared the exact string APPROVED. The shared
+    detector now decides: a plain "yes" / "go ahead" / "do it" counts, a
+    question, a condition or a relayed word does not, and APPROVED still works.
+    Staging is not approval and Dado cannot supply it. The approval CARD check
+    that binds the word to the displayed plan is separate and unchanged.
     """
-    if not isinstance(approval, str) or approval != APPROVAL_WORD:
-        raise DraftToolError(
-            f"Rachad must answer this exact staged plan with the one-word approval: "
-            f"{APPROVAL_WORD} (exact uppercase, no extra words or spaces). It must come from "
-            "his own message (Hard Rule 3); staging is not approval and Dado cannot supply it."
-        )
+    try:
+        return owner_authority.require_owner_go(approval, lane=lane, what=what)
+    except owner_authority.OwnerAuthorityRefused as exc:
+        raise DraftToolError(str(exc)) from exc
 
 
 def require_correction_target(estimate_id: Any) -> tuple[str, dict[str, Any]]:
@@ -2222,10 +2233,11 @@ def write_correction_lock(path: Path, value: dict[str, Any], *, exclusive: bool 
     flags = os.O_WRONLY | os.O_CREAT | (os.O_EXCL if exclusive else os.O_TRUNC)
     try:
         descriptor = os.open(str(path), flags, 0o600)
-    except FileExistsError as exc:
-        raise DraftToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed."
-        ) from exc
+    except FileExistsError:
+        # A4: what the existing record says decides -- spent, or needs re-stage.
+        owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(path),
+                                      what="estimate plan")
+        raise  # unreachable
     with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
         handle.write(json.dumps(value, ensure_ascii=True, indent=2) + "\n")
         handle.flush()
@@ -2510,17 +2522,15 @@ def verify_correction_result(
 def command_commit_tds_discount_correction(args: argparse.Namespace) -> None:
     plan_path = contained_correction_plan(args.plan)
     plan, estimate_id, target, evidence = load_correction_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_exact_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_exact_approval(args.approval, getattr(args, "approval_lane", None),
+                                what="this TDS discount correction plan")
     number = target["estimate_number"]
     lock = correction_lock_path(plan["sha256"])
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": CORRECTION_KIND,
-        "status": "in_flight",
-        "estimate_id": estimate_id,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=CORRECTION_KIND, go=go,
+        kind=CORRECTION_KIND, estimate_id=estimate_id, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     try:
         vault = zoho_tool.load_vault()
@@ -2563,38 +2573,28 @@ def command_commit_tds_discount_correction(args: argparse.Namespace) -> None:
         verify_correction_result(verified, evidence, "Fresh read-back", full=True)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        status = "indeterminate" if write_attempted else "aborted_before_write"
-        write_correction_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "kind": CORRECTION_KIND,
-            "status": status,
-            "estimate_id": estimate_id,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": write_attempted,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        status = owner_authority.STATUS_INDETERMINATE if write_attempted else owner_authority.STATUS_NEEDS_RESTAGE
+        write_correction_lock(lock, owner_authority.attempt_record(
+            status, plan_sha256=plan["sha256"], action=CORRECTION_KIND, go=go, reason=str(exc),
+            kind=CORRECTION_KIND, estimate_id=estimate_id, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            f"zoho_tds_discount_correction_{status}_no_retry",
+            f"zoho_tds_discount_correction_{status}",
             f"estimate={number} ({estimate_id}); write_attempted={str(write_attempted).lower()}; "
             f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
         )
         raise DraftToolError(
-            f"The discount correction is {status} and this plan is permanently locked against "
-            f"retry. Estimate: {number} ({estimate_id}). A PUT was "
-            f"{'ISSUED -- the live estimate state is unconfirmed' if write_attempted else 'NOT issued'}. "
-            f"No email was sent; this tool has no mail transport. Reason: {exc} "
-            "Read the live estimate in Zoho and reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "The discount correction", status,
+                f"Estimate: {number} ({estimate_id}). A PUT was "
+                f"{'ISSUED -- the live estimate state is unconfirmed' if write_attempted else 'NOT issued'}. "
+                f"No email was sent; this tool has no mail transport. Reason: {exc}",
+            )
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": CORRECTION_KIND,
-        "status": "committed_verified",
-        "estimate_id": estimate_id,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=CORRECTION_KIND, go=go,
+        kind=CORRECTION_KIND, estimate_id=estimate_id,
+    ))
     zoho_tool.append_receipt(
         "zoho_tds_discount_correction_committed_verified",
         f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
@@ -3693,15 +3693,14 @@ def verify_item9_result(
 def command_commit_item9_quantity_correction(args: argparse.Namespace) -> None:
     plan_path = contained_correction_plan(args.plan)
     plan, estimate_id, target, evidence = load_item9_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_exact_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_exact_approval(args.approval, getattr(args, "approval_lane", None),
+                                what="this Item 9 quantity correction plan")
     number = target["estimate_number"]
     lock = correction_lock_path(plan["sha256"])
     if lock.exists():
-        raise DraftToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed. "
-            "No Zoho call was made."
-        )
+        owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(lock),
+                                      what="Item 9 correction plan")
     try:
         vault = zoho_tool.load_vault()
         scopes = [str(scope) for scope in vault.get("scopes") or []]
@@ -3760,13 +3759,10 @@ def command_commit_item9_quantity_correction(args: argparse.Namespace) -> None:
             f"lock. Estimate: {number} ({estimate_id}). No PUT was issued and no email was sent. "
             f"Reason: {exc}"
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": ITEM9_KIND,
-        "status": "in_flight",
-        "estimate_id": estimate_id,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=ITEM9_KIND, go=go,
+        kind=ITEM9_KIND, estimate_id=estimate_id, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     try:
         write_attempted = True
@@ -3784,36 +3780,26 @@ def command_commit_item9_quantity_correction(args: argparse.Namespace) -> None:
         verify_item9_result(verified, evidence, "Fresh read-back", full=True)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        write_correction_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "kind": ITEM9_KIND,
-            "status": "indeterminate",
-            "estimate_id": estimate_id,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": True,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        write_correction_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=ITEM9_KIND, go=go,
+            reason=str(exc), kind=ITEM9_KIND, estimate_id=estimate_id, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            "zoho_tds_item9_quantity_correction_indeterminate_no_retry",
+            "zoho_tds_item9_quantity_correction_indeterminate_needs_restage",
             f"estimate={number} ({estimate_id}); write_attempted={str(write_attempted).lower()}; "
             f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
         )
         raise DraftToolError(
-            f"The Item 9 quantity correction is indeterminate and this plan is permanently locked "
-            f"against retry. Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live "
-            f"estimate state is unconfirmed. No email was sent; this tool has no mail transport. "
-            f"Reason: {exc} Read the live estimate in Zoho and reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "The Item 9 quantity correction", owner_authority.STATUS_INDETERMINATE,
+                f"Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live estimate state is "
+                f"unconfirmed. No email was sent; this tool has no mail transport. Reason: {exc}",
+            )
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": ITEM9_KIND,
-        "status": "committed_verified",
-        "estimate_id": estimate_id,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=ITEM9_KIND, go=go,
+        kind=ITEM9_KIND, estimate_id=estimate_id,
+    ))
     zoho_tool.append_receipt(
         "zoho_tds_item9_quantity_correction_committed_verified",
         f"estimate={number} ({estimate_id}); plan={plan_path}; sha256={plan['sha256']}; "
@@ -4504,14 +4490,13 @@ def verify_shm_contact(after: Any, label: str) -> dict[str, Any]:
 def command_commit_shm_inv000051_customer(args: argparse.Namespace) -> None:
     plan_path = contained_correction_plan(args.plan)
     plan, evidence = load_shm_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_exact_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_exact_approval(args.approval, getattr(args, "approval_lane", None),
+                                what="this SHM customer plan")
     lock = correction_lock_path(plan["sha256"])
     if lock.exists():
-        raise DraftToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed. "
-            "No Zoho call was made."
-        )
+        owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(lock),
+                                      what="SHM customer plan")
     try:
         vault = zoho_tool.load_vault()
         scopes = [str(scope) for scope in vault.get("scopes") or []]
@@ -4546,12 +4531,10 @@ def command_commit_shm_inv000051_customer(args: argparse.Namespace) -> None:
             "The SHM customer creation was refused BEFORE any write and BEFORE the replay lock. "
             f"No POST was issued and no email was sent. Reason: {exc}"
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": SHM_KIND,
-        "status": "in_flight",
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=SHM_KIND, go=go,
+        kind=SHM_KIND, started_utc=utc_now().isoformat(),
+    ), exclusive=True)
     write_attempted = False
     contact_id = ""
     try:
@@ -4574,37 +4557,28 @@ def command_commit_shm_inv000051_customer(args: argparse.Namespace) -> None:
             raise DraftToolError("The fresh read-back returned a different customer ID.")
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        write_correction_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "kind": SHM_KIND,
-            "status": "indeterminate",
-            "contact_id": contact_id,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": True,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        write_correction_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=SHM_KIND, go=go,
+            reason=str(exc), kind=SHM_KIND, contact_id=contact_id, write_attempted=write_attempted,
+        ))
         zoho_tool.append_receipt(
-            "zoho_shm_inv000051_customer_indeterminate_no_retry",
+            "zoho_shm_inv000051_customer_indeterminate_needs_restage",
             f"contact_id={contact_id or 'unknown'}; write_attempted={str(write_attempted).lower()}; "
             f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
         )
         raise DraftToolError(
-            "The SHM customer creation is indeterminate and this plan is permanently locked "
-            "against retry. A POST was ISSUED -- the live customer list is unconfirmed. No "
-            "email was sent; this tool has no mail transport. No deletion, deactivation or "
-            f"second attempt was made. Reason: {exc} Read the customer list in Zoho and "
-            "reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "The SHM customer creation", owner_authority.STATUS_INDETERMINATE,
+                "A POST was ISSUED -- the live customer list is unconfirmed. No email was sent; this "
+                "tool has no mail transport. No deletion, deactivation or second attempt was made. "
+                f"Reason: {exc}",
+            )
+            + " The re-stage's duplicate walk shows whether the customer landed."
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": SHM_KIND,
-        "status": "committed_verified",
-        "contact_id": contact_id,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=SHM_KIND, go=go,
+        kind=SHM_KIND, contact_id=contact_id,
+    ))
     zoho_tool.append_receipt(
         "zoho_shm_inv000051_customer_committed_verified",
         f"contact_id={contact_id}; billing_address_id={verified['billing_address_id']}; "
@@ -6041,15 +6015,14 @@ def evidence_intent(evidence: dict[str, Any]) -> dict[str, Any]:
 def command_commit_estimate_revision(args: argparse.Namespace) -> None:
     plan_path = contained_correction_plan(args.plan)
     plan, estimate_id, intent, evidence = load_revision_plan(plan_path)
-    # Approval is checked before the lock, the vault, the token and the network.
-    require_exact_approval(args.approval)
+    # His go is checked before the lock, the vault, the token and the network.
+    go = require_exact_approval(args.approval, getattr(args, "approval_lane", None),
+                                what="this estimate revision plan")
     number = evidence["estimate"]["estimate_number"]
     lock = correction_lock_path(plan["sha256"])
     if lock.exists():
-        raise DraftToolError(
-            "REFUSED: this plan has already entered commit and cannot be replayed. "
-            "No Zoho call was made."
-        )
+        owner_authority.refuse_replay(DraftToolError, owner_authority.read_json_if_exists(lock),
+                                      what="estimate revision plan")
     require_active_approval_card(plan)
     try:
         vault = zoho_tool.load_vault()
@@ -6116,13 +6089,18 @@ def command_commit_estimate_revision(args: argparse.Namespace) -> None:
             f"Estimate: {number} ({estimate_id}). No PUT was issued and no email was sent. "
             f"Reason: {exc}"
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": REVISION_KIND,
-        "status": "in_flight",
-        "estimate_id": estimate_id,
-        "started_utc": utc_now().isoformat(),
-    }, exclusive=True)
+    # A2: keep the live estimate beside the plan BEFORE the PUT. The restore
+    # route is the tool's own `stage-estimate-revision` fed with these values.
+    backup = owner_authority.capture_live_state(
+        plan_path, {"estimate_id": estimate_id, "estimate_number": number, "before": current,
+                    "header_changes": evidence.get("header_changes"), "line_changes": evidence.get("line_changes")},
+        what=f"Zoho Books estimate {number} header/lines", where=f"/books/v3/estimates/{estimate_id}",
+        plan_sha256=plan["sha256"],
+    )
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_IN_FLIGHT, plan_sha256=plan["sha256"], action=REVISION_KIND, go=go,
+        kind=REVISION_KIND, estimate_id=estimate_id, started_utc=utc_now().isoformat(), backup=str(backup),
+    ), exclusive=True)
     write_attempted = False
     try:
         write_attempted = True
@@ -6141,36 +6119,27 @@ def command_commit_estimate_revision(args: argparse.Namespace) -> None:
         verify_revision_result(verified, evidence, "Fresh read-back", full=True)
         zoho_tool.save_vault(vault)
     except Exception as exc:
-        write_correction_lock(lock, {
-            "plan_sha256": plan["sha256"],
-            "kind": REVISION_KIND,
-            "status": "indeterminate",
-            "estimate_id": estimate_id,
-            "write_attempted": write_attempted,
-            "plan_locked_indeterminate": True,
-            "updated_utc": utc_now().isoformat(),
-            "reason": str(exc)[:2000],
-            "no_retry": True,
-        })
+        write_correction_lock(lock, owner_authority.attempt_record(
+            owner_authority.STATUS_INDETERMINATE, plan_sha256=plan["sha256"], action=REVISION_KIND, go=go,
+            reason=str(exc), kind=REVISION_KIND, estimate_id=estimate_id, write_attempted=write_attempted,
+            backup=str(backup),
+        ))
         zoho_tool.append_receipt(
-            "zoho_estimate_revision_indeterminate_no_retry",
+            "zoho_estimate_revision_indeterminate_needs_restage",
             f"estimate={number} ({estimate_id}); write_attempted={str(write_attempted).lower()}; "
-            f"plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
+            f"backup={backup}; plan={plan_path}; sha256={plan['sha256']}; email_sent=false",
         )
         raise DraftToolError(
-            f"The estimate revision is indeterminate and this plan is permanently locked against "
-            f"retry. Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live estimate "
-            f"state is unconfirmed. No email was sent; this tool has no mail transport. "
-            f"Reason: {exc} Read the live estimate in Zoho and reconcile before staging anything new."
+            owner_authority.explain_outcome(
+                "The estimate revision", owner_authority.STATUS_INDETERMINATE,
+                f"Estimate: {number} ({estimate_id}). A PUT was ISSUED -- the live estimate state is "
+                f"unconfirmed. No email was sent; this tool has no mail transport. Reason: {exc}",
+            )
         ) from exc
-    write_correction_lock(lock, {
-        "plan_sha256": plan["sha256"],
-        "kind": REVISION_KIND,
-        "status": "committed_verified",
-        "estimate_id": estimate_id,
-        "updated_utc": utc_now().isoformat(),
-        "no_retry": True,
-    })
+    write_correction_lock(lock, owner_authority.attempt_record(
+        owner_authority.STATUS_COMMITTED, plan_sha256=plan["sha256"], action=REVISION_KIND, go=go,
+        kind=REVISION_KIND, estimate_id=estimate_id, backup=str(backup),
+    ))
     mark_active_card_attempted(plan)
     zoho_tool.append_receipt(
         "zoho_estimate_revision_committed_verified",
@@ -6196,6 +6165,10 @@ def command_commit_estimate_revision(args: argparse.Namespace) -> None:
         "email_sent": False,
         "atomic": True,
         "replay_locked": True,
+        "plan_spent": True,
+        "live_state_backup": str(backup),
+        "restore": ("stage-estimate-revision with the header/line values captured in the "
+                    "live-state backup, then his go to that new plan"),
     }, ensure_ascii=False, indent=2))
 
 
@@ -6211,18 +6184,18 @@ def build_parser() -> argparse.ArgumentParser:
     stage_quote.set_defaults(func=command_stage_quote)
     commit_customer = commands.add_parser("commit-customer")
     commit_customer.add_argument("--plan", required=True)
-    commit_customer.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_customer)
     commit_customer.set_defaults(func=lambda args: command_commit(args, "customer"))
     commit_quote = commands.add_parser("commit-quote")
     commit_quote.add_argument("--plan", required=True)
-    commit_quote.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_quote)
     commit_quote.set_defaults(func=lambda args: command_commit(args, "quote"))
     stage_correction = commands.add_parser("stage-tds-discount-correction")
     stage_correction.add_argument("--estimate-id", dest="estimate_id", required=True)
     stage_correction.set_defaults(func=command_stage_tds_discount_correction)
     commit_correction = commands.add_parser("commit-tds-discount-correction")
     commit_correction.add_argument("--plan", required=True)
-    commit_correction.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_correction)
     commit_correction.set_defaults(func=command_commit_tds_discount_correction)
     # No --estimate-id and no business-value argument: the estimate, the line and
     # both quantities are fixed in code.
@@ -6230,7 +6203,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_item9.set_defaults(func=command_stage_item9_quantity_correction)
     commit_item9 = commands.add_parser("commit-tds-item9-quantity-correction")
     commit_item9.add_argument("--plan", required=True)
-    commit_item9.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_item9)
     commit_item9.set_defaults(func=command_commit_item9_quantity_correction)
     # No --input, no --source and no business argument of any kind: the whole
     # SHM Marine Constructors JV record is fixed in code.
@@ -6238,7 +6211,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_shm.set_defaults(func=command_stage_shm_inv000051_customer)
     commit_shm = commands.add_parser("commit-shm-inv000051-customer")
     commit_shm.add_argument("--plan", required=True)
-    commit_shm.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_shm)
     commit_shm.set_defaults(func=command_commit_shm_inv000051_customer)
     # The one GENERAL action: revise an existing estimate in place. Its business
     # values come from a closed-schema input file, each with its own source.
@@ -6247,7 +6220,7 @@ def build_parser() -> argparse.ArgumentParser:
     stage_revision.set_defaults(func=command_stage_estimate_revision)
     commit_revision = commands.add_parser("commit-estimate-revision")
     commit_revision.add_argument("--plan", required=True)
-    commit_revision.add_argument("--approval", required=True)
+    owner_authority.add_owner_go_arguments(commit_revision)
     commit_revision.set_defaults(func=command_commit_estimate_revision)
     return parser
 

@@ -12,6 +12,7 @@ every write is a fake urlopen; the real transports are asserted never to run.
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timedelta
 import ast
 import copy
 from decimal import Decimal
@@ -368,7 +369,13 @@ class PurchaseOrderTestCase(unittest.TestCase):
         ), patch.object(po.zoho_tool, "save_vault"), patch.object(
             po.zoho_tool, "api_get", side_effect=reader_fn
         ), patch.object(po, "urlopen", side_effect=fake_urlopen):
-            po.command_commit(argparse.Namespace(plan=str(plan_path), approval=approval))
+            # His go is timed one minute AFTER the plan was written (A3/A5:
+            # --approval-message-utc is required on every money commit).
+            po.command_commit(argparse.Namespace(
+                plan=str(plan_path), approval=approval,
+                approval_message_utc=(datetime.fromisoformat(plan["created_utc"])
+                                      + timedelta(minutes=1)).isoformat(),
+            ))
         return calls
 
     def commit_expecting_error(self, plan_path: Path, **kwargs) -> Exception:
@@ -755,13 +762,34 @@ class ScopeTests(PurchaseOrderTestCase):
 
     def test_no_send_status_or_payment_scope_exists_anywhere(self) -> None:
         for forbidden in (
-            "ZohoBooks.purchaseorders.UPDATE", "ZohoBooks.purchaseorders.DELETE",
+            "ZohoBooks.purchaseorders.DELETE",
             "ZohoBooks.purchaseorders.ALL", "ZohoInventory.purchaseorders.CREATE",
             "ZohoBooks.vendorpayments.CREATE", "ZohoBooks.bills.CREATE",
             "ZohoInventory.purchasereceives.CREATE", "ZohoBooks.fullaccess.all",
         ):
             with self.subTest(scope=forbidden):
                 self.assertNotIn(forbidden, tool.SCOPES)
+
+    def test_this_tool_cannot_update_even_while_the_connection_holds_update(self) -> None:
+        """The 2026-08-21 J26-403 commission put UPDATE on the shared connection.
+
+        This tool no longer refuses to RUN because of it -- that would have
+        killed the draft-PO capability outright. What it still cannot do is
+        write anything but a create, and that containment is its own route and
+        verb allowlist, not the connection's scope list.
+        """
+        self.assertIn("ZohoBooks.purchaseorders.UPDATE", tool.SCOPES)
+        self.assertNotIn("ZohoBooks.purchaseorders.UPDATE", po.FORBIDDEN_PURCHASE_ORDER_SCOPES)
+        self.assertEqual(po.ALLOWED_METHODS, ("GET", "POST"))
+        for verb in ("PUT", "PATCH", "DELETE"):
+            with self.subTest(verb=verb):
+                with self.assertRaises(po.PurchaseOrderToolError) as caught:
+                    po.require_create_allowed(verb, po.CREATE_PATH, "1", {}, {})
+                self.assertIn("POST", str(caught.exception))
+        source = Path(po.__file__).read_text(encoding="utf-8")
+        for verb in ('method="PUT"', 'method="PATCH"', 'method="DELETE"'):
+            with self.subTest(transport=verb):
+                self.assertNotIn(verb, source)
 
     def test_staging_refuses_when_the_saved_connection_lacks_create(self) -> None:
         scopes = [s for s in tool.SCOPES if s != po.PURCHASE_ORDER_CREATE_SCOPE]
@@ -779,10 +807,10 @@ class ScopeTests(PurchaseOrderTestCase):
         self.assertEqual(self.last_calls["posts"], [])
 
     def test_a_widened_saved_scope_refuses_the_whole_tool(self) -> None:
-        scopes = list(tool.SCOPES) + ["ZohoBooks.purchaseorders.UPDATE"]
+        scopes = list(tool.SCOPES) + ["ZohoBooks.purchaseorders.DELETE"]
         with self.assertRaises(Exception) as caught:
             self.stage(scopes=scopes)
-        self.assertIn("ZohoBooks.purchaseorders.UPDATE", str(caught.exception))
+        self.assertIn("ZohoBooks.purchaseorders.DELETE", str(caught.exception))
 
 
 # ---------------------------------------------------------------------------
@@ -791,14 +819,52 @@ class ScopeTests(PurchaseOrderTestCase):
 
 
 class ApprovalAndPlanTests(PurchaseOrderTestCase):
-    def test_only_the_byte_exact_word_commits(self) -> None:
-        for approval in ("approved", "Approved", " APPROVED", "APPROVED ", "", "yes"):
+    def test_a_conditional_or_blank_word_never_commits(self) -> None:
+        """2026-08-21 (A3): exact APPROVED is no longer REQUIRED -- his unambiguous
+        go to THIS plan counts -- but a condition, a question or a blank still
+        refuses before the lock, the vault and the network."""
+        for approval in ("approved but wait", "hold on", "APPROVED?", "", "not yet"):
             with self.subTest(approval=approval):
                 path = self.stage()
                 error = self.commit_expecting_error(path, approval=approval)
-                self.assertIn("exact uppercase", str(error))
+                self.assertIn("unambiguous go" if approval else "no approval text", str(error))
                 self.assertFalse(self.lock_exists(path))
                 self.assertEqual(self.last_calls["posts"], [])
+
+    def test_yes_go_ahead_after_the_plan_commits_and_a_word_before_the_plan_does_not(self) -> None:
+        path = self.stage()
+        plan = self.plan_json(path)
+        created = datetime.fromisoformat(plan["created_utc"])
+        before = (created - timedelta(minutes=1)).isoformat()
+        with patch.object(po, "PLAN_DIR", self.plan_dir), patch.object(
+            po.zoho_tool, "load_vault", side_effect=AssertionError("vault must not be opened")
+        ):
+            with self.assertRaises(po.PurchaseOrderToolError) as caught:
+                po.command_commit(argparse.Namespace(
+                    plan=str(path), approval="yes go ahead", approval_message_utc=before,
+                ))
+        self.assertIn("BEFORE this plan was created", str(caught.exception))
+        self.assertFalse(self.lock_exists(path))
+        # A go with NO time cannot be shown to have come after the plan: refused,
+        # and the refusal names the flag and the plan's creation time.
+        with patch.object(po, "PLAN_DIR", self.plan_dir), patch.object(
+            po.zoho_tool, "load_vault", side_effect=AssertionError("vault must not be opened")
+        ):
+            with self.assertRaises(po.PurchaseOrderToolError) as caught:
+                po.command_commit(argparse.Namespace(plan=str(path), approval="yes go ahead"))
+        self.assertIn("--approval-message-utc", str(caught.exception))
+        self.assertIn(created.isoformat(), str(caught.exception))
+        self.assertFalse(self.lock_exists(path))
+        after = (created + timedelta(minutes=1)).isoformat()
+        go = po.require_exact_approval("yes go ahead", plan, sent_utc=after)
+        self.assertEqual((go.kind, go.sent_utc, go.exact_word), ("money", after, False))
+        result = self.commit(path, approval="yes go ahead")
+        self.assertEqual([call["method"] for call in result["posts"]], ["POST"])
+        record = self.lock_record(path)
+        self.assertEqual(record["status"], "committed_verified")
+        self.assertEqual(record["owner_go"], "yes go ahead")
+        self.assertEqual(record["owner_go_sent_utc"], after)
+        self.assertFalse(record["permanent_lock"])
 
     def test_approval_is_checked_before_the_vault_and_the_network(self) -> None:
         path = self.stage()
@@ -806,7 +872,7 @@ class ApprovalAndPlanTests(PurchaseOrderTestCase):
             po.zoho_tool, "load_vault", side_effect=AssertionError("vault must not be opened")
         ), patch.object(po, "urlopen", side_effect=AssertionError("no network")):
             with self.assertRaises(po.PurchaseOrderToolError):
-                po.command_commit(argparse.Namespace(plan=str(path), approval="approved"))
+                po.command_commit(argparse.Namespace(plan=str(path), approval="approved but wait"))
 
     def test_editing_the_plan_breaks_its_hash(self) -> None:
         path = self.stage()
@@ -988,21 +1054,27 @@ class WriteContainmentTests(PurchaseOrderTestCase):
         path = self.stage()
         self.assertTrue(self.commit(path)["posts"][0]["lock_exists"])
 
-    def test_a_transport_failure_locks_the_plan_permanently(self) -> None:
+    def test_a_transport_failure_is_reported_and_needs_restage_not_a_permanent_lock(self) -> None:
         path = self.stage()
         error = self.commit_expecting_error(path, post_error=URLError("connection reset"))
-        self.assertIn("permanently locked", str(error))
+        self.assertIn("re-stage", str(error).casefold())
+        self.assertNotIn("permanent", str(error).casefold())
+        self.assertIn("his go to the NEW plan", str(error))
         self.assertIn("Nothing was deleted, voided, cancelled", str(error))
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "indeterminate")
-        self.assertTrue(record["no_retry"])
+        self.assertEqual(record["status"], "indeterminate_needs_restage")
+        self.assertFalse(record["permanent_lock"])
         self.assertTrue(record["write_attempted"])
+        # The SAME plan is bound to stale live state: refused, no second POST.
+        error = self.commit_expecting_error(path)
+        self.assertIn("Re-stage", str(error))
+        self.assertEqual(self.last_calls["posts"], [])
 
-    def test_a_locked_plan_cannot_be_replayed(self) -> None:
+    def test_a_spent_plan_cannot_be_replayed(self) -> None:
         path = self.stage()
         self.commit(path)
         error = self.commit_expecting_error(path)
-        self.assertIn("already entered commit", str(error))
+        self.assertIn("cannot be replayed", str(error))
         self.assertEqual(self.last_calls["posts"], [])
 
     def test_exactly_one_post_is_attempted(self) -> None:
@@ -1028,7 +1100,7 @@ class CreatedStateTests(PurchaseOrderTestCase):
                     path, created=self._created(path, status=status)
                 )
                 self.assertIn("beyond Draft", str(error))
-                self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+                self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_an_unknown_status_is_still_refused(self) -> None:
         path = self.stage()
@@ -1081,7 +1153,7 @@ class CreatedStateTests(PurchaseOrderTestCase):
                 path = self.stage()
                 error = self.commit_expecting_error(path, created=self._created(path, **overrides))
                 self.assertIn(fragment, str(error))
-                self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+                self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_a_dropped_line_is_detected(self) -> None:
         path = self.stage()
@@ -1099,7 +1171,7 @@ class CreatedStateTests(PurchaseOrderTestCase):
         created["terms"] = ""
         error = self.commit_expecting_error(path, created=created)
         self.assertIn("terms", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
     def test_the_number_comes_from_zoho_and_is_recorded(self) -> None:
         path = self.stage()
@@ -1187,8 +1259,11 @@ class SourceContainmentTests(unittest.TestCase):
             "item_id", "name", "description", "quantity", "rate", "unit", "tax_id",
         })
 
-    def test_the_approval_word_is_compared_byte_exactly(self) -> None:
-        self.assertIn("approval != APPROVAL_WORD", self.source)
+    def test_the_approval_is_judged_by_the_one_shared_detector(self) -> None:
+        """2026-08-21: no hand-written comparator of any kind -- the shared
+        owner-authority module (a verbatim copy of Aze's detector) decides."""
+        self.assertIn("owner_authority.require_owner_go_after_plan(", self.source)
+        self.assertNotIn("approval != APPROVAL_WORD", self.source)
         for weakening in (
             "approval.strip()", "approval.upper()", "approval.casefold()", "approval.lower()",
         ):

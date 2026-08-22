@@ -489,10 +489,12 @@ class ConciseRevisionApprovalCardTests(RevisionTestCase):
         )
 
     def test_non_exact_ambiguous_stale_and_expired_approvals_are_refused(self) -> None:
-        for bad in ("approved", " APPROVED", "APPROVED ", "APPROVED\n", "APPROVED yes", ""):
+        # 2026-08-21 (A1): a padded or lowercase APPROVED now counts; a
+        # condition, a question or a blank still refuses before the lock.
+        for bad in ("approved but wait", "hold on", "APPROVED?", ""):
             with self.subTest(approval=bad):
                 path = self.stage(payload=self.hst_input())
-                self.assertIn("exact uppercase", str(self.commit_expecting_error(path, approval=bad)))
+                self.assertIn("REFUSED", str(self.commit_expecting_error(path, approval=bad)))
                 self.assertFalse(self.lock_exists(path))
         path = self.stage(payload=self.hst_input())
         plan = self.plan_json(path)
@@ -729,7 +731,7 @@ class StatusTests(RevisionTestCase):
         after["status"] = "accepted"
         error = self.commit_expecting_error(path, after=after)
         self.assertIn("status", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
 
 # ---------------------------------------------------------------------------
@@ -973,15 +975,16 @@ class ContainmentTests(RevisionTestCase):
 
 
 class ApprovalTests(RevisionTestCase):
-    def test_only_the_byte_exact_word_commits(self) -> None:
+    def test_a_conditional_or_blank_word_never_commits(self) -> None:
+        # 2026-08-21 (A1): "yes" / "OK" / a padded APPROVED now count for this
+        # reversible work; a condition, a question or a blank still refuses.
         for approval in (
-            "approved", "Approved", " APPROVED", "APPROVED ", "APPROVED\n",
-            "APPROVED APPROVED", "", "yes", "OK",
+            "approved but wait", "hold on", "APPROVED?", "", "not yet",
         ):
             with self.subTest(approval=approval):
                 path = self.stage()
                 error = self.commit_expecting_error(path, approval=approval)
-                self.assertIn("exact uppercase", str(error))
+                self.assertIn("REFUSED", str(error))
                 self.assertFalse(self.lock_exists(path))
                 self.assertEqual(self.last_calls["puts"], [])
 
@@ -1166,17 +1169,17 @@ class DriftAndLockTests(RevisionTestCase):
     def test_a_transport_failure_locks_the_plan_permanently(self) -> None:
         path = self.stage()
         error = self.commit_expecting_error(path, put_error=URLError("connection reset"))
-        self.assertIn("permanently locked", str(error))
+        self.assertIn("re-stage", str(error).casefold())
         record = self.lock_record(path)
-        self.assertEqual(record["status"], "indeterminate")
-        self.assertTrue(record["no_retry"])
+        self.assertEqual(record["status"], "indeterminate_needs_restage")
+        self.assertFalse(record["permanent_lock"])
         self.assertTrue(record["write_attempted"])
 
     def test_a_locked_plan_cannot_be_replayed(self) -> None:
         path = self.stage()
         self.commit(path)
         error = self.commit_expecting_error(path)
-        self.assertIn("already entered commit", str(error))
+        self.assertIn("cannot be replayed", str(error))
         self.assertEqual(self.last_calls["puts"], [])
 
     def test_exactly_one_put_is_attempted(self) -> None:
@@ -1190,7 +1193,7 @@ class DriftAndLockTests(RevisionTestCase):
         after["total"] = 999.99
         error = self.commit_expecting_error(path, after=after)
         self.assertIn("Stop and reconcile", str(error))
-        self.assertEqual(self.lock_record(path)["status"], "indeterminate")
+        self.assertEqual(self.lock_record(path)["status"], "indeterminate_needs_restage")
 
 
 # ---------------------------------------------------------------------------
@@ -1436,8 +1439,11 @@ class SourceContainmentTests(unittest.TestCase):
             {"customer": "/books/v3/contacts", "quote": "/books/v3/estimates"},
         )
 
-    def test_the_approval_word_is_compared_byte_exactly(self) -> None:
-        self.assertIn("approval != APPROVAL_WORD", self.source)
+    def test_the_approval_is_judged_by_the_one_shared_detector(self) -> None:
+        """2026-08-21: no hand-written comparator -- the shared owner-authority
+        module (a verbatim copy of Aze's detector) decides."""
+        self.assertIn("owner_authority.require_owner_go(", self.source)
+        self.assertNotIn("approval != APPROVAL_WORD", self.source)
         self.assertNotIn("approval.strip()", self.source)
         self.assertNotIn("approval.upper()", self.source)
 

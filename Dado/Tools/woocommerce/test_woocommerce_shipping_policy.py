@@ -846,14 +846,11 @@ class CommitTests(PlanFixture):
         plan_path, _ = self._stage(store, self._assign_input())
         store.gets.clear()
         for approval in (
-            # Wrong words.
-            "yes", "ok", "approve", "APPROVE", "APPROVED PLEASE", "",
-            policy.FREIGHT_CLASS_SLUG, "OK APPROVED", "APPROVED APPROVED",
-            # Rachad's rule is one plain uppercase word. Everything below used to
-            # pass, because the old check stripped and case-folded first.
-            "approved", "Approved", "ApPrOvEd", " APPROVED", "APPROVED ",
-            " APPROVED ", "\tAPPROVED", "APPROVED\n", "APPROVED.", "APPROVED!",
-            '"APPROVED"', "'APPROVED'", "APPROVED,", "-APPROVED",
+            # 2026-08-21 (A1): a plain yes now counts. What still refuses before
+            # any network access is a condition, a question, a blank, a bare slug,
+            # a multi-line value, or something that is not a string at all.
+            "yes but not the 8 inch", "wait", "APPROVED?", "", "APPROVED\nnow",
+            policy.FREIGHT_CLASS_SLUG, "hold on", "not yet",
             # Not even a string.
             None, 123, True, ["APPROVED"],
         ):
@@ -912,7 +909,7 @@ class CommitTests(PlanFixture):
                     plan=str(plan_path), approval="APPROVED"))
         self.assertEqual(len(store.writes), 1)
         lock = json.loads(policy.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
 
     def test_stale_record_blocks_the_write_entirely(self):
         store = self._assign_store()
@@ -948,18 +945,21 @@ class CommitTests(PlanFixture):
                     plan=str(plan_path), approval="APPROVED"))
         self.assertEqual(store.writes, [])
 
-    def test_an_indeterminate_plan_is_locked_and_never_retried(self):
+    def test_an_indeterminate_plan_needs_restage_and_the_same_plan_is_not_retried(self):
         store = self._assign_store()
         plan_path, _ = self._stage(store, self._assign_input())
         store.fail_write_with = wc.WooError("gateway timeout", status=504)
         get_patch, request_patch, vault_patch = store.patch()
         with get_patch, request_patch, vault_patch:
-            with self.assertRaises(policy.ShippingPolicyError):
+            with self.assertRaises(policy.ShippingPolicyError) as caught:
                 policy.command_commit(argparse.Namespace(
                     plan=str(plan_path), approval="APPROVED"))
+        self.assertIn("re-stage", str(caught.exception).casefold())
+        self.assertNotIn("permanent", str(caught.exception).casefold())
         self.assertEqual(len(store.writes), 1)
         lock = json.loads(policy.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
 
         store.fail_write_with = None
         store.writes.clear()
@@ -1049,7 +1049,7 @@ class CommitTests(PlanFixture):
                 policy.command_commit(argparse.Namespace(
                     plan=str(plan_path), approval="APPROVED"))
         lock = json.loads(policy.lock_path(plan_path.resolve()).read_text(encoding="utf-8"))
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
 
     def test_removal_plan_clears_only_the_shipping_class(self):
         store = FakeStore(
@@ -1609,7 +1609,7 @@ class PreWriteDiagnosticTests(PlanFixture):
         self.assertIn("pre-write mismatch", message)
         self.assertIn("weight", message)
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["diagnostic"]["phase"], "pre_write")
         self.assertEqual(lock["diagnostic"]["changed_protected_fields"], ["weight"])
 
@@ -1660,7 +1660,7 @@ class PostWriteDiagnosticTests(PlanFixture):
         self.assertIn("protected readback mismatch: weight", message)
         self.assertIn("/products/1423/variations/1424", message)
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
         diagnostic = lock["diagnostic"]
         self.assertEqual(diagnostic["phase"], "post_write")
@@ -1759,7 +1759,7 @@ class PostWriteDiagnosticTests(PlanFixture):
         # even once the store looks healthy again.
         self._commit_expecting_failure(store, plan_path)
         self.assertEqual(store.writes, [])
-        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate_needs_restage")
 
     def test_the_attempted_target_is_never_rolled_back(self):
         store, plan_path = self._staged(
@@ -1777,9 +1777,9 @@ class PostWriteDiagnosticTests(PlanFixture):
             {"/products/1423/variations/1424": {"meta_data": meta_entries()[:1]}})
         self._commit_expecting_failure(store, plan_path)
         actions = [action for action, _ in self.receipts]
-        self.assertIn("woocommerce_shipping_policy_indeterminate_no_retry", actions)
+        self.assertIn("woocommerce_shipping_policy_indeterminate_needs_restage", actions)
         evidence = next(text for action, text in self.receipts
-                        if action == "woocommerce_shipping_policy_indeterminate_no_retry")
+                        if action == "woocommerce_shipping_policy_indeterminate_needs_restage")
         self.assertIn("changed_protected_fields=meta_data", evidence)
         self.assertIn("phase=post_write", evidence)
         self.assertIn("endpoint=/products/1423/variations/1424", evidence)
@@ -1831,7 +1831,7 @@ class DiagnosticContainmentTests(PlanFixture):
         )
         self._commit_expecting_failure(store, plan_path)
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "WooError")
         self.assertEqual(lock["http_status"], 400)
         self.assertEqual(lock["rest_code"], "rest_invalid")
@@ -1880,7 +1880,7 @@ class DiagnosticScopeTests(PlanFixture):
         self.assertIs(result["diagnostic_scope"], False)
         self.assertEqual(result["target_count"], 2)
 
-    def test_a_one_target_plan_still_needs_the_exact_approval(self):
+    def test_a_one_target_plan_still_needs_his_clear_go(self):
         store = self._assign_store()
         plan_path, _ = self._stage(store, self._assign_input(
             [{"kind": "variation", "product_id": 1423, "variation_id": 1424}]))
@@ -1888,7 +1888,7 @@ class DiagnosticScopeTests(PlanFixture):
              mock.patch.object(policy.wc, "api_request") as write:
             with self.assertRaises(policy.ShippingPolicyError):
                 policy.command_commit(argparse.Namespace(
-                    plan=str(plan_path), approval="approved"))
+                    plan=str(plan_path), approval="approved but wait"))
             load.assert_not_called()
             write.assert_not_called()
 
@@ -3174,7 +3174,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
         self.assertNotIn("COMMITTED", message)
         self.assertEqual(self.sleeps, list(policy.CONVERGENCE_SCHEDULE_SECONDS))
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "ConvergenceTimeout")
         record = lock["convergence"]
         self.assertEqual(record["final_state"], "pending_not_accepted")
@@ -3197,10 +3197,10 @@ class ConvergenceCommitTests(ConvergenceFixture):
             {self.ENDPOINT: [self._meta(GLA_TRANSIENT)] * 20})
         self._commit_expecting_failure(store, plan_path)
         actions = [action for action, _ in self.receipts]
-        self.assertIn("woocommerce_shipping_policy_indeterminate_no_retry", actions)
+        self.assertIn("woocommerce_shipping_policy_indeterminate_needs_restage", actions)
         self.assertNotIn("woocommerce_shipping_policy_committed", actions)
         evidence = next(text for action, text in self.receipts
-                        if action == "woocommerce_shipping_policy_indeterminate_no_retry")
+                        if action == "woocommerce_shipping_policy_indeterminate_needs_restage")
         self.assertIn("reason_class=ConvergenceTimeout", evidence)
         self.assertIn(f"endpoint={self.ENDPOINT}", evidence)
         self.assertIn(f"meta_key={GLA_KEY}", evidence)
@@ -3218,7 +3218,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
         self._commit_expecting_failure(store, plan_path)
         self.assertEqual(store.writes, [])
         self.assertEqual(self.sleeps, [])
-        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate_needs_restage")
 
     def test_a_different_value_during_the_wait_fails_immediately(self):
         store, plan_path = self._armed(
@@ -3229,7 +3229,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
         self.assertEqual(self.sleeps, [2])
         self.assertEqual(len(store.writes), 1)
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
         self.assertEqual(lock["diagnostic"]["phase"], "convergence")
 
@@ -3263,7 +3263,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
                     self._meta(GLA_TRANSIENT), {"meta_data": entries}]})
                 self._commit_expecting_failure(store, plan_path)
                 lock = self._lock(plan_path)
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
                 self.assertEqual(lock["diagnostic"]["phase"], "convergence")
                 self.assertEqual(len(store.writes), 1)
@@ -3278,7 +3278,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
         self.assertIn("no longer carries the approved shipping class", message)
         self.assertEqual(self.sleeps, [2])
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertIs(lock["diagnostic"]["shipping_class_matches_plan"], False)
         # No repair write of any kind.
         self.assertEqual(store.writes, [
@@ -3415,13 +3415,13 @@ class ConvergenceCommitTests(ConvergenceFixture):
                 policy.command_commit(argparse.Namespace(
                     plan=str(plan_path), approval="APPROVED"))
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "WooError")
         self.assertEqual(lock["http_status"], 500)
         self.assertNotIn(SECRET_DESCRIPTION, json.dumps(lock))
         self.assertEqual(len(store.writes), 1)
 
-    def test_the_wait_still_requires_the_exact_approval_word(self):
+    def test_the_wait_still_requires_his_clear_go(self):
         store, plan_path = self._armed(
             {self.ENDPOINT: [self._meta(GLA_TRANSIENT), self._meta(GLA_STAGED)]})
         with mock.patch.object(policy.wc, "load_vault") as load, \
@@ -3429,7 +3429,7 @@ class ConvergenceCommitTests(ConvergenceFixture):
              mock.patch.object(policy.wc, "api_request") as write:
             with self.assertRaises(policy.ShippingPolicyError):
                 policy.command_commit(argparse.Namespace(
-                    plan=str(plan_path), approval="approved"))
+                    plan=str(plan_path), approval="approved but wait"))
             load.assert_not_called()
             get.assert_not_called()
             write.assert_not_called()
@@ -3716,7 +3716,7 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
         message = self._commit_expecting_failure(store, plan_path)
         self.assertIn("changed after review", message)
         self.assertEqual(store.writes, [])
-        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate_needs_restage")
         self.assertEqual(self.sleeps, [])
 
     def test_the_preflight_proof_is_exact_about_the_entry_itself(self):
@@ -3810,7 +3810,7 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
                 store, plan_path = self._armed({self.ENDPOINT: script})
                 message = self._commit_expecting_failure(store, plan_path)
                 lock = self._lock(plan_path)
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
                 self.assertEqual(lock["diagnostic"]["phase"],
                                  "pending_settle_confirmation")
@@ -3852,7 +3852,7 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
                 store, plan_path = self._armed({self.ENDPOINT: [patch]})
                 self._commit_expecting_failure(store, plan_path)
                 lock = self._lock(plan_path)
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["diagnostic"]["phase"], "post_write")
                 # It failed on the read-back; no confirmation was ever attempted.
                 self.assertEqual(self.sleeps, [])
@@ -3888,7 +3888,7 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
                 policy.command_commit(argparse.Namespace(
                     plan=str(plan_path), approval="APPROVED"))
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["reason_class"], "WooError")
         self.assertEqual(lock["http_status"], 500)
         self.assertNotIn(SECRET_DESCRIPTION, json.dumps(lock))
@@ -3904,7 +3904,7 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
         self._commit_expecting_failure(store, plan_path)
         self.assertEqual(store.writes, [])
         self.assertEqual(self.sleeps, [])
-        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate_needs_restage")
 
     def test_the_second_target_starts_only_after_the_first_is_confirmed(self):
         store, plan_path = self._armed(
@@ -3951,9 +3951,9 @@ class PendingBaselineCommitTests(PendingBaselineFixture):
                 self.assertEqual(store.records[self.ENDPOINT]["shipping_class"],
                                  policy.FREIGHT_CLASS_SLUG)
 
-    def test_the_pending_paths_still_require_the_exact_approval_word(self):
+    def test_the_pending_paths_still_require_his_clear_go(self):
         store, plan_path = self._armed({self.ENDPOINT: [self._meta(GLA_STAGED)] * 3})
-        for approval in ("approved", "APPROVED ", "Approved", "", "yes"):
+        for approval in ("approved but wait", "hold", "APPROVED?", "", None):
             with self.subTest(approval=repr(approval)):
                 with mock.patch.object(policy.wc, "load_vault") as load, \
                      mock.patch.object(policy.wc, "api_get") as get, \
@@ -4128,7 +4128,7 @@ class TripletSettlementCommitTests(TripletSettlementFixture):
                 store, plan_path = self._armed({self.ENDPOINT: script})
                 message = self._commit_expecting_failure(store, plan_path)
                 lock = self._lock(plan_path)
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["reason_class"], "ProtectedStateMismatch")
                 self.assertEqual(lock["diagnostic"]["phase"],
                                  "pending_settle_confirmation")
@@ -4173,7 +4173,7 @@ class TripletSettlementCommitTests(TripletSettlementFixture):
                 store, plan_path = self._armed({self.ENDPOINT: [patch]})
                 self._commit_expecting_failure(store, plan_path)
                 lock = self._lock(plan_path)
-                self.assertEqual(lock["status"], "indeterminate")
+                self.assertEqual(lock["status"], "indeterminate_needs_restage")
                 self.assertEqual(lock["diagnostic"]["phase"], "post_write")
                 # It failed on the read-back; no confirmation was ever attempted.
                 self.assertEqual(self.sleeps, [])
@@ -4191,7 +4191,7 @@ class TripletSettlementCommitTests(TripletSettlementFixture):
         self._commit_expecting_failure(store, plan_path)
         self.assertEqual(store.writes, [])
         self.assertEqual(self.sleeps, [])
-        self.assertEqual(self._lock(plan_path)["status"], "indeterminate")
+        self.assertEqual(self._lock(plan_path)["status"], "indeterminate_needs_restage")
 
     def test_the_second_target_starts_only_after_the_first_is_confirmed(self):
         store, plan_path = self._armed(
@@ -4239,9 +4239,9 @@ class TripletSettlementCommitTests(TripletSettlementFixture):
                 self.assertEqual(store.records[self.ENDPOINT]["shipping_class"],
                                  policy.FREIGHT_CLASS_SLUG)
 
-    def test_the_triplet_path_still_requires_the_exact_approval_word(self):
+    def test_the_triplet_path_still_requires_his_clear_go(self):
         store, plan_path = self._armed({self.ENDPOINT: [self._settled()] * 3})
-        for approval in ("approved", "APPROVED ", "Approved", "", "yes", "PROCEED"):
+        for approval in ("approved but wait", "hold", "APPROVED?", "", None, "PROCEED?"):
             with self.subTest(approval=repr(approval)):
                 with mock.patch.object(policy.wc, "load_vault") as load, \
                      mock.patch.object(policy.wc, "api_get") as get, \
@@ -4356,7 +4356,7 @@ class SettledBaselineIsUnchangedTests(ConvergenceFixture):
         self.sleeps.clear()
         self._commit_expecting_failure(store, plan_path)
         lock = self._lock(plan_path)
-        self.assertEqual(lock["status"], "indeterminate")
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertEqual(lock["diagnostic"]["phase"], "post_write")
         self.assertEqual(self.sleeps, [])
         self.assertEqual(len(store.writes), 1)
@@ -4374,26 +4374,33 @@ class SettledBaselineIsUnchangedTests(ConvergenceFixture):
 
 
 class ExactApprovalTests(unittest.TestCase):
-    def test_only_the_exact_uppercase_word_is_accepted(self):
-        policy.require_rachad_approval("APPROVED")
+    def test_his_clear_go_is_accepted_and_a_condition_is_not(self):
+        """2026-08-21 (A1): the shared detector decides. APPROVED still works,
+        a plain yes counts, a condition/question/non-string refuses, and a word
+        that arrived over the relay never authorises."""
+        self.assertTrue(policy.require_rachad_approval("APPROVED").exact_word)
+        for value in ("approved", "Approved", "APPROVE", " APPROVED ", "APPROVED.", "yes",
+                      "yes go ahead", "do it", "proceed", "ok"):
+            with self.subTest(value=repr(value)):
+                self.assertEqual(policy.require_rachad_approval(value).kind, "reversible")
         for value in (
-            "approved", "Approved", "APPROVE", "APPROVED ", " APPROVED", " APPROVED ",
-            "\tAPPROVED", "APPROVED\n", "APPROVED\r\n", "APPROVED.", "APPROVED!",
-            "APPROVED,", '"APPROVED"', "'APPROVED'", "APPROVED APPROVED", "yes", "",
-            # A zero-width space and a fullwidth spelling are not the word either.
-            "APPROVED-1", "APPROVED\u200b",
+            "yes but not the 8 inch", "wait", "APPROVED?", "", "APPROVED\r\nnow",
+            # A fullwidth spelling is not a word the detector knows.
             "\uff21\uff30\uff30\uff32\uff2f\uff36\uff25\uff24",
             None, 0, 1, True, ["APPROVED"], {"approval": "APPROVED"},
         ):
             with self.subTest(value=repr(value)):
                 with self.assertRaises(policy.ShippingPolicyError):
                     policy.require_rachad_approval(value)
+        with self.assertRaises(policy.ShippingPolicyError):
+            policy.require_rachad_approval("yes", "relay")
 
     def test_the_tool_never_produces_the_word_on_rachads_behalf(self):
         source = Path(policy.__file__).read_text(encoding="utf-8")
-        # The word appears only as the constant, in messages that ASK for it, and
-        # in the staging preview that shows Rachad what to reply.
-        self.assertEqual(source.count('APPROVAL_WORD = "APPROVED"'), 1)
+        # The word appears only through the shared constant, in messages that ASK
+        # for it, and in the staging preview that shows Rachad what to reply.
+        self.assertEqual(source.count("APPROVAL_WORD = owner_authority.EXACT_WORD"), 1)
+        self.assertNotIn('APPROVAL_WORD = "APPROVED"', source)
         self.assertNotIn('approval="APPROVED"', source)
         self.assertNotIn("approval = APPROVAL_WORD", source)
 

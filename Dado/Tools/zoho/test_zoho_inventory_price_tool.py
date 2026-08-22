@@ -232,9 +232,14 @@ class PriceToolTestCase(unittest.TestCase):
         with mock.patch("sys.stdout", buffer):
             price_tool.command_stage(argparse.Namespace(input=str(self.input_path(payload))))
         self.stage_output = buffer.getvalue()
-        plans = sorted(self.plan_dir.glob("*.json"))
+        # Plans only: the live-state capture, restore record and re-stage input
+        # sit beside a plan as .json sidecars and must not be mistaken for one.
+        plans = sorted(
+            path for path in self.plan_dir.glob("*.json")
+            if not path.name.endswith((".live-before.json", ".restore.json", ".restage-input.json"))
+        )
         self.assertTrue(plans, "stage did not write a plan")
-        return plans[-1]
+        return max(plans, key=lambda path: path.stat().st_mtime_ns)
 
     def commit(self, plan: Path, approval: str = "APPROVED") -> str:
         buffer = io.StringIO()
@@ -243,6 +248,17 @@ class PriceToolTestCase(unittest.TestCase):
                 argparse.Namespace(plan=str(plan), approval=approval)
             )
         return buffer.getvalue()
+
+    def restore(self, plan: Path, approval: str = "yes put them back") -> str:
+        buffer = io.StringIO()
+        with mock.patch("sys.stdout", buffer):
+            price_tool.command_restore(
+                argparse.Namespace(plan=str(plan), approval=approval)
+            )
+        return buffer.getvalue()
+
+    def lock_record(self) -> dict:
+        return json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
 
     def rewrite_plan(self, plan: Path, mutate) -> Path:
         data = json.loads(plan.read_text(encoding="utf-8"))
@@ -510,21 +526,28 @@ class StageTests(PriceToolTestCase):
 
 
 class ApprovalTests(PriceToolTestCase):
-    def test_only_exact_uppercase_unpadded_approved(self) -> None:
-        price_tool.require_rachad_approval("APPROVED")
-        for bad in [
-            "approved", "Approved", "APPROVED ", " APPROVED", "\tAPPROVED", "APPROVED\n",
-            "APPROVE", "APPROVED!", "YES", "OK", "GO", "APPROVED APPROVED", "",
-            None, True, 1, ["APPROVED"], "ＡＰＰＲＯＶＥＤ",
-        ]:
+    def test_exact_approved_still_works_and_any_clear_go_counts(self) -> None:
+        """2026-08-21 (spec A1): his clear go in his own message covers this
+        reversible work; APPROVED is no longer REQUIRED, only still accepted."""
+        self.assertTrue(price_tool.require_rachad_approval("APPROVED").exact_word)
+        for good in ["approved", "Approved", "APPROVED ", "yes", "Yes go ahead", "do it",
+                     "OK", "GO", "proceed", "yes update the FNPT rates"]:
+            go = price_tool.require_rachad_approval(good)
+            self.assertEqual(go.kind, "reversible")
+            self.assertEqual(go.lane, "telegram")
+        self.assertEqual(price_tool.require_rachad_approval("yes", "discord").lane, "discord")
+        for bad in ["yes but change the rate", "wait", "not yet", "go ahead?", "",
+                    None, True, 1, ["APPROVED"], "yes\ngo"]:
             with self.assertRaises(price_tool.PriceToolError):
                 price_tool.require_rachad_approval(bad)
+        with self.assertRaises(price_tool.PriceToolError):
+            price_tool.require_rachad_approval("yes", "relay")
 
     def test_wrong_approval_refused_before_any_network_or_lock(self) -> None:
         plan_path = self.stage()
         self.load_vault_mock.reset_mock()
         before_gets = len(self.get_paths)
-        for bad in ["approved", "APPROVED ", "yes", ""]:
+        for bad in ["yes but change it", "wait", "go ahead?", ""]:
             with self.assertRaises(price_tool.PriceToolError):
                 self.commit(plan_path, approval=bad)
         self.assertNoWrites()
@@ -733,7 +756,16 @@ class CommitTests(PriceToolTestCase):
             (self.plan_dir / ".commit-locks" / f"{output['plan_sha256']}.json").read_text()
         )
         self.assertEqual(lock["status"], "committed_verified")
-        self.assertTrue(lock["no_retry"])
+        self.assertFalse(lock["permanent_lock"])
+        self.assertNotIn("no_retry", lock)
+        self.assertEqual(lock["owner_go"], "APPROVED")
+        self.assertTrue(output["plan_spent"])
+        backup = Path(output["live_state_backup"])
+        self.assertTrue(backup.exists(), "the live state was not captured beside the plan")
+        self.assertEqual(backup.parent, plan_path.parent)
+        captured = json.loads(backup.read_text(encoding="utf-8"))["state"]
+        self.assertEqual(captured["96274000000523063"]["before_rate"], "50.20")
+        self.assertEqual(captured["96274000000523063"]["target_rate_cad"], "40.32")
 
     def test_lock_exists_before_the_first_put(self) -> None:
         plan_path = self.stage()
@@ -757,10 +789,13 @@ class CommitTests(PriceToolTestCase):
         with self.assertRaises(price_tool.PriceToolError) as caught:
             self.commit(plan_path)
         self.assertIn("changed after review", str(caught.exception))
+        self.assertIn("re-stage", str(caught.exception).casefold())
         self.assertNoWrites()
-        lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
-        self.assertEqual(lock["status"], "aborted_before_write")
-        self.assertTrue(lock["no_retry"])
+        lock = self.lock_record()
+        self.assertEqual(lock["status"], "needs_restage")
+        self.assertFalse(lock["permanent_lock"])
+        self.assertIn("96274000000523063", lock["failed"])
+        self.assertEqual(lock["completed"], [])
 
     def test_stale_protected_state_refused_before_any_write(self) -> None:
         plan_path = self.stage()
@@ -795,7 +830,10 @@ class CommitTests(PriceToolTestCase):
         self.assertIn(price_tool.UPDATE_SCOPE, str(caught.exception))
         self.assertNoWrites()
 
-    def test_no_retry_after_a_put_failure(self) -> None:
+    def test_a_put_failure_needs_restage_and_the_same_plan_is_not_replayed(self) -> None:
+        """A4: no silent retry inside the run, no permanent lock afterwards. The
+        SAME plan is bound to stale live state and is refused; the re-stage
+        input carries the line and a NEW plan is applied."""
         plan_path = self.stage()
 
         def failing(record):
@@ -804,25 +842,42 @@ class CommitTests(PriceToolTestCase):
         self.allow_writes(on_write=failing)
         with self.assertRaises(price_tool.PriceToolError) as caught:
             self.commit(plan_path)
-        self.assertIn("indeterminate", str(caught.exception))
+        message = str(caught.exception)
+        self.assertIn("indeterminate", message)
+        self.assertIn("re-stage", message.casefold())
+        self.assertNotIn("permanent", message.casefold())
         self.assertEqual(len(self.write_calls), 1, "the failed PUT was retried")
-        lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
-        self.assertEqual(lock["status"], "indeterminate")
-        self.assertTrue(lock["plan_locked_indeterminate"])
-        self.assertTrue(lock["no_retry"])
-        self.assertEqual(lock["write_in_flight_item_id"], "96274000000523063")
-        with self.assertRaises(price_tool.PriceToolError):
+        lock = self.lock_record()
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
+        self.assertFalse(lock["permanent_lock"])
+        self.assertNotIn("no_retry", lock)
+        self.assertEqual(lock["indeterminate"], ["96274000000523063"])
+        restage = Path(lock["restage_input"])
+        self.assertTrue(restage.exists())
+        self.assertEqual(
+            [line["item_id"] for line in json.loads(restage.read_text(encoding="utf-8"))["lines"]],
+            ["96274000000523063"],
+        )
+        with self.assertRaises(price_tool.PriceToolError) as replay:
             self.commit(plan_path)
+        self.assertIn("Re-stage", str(replay.exception))
         self.assertEqual(len(self.write_calls), 1)
+        # The re-stage path: a NEW plan from the re-stage input applies cleanly.
+        self.allow_writes()
+        new_plan = self.stage(json.loads(restage.read_text(encoding="utf-8"))["lines"])
+        self.assertNotEqual(new_plan, plan_path)
+        output = json.loads(self.commit(new_plan, approval="go ahead"))
+        self.assertEqual(output["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(len(self.write_calls), 2)
 
-    def test_readback_rate_mismatch_locks_indeterminate(self) -> None:
+    def test_readback_rate_mismatch_is_indeterminate_and_needs_restage(self) -> None:
         plan_path = self.stage()
         self.allow_writes(on_write=lambda record: None)  # accepted but nothing changed
         with self.assertRaises(price_tool.PriceToolError) as caught:
             self.commit(plan_path)
         self.assertIn("indeterminate", str(caught.exception))
-        lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
-        self.assertEqual(lock["status"], "indeterminate")
+        lock = self.lock_record()
+        self.assertEqual(lock["status"], "indeterminate_needs_restage")
         self.assertIn("read-back rate", lock["reason"])
 
     def test_protected_field_mutation_after_write_refused(self) -> None:
@@ -843,7 +898,7 @@ class CommitTests(PriceToolTestCase):
         with self.assertRaises(price_tool.PriceToolError) as caught:
             self.commit(plan_path)
         self.assertIn("indeterminate", str(caught.exception))
-        lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
+        lock = self.lock_record()
         self.assertIn("changed outside the approved sales rate", lock["reason"])
 
     def test_rate_mirror_drift_refused(self) -> None:
@@ -880,15 +935,149 @@ class CommitTests(PriceToolTestCase):
         with self.assertRaises(price_tool.PriceToolError) as caught:
             self.commit(plan_path)
         message = str(caught.exception)
-        self.assertIn("partial_stopped", message)
+        self.assertIn("needs restage", message)
         self.assertIn("96274000000523063", message)
-        self.assertIn("permanently locked", message)
-        self.assertEqual(len(self.write_calls), 1, "a later line was written after the stop")
-        lock = json.loads(next((self.plan_dir / ".commit-locks").glob("*.json")).read_text())
-        self.assertEqual(lock["status"], "partial_stopped")
+        self.assertIn("96274000000523031", message)
+        self.assertIn("re-stage", message.casefold())
+        self.assertNotIn("permanent", message.casefold())
+        self.assertEqual(len(self.write_calls), 1, "a drifted line must never be written")
+        lock = self.lock_record()
+        self.assertEqual(lock["status"], "needs_restage")
         self.assertEqual([row["item_id"] for row in lock["completed"]], ["96274000000523063"])
-        self.assertTrue(lock["no_retry"])
+        self.assertEqual(list(lock["failed"]), ["96274000000523031"])
+        self.assertFalse(lock["permanent_lock"])
         self.assertEqual(self.items["96274000000523031"]["rate"], 50.2)
+        restage = json.loads(Path(lock["restage_input"]).read_text(encoding="utf-8"))
+        self.assertEqual([line["item_id"] for line in restage["lines"]], ["96274000000523031"],
+                         "only the failed line is re-staged")
+
+
+class BatchTests(PriceToolTestCase):
+    """A6: one instruction covers the batch; a failed line does not stop the others."""
+
+    def two_line_plan(self) -> Path:
+        return self.stage(
+            [line_for(), line_for(item_id="96274000000523031", sku=SKU_470, cost="12.4", cell="H5")]
+        )
+
+    def test_a_failed_first_line_does_not_stop_the_second(self) -> None:
+        plan_path = self.two_line_plan()
+
+        def transport(record):
+            item_id = record["url"].split("/items/", 1)[1].split("?", 1)[0]
+            if item_id == "96274000000523063":
+                raise HTTPError(record["url"], 500, "Server Error", None, io.BytesIO(b"{}"))
+            item = self.items[item_id]
+            item["rate"] = record["payload"]["rate"]
+            item["sales_rate"] = record["payload"]["rate"]
+            item["pricebook_rate"] = record["payload"]["rate"]
+            item["default_price_brackets"] = [
+                {"start_quantity": 1.0, "end_quantity": 1.0, "pricebook_rate": record["payload"]["rate"]}
+            ]
+
+        self.allow_writes(on_write=transport)
+        with self.assertRaises(price_tool.PriceToolError):
+            self.commit(plan_path, approval="go ahead with both")
+        self.assertEqual(len(self.write_calls), 2, "the second line must still run")
+        lock = self.lock_record()
+        self.assertEqual([row["item_id"] for row in lock["completed"]], ["96274000000523031"])
+        self.assertEqual(list(lock["failed"]), ["96274000000523063"])
+        self.assertEqual(lock["indeterminate"], ["96274000000523063"])
+        self.assertEqual(lock["owner_go"], "go ahead with both")
+        restage = json.loads(Path(lock["restage_input"]).read_text(encoding="utf-8"))
+        self.assertEqual([line["item_id"] for line in restage["lines"]], ["96274000000523063"])
+        backup = json.loads(Path(lock["backup"]).read_text(encoding="utf-8"))["state"]
+        self.assertEqual(set(backup), {"96274000000523063", "96274000000523031"},
+                         "every line's live state was captured before its PUT")
+
+    def test_a_clean_batch_is_spent_and_fully_captured(self) -> None:
+        plan_path = self.two_line_plan()
+        self.allow_writes()
+        output = json.loads(self.commit(plan_path, approval="yes"))
+        self.assertEqual(output["status"], "COMMITTED_AND_VERIFIED")
+        self.assertEqual(len(self.write_calls), 2)
+        lock = self.lock_record()
+        self.assertEqual(lock["status"], "committed_verified")
+        self.assertNotIn("restage_input", lock)
+        self.assertEqual(set(json.loads(Path(lock["backup"]).read_text(encoding="utf-8"))["state"]),
+                         {"96274000000523063", "96274000000523031"})
+
+
+class RestoreTests(PriceToolTestCase):
+    """A2: the live state captured before the write can be put back."""
+
+    def test_restore_puts_the_captured_rates_back(self) -> None:
+        plan_path = self.stage()
+        self.allow_writes()
+        self.commit(plan_path, approval="yes")
+        self.assertEqual(self.items["96274000000523063"]["rate"], 40.32)
+        output = json.loads(self.restore(plan_path, approval="yes put it back"))
+        self.assertEqual(output["status"], "RESTORED")
+        self.assertEqual(output["restored"][0]["to"], "50.20")
+        self.assertEqual(self.items["96274000000523063"]["rate"], 50.2)
+        self.assertEqual(self.write_calls[-1]["payload"], {"name": self.items["96274000000523063"]["name"], "rate": 50.2})
+        record = owner_authority_record(plan_path)
+        self.assertEqual(record["status"], "RESTORED")
+        self.assertEqual(record["owner_go"], "yes put it back")
+        with self.assertRaises(price_tool.PriceToolError) as again:
+            self.restore(plan_path)
+        self.assertIn("already restored", str(again.exception))
+        self.assertEqual(len(self.write_calls), 2)
+
+    def test_restore_needs_his_clear_go(self) -> None:
+        plan_path = self.stage()
+        self.allow_writes()
+        self.commit(plan_path)
+        for bad in ["wait", "yes but", ""]:
+            with self.assertRaises(price_tool.PriceToolError):
+                self.restore(plan_path, approval=bad)
+        self.assertEqual(len(self.write_calls), 1)
+
+    def test_restore_leaves_a_rate_that_moved_since_alone(self) -> None:
+        plan_path = self.stage()
+        self.allow_writes()
+        self.commit(plan_path)
+        self.items["96274000000523063"]["rate"] = 77.77  # somebody changed it afterwards
+        output = json.loads(self.restore(plan_path))
+        self.assertEqual(output["restored"], [])
+        self.assertIn("moved since", output["skipped"]["96274000000523063"])
+        self.assertEqual(len(self.write_calls), 1)
+
+    def test_restore_refuses_without_a_capture(self) -> None:
+        plan_path = self.stage()
+        with self.assertRaises(price_tool.PriceToolError) as caught:
+            self.restore(plan_path)
+        self.assertIn("nothing to restore", str(caught.exception))
+        self.assertNoWrites()
+
+    def test_restore_also_works_for_the_completed_lines_of_a_partial_batch(self) -> None:
+        plan_path = self.stage(
+            [line_for(), line_for(item_id="96274000000523031", sku=SKU_470, cost="12.4", cell="H5")]
+        )
+
+        def transport(record):
+            item_id = record["url"].split("/items/", 1)[1].split("?", 1)[0]
+            if item_id == "96274000000523031" and len(self.write_calls) == 2:
+                raise HTTPError(record["url"], 500, "Server Error", None, io.BytesIO(b"{}"))
+            item = self.items[item_id]
+            item["rate"] = record["payload"]["rate"]
+            item["sales_rate"] = record["payload"]["rate"]
+            item["pricebook_rate"] = record["payload"]["rate"]
+            item["default_price_brackets"] = [
+                {"start_quantity": 1.0, "end_quantity": 1.0, "pricebook_rate": record["payload"]["rate"]}
+            ]
+
+        self.allow_writes(on_write=transport)
+        with self.assertRaises(price_tool.PriceToolError):
+            self.commit(plan_path)
+        output = json.loads(self.restore(plan_path))
+        self.assertEqual([row["item_id"] for row in output["restored"]], ["96274000000523063"])
+        self.assertIn("96274000000523031", output["skipped"])
+        self.assertEqual(self.items["96274000000523063"]["rate"], 50.2)
+
+
+def owner_authority_record(plan_path: Path) -> dict:
+    return json.loads(price_tool.owner_authority.restore_record_path(plan_path).read_text(encoding="utf-8"))
 
 
 class BuildPlanDataTests(unittest.TestCase):
